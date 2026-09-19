@@ -1,11 +1,16 @@
-<div align="center">
+# JARVIS — Vincent's personal assistant
 
-<img width="1200" height="475" alt="GHBanner" src="https://github.com/user-attachments/assets/0aa67016-6eaf-458a-adb2-6e31a0763ed6" />
+Voice assistant running on Gemini Live. Personal use only.
 
-  <h1>Built with AI Studio</h2>
+## Run
+    ~/Jarvis/run.sh          # or double-click the desktop icon
 
-  <p>The fastest path from prompt to production with Gemini.</p>
+## Settings
+⚙ in the app → voice (30 Gemini voices), speaking style, wake word, audio devices.
+Config lives in `config/api_keys.json`. Personality in `core/prompt.txt`.
 
-  <a href="https://aistudio.google.com/apps">Start building</a>
+## My changes
+- Voice upgrade: all 30 Gemini voices, speaking-style presets, in-app preview
+- Rebranded as JARVIS V1
 
-</div>
+See CREDITS.md for origin and licence.

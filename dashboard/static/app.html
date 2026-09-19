@@ -1,0 +1,2565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>JARVIS — Autonomous Workspace & Spatial Interface</title>
+  <script src="/static/crypto.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg-base: #0b0f17;
+      --glass-bg: rgba(18, 24, 38, 0.76);
+      --glass-border: rgba(255, 255, 255, 0.12);
+      --glass-specular: rgba(255, 255, 255, 0.18);
+      --glass-blur: 24px;
+      --glass-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+
+      /* Dull Glass Acrylic Mode (applied when Barehands camera feed is active) */
+      --dull-glass-bg: rgba(14, 19, 30, 0.58);
+      --dull-glass-border: rgba(255, 255, 255, 0.14);
+      --dull-glass-blur: 28px;
+      --dull-glass-shadow: 0 24px 50px -10px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+
+      --accent: #6366f1;
+      --accent-glow: rgba(99, 102, 241, 0.35);
+      --accent-dim: rgba(99, 102, 241, 0.16);
+
+      --emerald: #10b981;
+      --emerald-glow: rgba(16, 185, 129, 0.3);
+      --emerald-dim: rgba(16, 185, 129, 0.14);
+
+      --amber: #f59e0b;
+      --rose: #f43f5e;
+
+      --text-main: #f1f5f9;
+      --text-sub: #cbd5e1;
+      --text-muted: #64748b;
+
+      --header-h: 56px;
+      --radius-panel: 16px;
+      --radius-control: 10px;
+    }
+
+    /* Accent color variants */
+    body[data-theme="emerald"] {
+      --accent: #10b981;
+      --accent-glow: rgba(16, 185, 129, 0.35);
+      --accent-dim: rgba(16, 185, 129, 0.16);
+    }
+    body[data-theme="titanium"] {
+      --accent: #38bdf8;
+      --accent-glow: rgba(56, 189, 248, 0.35);
+      --accent-dim: rgba(56, 189, 248, 0.16);
+    }
+
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg-base); color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+      user-select: none;
+    }
+
+    /* ── STAGE BACKGROUNDS ── */
+    #stage-container {
+      position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; z-index: 0;
+    }
+
+    /* Video camera background (Barehands style) */
+    #bg-camera {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      object-fit: cover; transform: scaleX(-1);
+      display: none; transition: opacity 0.5s ease;
+    }
+    #bg-camera.active { display: block; }
+
+    /* Studio canvas background */
+    #bg-studio {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      background:
+        radial-gradient(circle at 18% 22%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
+        radial-gradient(circle at 82% 78%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
+        linear-gradient(180deg, #0e131f 0%, #070a10 100%);
+      transition: opacity 0.5s ease;
+    }
+
+    /* Ambient dark scrim for readability over video */
+    #bg-scrim {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      background: rgba(5, 8, 14, 0.45); pointer-events: none;
+    }
+
+    /* ── TOP NAVIGATION HUD BAR ── */
+    #hud-header {
+      position: absolute; top: 0; left: 0; right: 0; height: var(--header-h);
+      z-index: 100; display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px;
+      background: rgba(14, 20, 32, 0.85);
+      backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--glass-border);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .hud-brand {
+      display: flex; align-items: center; gap: 12px; cursor: pointer;
+    }
+    .brand-symbol {
+      width: 34px; height: 34px; border-radius: 9px;
+      background: linear-gradient(135deg, var(--accent) 0%, #312e81 100%);
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 17px; color: #fff;
+      box-shadow: 0 0 16px var(--accent-glow);
+    }
+    .brand-text {
+      display: flex; flex-direction: column;
+    }
+    .brand-title {
+      font-size: 15px; font-weight: 800; letter-spacing: 2px;
+      color: #fff;
+    }
+    .brand-sub {
+      font-size: 10px; font-weight: 600; color: var(--text-muted);
+      letter-spacing: 1px; text-transform: uppercase;
+    }
+
+    .hud-center-controls {
+      display: flex; align-items: center; gap: 8px;
+    }
+
+    .hud-toggle-btn {
+      display: flex; align-items: center; gap: 7px;
+      padding: 7px 14px; border-radius: 99px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--glass-border);
+      color: var(--text-sub); font-size: 12px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .hud-toggle-btn:hover {
+      background: rgba(255, 255, 255, 0.09); color: #fff;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .hud-toggle-btn.active {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+
+    .hud-status-group {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .status-pill {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 12px; border-radius: 99px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--glass-border);
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      text-transform: uppercase; color: var(--text-muted);
+      transition: all 0.3s ease;
+    }
+    .status-pill.online {
+      background: var(--emerald-dim); border-color: rgba(16, 185, 129, 0.35); color: var(--emerald);
+    }
+    .status-dot {
+      width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
+    }
+    .status-pill.online .status-dot {
+      background: var(--emerald); box-shadow: 0 0 8px var(--emerald); animation: pulseDot 2s infinite;
+    }
+    @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
+
+    /* ── WORKSPACE DESKTOP STAGE ── */
+    #workspace-stage {
+      position: absolute; top: var(--header-h); left: 0; right: 0; bottom: 0;
+      overflow: hidden; z-index: 10;
+    }
+
+    /* Dull glass modifier when Barehands is engaged */
+    body.barehands-engaged .glass-window {
+      background: var(--dull-glass-bg);
+      backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
+      -webkit-backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
+      border: 1px solid var(--dull-glass-border);
+      box-shadow: var(--dull-glass-shadow);
+    }
+    body.barehands-engaged #bg-scrim {
+      background: rgba(4, 7, 12, 0.28);
+    }
+    body.barehands-engaged #bg-studio {
+      opacity: 0.15;
+    }
+
+    /* ── PHYSICAL GLASS SURFACES / CARDS ── */
+    .glass-window {
+      position: absolute;
+      background: var(--glass-bg);
+      backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+      -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(170%);
+      border: 1px solid var(--glass-border);
+      box-shadow: var(--glass-shadow);
+      border-radius: var(--radius-panel);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+      touch-action: none;
+      transition: box-shadow 0.2s, border-color 0.2s, opacity 0.25s, transform 0.25s, background 0.3s ease;
+    }
+    .glass-window::before {
+      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 1px;
+      background: linear-gradient(90deg, transparent 0%, var(--glass-specular) 50%, transparent 100%);
+      pointer-events: none; z-index: 2;
+    }
+    .glass-window.focused {
+      border-color: rgba(255, 255, 255, 0.22);
+      box-shadow: 0 28px 65px -12px rgba(0, 0, 0, 0.75), 0 0 24px rgba(99, 102, 241, 0.22);
+    }
+    .glass-window.grabbed {
+      border-color: var(--accent);
+      box-shadow: 0 34px 80px -10px rgba(0, 0, 0, 0.85), 0 0 40px var(--accent-glow);
+      cursor: grabbing !important;
+      transform: scale(1.015);
+      z-index: 900 !important;
+    }
+    .glass-window.minimized {
+      height: 48px !important; overflow: hidden !important;
+    }
+    .glass-window.minimized .window-body,
+    .glass-window.minimized .window-grab-bar,
+    .glass-window.minimized .window-resizer {
+      display: none !important;
+    }
+
+    /* Window Header Bar (Top Grab Surface) */
+    .window-header {
+      height: 46px; padding: 0 16px; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      cursor: grab; user-select: none;
+    }
+    .window-header:active {
+      cursor: grabbing;
+    }
+
+    /* Bottom Tactile Glass Grab Bar */
+    .window-grab-bar {
+      height: 14px; margin: 4px 18px 8px; border-radius: 99px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      cursor: grab; display: flex; align-items: center; justify-content: center;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      flex-shrink: 0; user-select: none;
+    }
+    .window-grab-bar::after {
+      content: ''; width: 44px; height: 3px; border-radius: 99px;
+      background: rgba(255, 255, 255, 0.35);
+      transition: all 0.2s ease;
+    }
+    .window-grab-bar:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: var(--accent);
+      box-shadow: 0 0 12px var(--accent-glow);
+    }
+    .window-grab-bar:hover::after {
+      background: #fff; width: 56px;
+    }
+    .window-grab-bar:active {
+      cursor: grabbing;
+      background: var(--accent-dim);
+    }
+
+    /* Tactile Corner Resizer */
+    .window-resizer {
+      position: absolute; right: 0; bottom: 0; width: 22px; height: 22px;
+      cursor: nwse-resize; z-index: 15; user-select: none;
+    }
+    .window-resizer::after {
+      content: ''; position: absolute; right: 5px; bottom: 5px;
+      width: 9px; height: 9px;
+      border-right: 2px solid rgba(255, 255, 255, 0.35);
+      border-bottom: 2px solid rgba(255, 255, 255, 0.35);
+      border-radius: 1px;
+      transition: all 0.15s ease;
+    }
+    .window-resizer:hover::after {
+      border-color: var(--accent);
+      width: 11px; height: 11px;
+    }
+    .window-title-group {
+      display: flex; align-items: center; gap: 9px;
+      font-size: 13px; font-weight: 700; letter-spacing: 0.5px;
+      color: var(--text-main);
+    }
+    .window-icon {
+      font-size: 16px; opacity: 0.9;
+    }
+    .window-actions {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .win-btn {
+      width: 26px; height: 26px; border-radius: 7px;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.08);
+      color: var(--text-sub); font-size: 12px; cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .win-btn:hover {
+      background: rgba(255, 255, 255, 0.14); color: #fff;
+    }
+
+    /* Window Body Container */
+    .window-body {
+      flex: 1; min-height: 0; overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+
+    /* ── PANEL 1: JARVIS CORE TELEMETRY ── */
+    #win-telemetry {
+      width: 320px; height: 460px;
+    }
+    .telemetry-content {
+      padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
+    }
+    .reactor-pod {
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      padding: 16px; background: rgba(0, 0, 0, 0.25); border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .reactor-disc {
+      position: relative; width: 110px; height: 110px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      background: radial-gradient(circle, rgba(99, 102, 241, 0.25) 0%, rgba(14, 20, 32, 0.8) 70%);
+      border: 2px solid rgba(99, 102, 241, 0.4);
+      box-shadow: 0 0 30px var(--accent-glow), inset 0 0 20px rgba(99, 102, 241, 0.3);
+      animation: rotateRing 20s linear infinite;
+    }
+    @keyframes rotateRing { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    .reactor-core {
+      position: absolute; width: 44px; height: 44px; border-radius: 50%;
+      background: #fff; box-shadow: 0 0 24px #fff, 0 0 50px var(--accent);
+      animation: reactorBreathe 3s ease-in-out infinite;
+    }
+    @keyframes reactorBreathe {
+      0%, 100% { transform: scale(0.92); opacity: 0.85; }
+      50% { transform: scale(1.05); opacity: 1; }
+    }
+    .reactor-state-tag {
+      margin-top: 14px; font-size: 11px; font-weight: 700;
+      letter-spacing: 2px; text-transform: uppercase; color: var(--emerald);
+    }
+
+    .metric-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .metric-card {
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.07);
+      border-radius: 12px; padding: 12px;
+    }
+    .metric-lbl {
+      font-size: 10px; font-weight: 700; color: var(--text-muted);
+      letter-spacing: 1px; text-transform: uppercase;
+    }
+    .metric-val {
+      font-size: 17px; font-weight: 800; color: var(--text-main); margin-top: 4px;
+    }
+    .metric-sub {
+      font-size: 10px; color: var(--emerald); margin-top: 2px;
+    }
+
+    .telemetry-actions {
+      display: flex; gap: 8px;
+    }
+    .action-btn {
+      flex: 1; padding: 10px 12px; border-radius: 10px;
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      text-transform: uppercase; cursor: pointer; border: none;
+      transition: all 0.15s ease;
+    }
+    .action-btn.primary {
+      background: var(--accent); color: #fff;
+    }
+    .action-btn.primary:hover { opacity: 0.9; }
+    .action-btn.secondary {
+      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
+      color: var(--text-sub);
+    }
+    .action-btn.secondary:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    /* ── PANEL 2: SPATIAL CHAT & DIRECTIVE STREAM ── */
+    #win-chat {
+      width: 480px; height: 560px;
+    }
+    .chat-container {
+      display: flex; flex-direction: column; height: 100%;
+    }
+    .chat-feed {
+      flex: 1; overflow-y: auto; padding: 16px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .chat-feed::-webkit-scrollbar { width: 5px; }
+    .chat-feed::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+
+    .chat-bubble {
+      max-width: 86%; padding: 12px 16px; border-radius: 14px;
+      font-size: 13.5px; line-height: 1.6; animation: popMsg 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      user-select: text;
+    }
+    @keyframes popMsg { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+    .chat-bubble.speaker-jarvis {
+      align-self: flex-start;
+      background: rgba(99, 102, 241, 0.14);
+      border: 1px solid rgba(99, 102, 241, 0.26);
+      border-bottom-left-radius: 4px;
+      color: #f8fafc;
+    }
+    .chat-bubble.speaker-user {
+      align-self: flex-end;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-bottom-right-radius: 4px;
+      color: #f1f5f9;
+    }
+    .chat-bubble.speaker-system {
+      align-self: center; font-size: 11px; color: var(--text-muted);
+      background: transparent; border: none; padding: 4px 10px;
+    }
+    .bubble-header {
+      font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
+      text-transform: uppercase; margin-bottom: 4px; opacity: 0.6;
+    }
+    .speaker-jarvis .bubble-header { color: #818cf8; }
+    .speaker-user .bubble-header { text-align: right; color: var(--text-sub); }
+
+    /* Code snippet block within chat */
+    .code-block {
+      margin-top: 8px; padding: 10px; border-radius: 8px;
+      background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1);
+      font-family: 'SF Mono', Consolas, Monaco, monospace; font-size: 12px;
+      color: #38bdf8; overflow-x: auto; white-space: pre-wrap;
+    }
+
+    /* Quick suggestion chips */
+    .suggestion-row {
+      display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.15); flex-shrink: 0;
+    }
+    .suggestion-row::-webkit-scrollbar { display: none; }
+    .sugg-chip {
+      padding: 5px 12px; border-radius: 99px;
+      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 11px; font-weight: 600; color: var(--text-sub);
+      white-space: nowrap; cursor: pointer; transition: all 0.15s ease;
+    }
+    .sugg-chip:hover {
+      background: var(--accent-dim); border-color: var(--accent); color: #fff;
+    }
+
+    /* Input Footer */
+    .chat-footer {
+      padding: 12px 16px; border-top: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(14, 20, 32, 0.7); display: flex; gap: 8px; align-items: center;
+      flex-shrink: 0;
+    }
+    .chat-input {
+      flex: 1; padding: 11px 14px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: var(--radius-control); color: #fff;
+      font-size: 13.5px; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .chat-input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 2px var(--accent-dim);
+    }
+    .chat-input::placeholder { color: var(--text-muted); }
+
+    .chat-btn {
+      padding: 11px 14px; border-radius: var(--radius-control);
+      border: 1px solid transparent; cursor: pointer;
+      font-size: 12px; font-weight: 700; letter-spacing: 1px;
+      display: flex; align-items: center; justify-content: center;
+      transition: all 0.15s ease;
+    }
+    .chat-btn-send {
+      background: var(--accent); color: #fff;
+    }
+    .chat-btn-send:hover { opacity: 0.9; }
+    .chat-btn-icon {
+      background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.1);
+      color: var(--text-sub); font-size: 15px;
+    }
+    .chat-btn-icon:hover {
+      background: rgba(255, 255, 255, 0.12); color: #fff; border-color: rgba(255, 255, 255, 0.2);
+    }
+    .chat-btn-icon.recording {
+      background: rgba(244, 63, 94, 0.2); border-color: var(--rose); color: var(--rose);
+      animation: micPulse 1.2s infinite;
+    }
+    @keyframes micPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.96); } }
+
+    /* ── PANEL 3: PC FILE ENVIRONMENT TREE ── */
+    #win-tree {
+      width: 360px; height: 520px;
+    }
+    .tree-container {
+      display: flex; flex-direction: column; height: 100%;
+    }
+    .tree-toolbar {
+      padding: 10px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.2); display: flex; gap: 8px; align-items: center;
+    }
+    .tree-search {
+      flex: 1; padding: 7px 11px; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 12px; color: #fff; outline: none;
+    }
+    .tree-search:focus { border-color: var(--accent); }
+    .tree-refresh-btn {
+      padding: 7px 10px; border-radius: 8px;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-sub); font-size: 12px; cursor: pointer;
+    }
+    .tree-refresh-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    .tree-viewport {
+      flex: 1; overflow-y: auto; padding: 10px 12px;
+    }
+    .tree-viewport::-webkit-scrollbar { width: 4px; }
+    .tree-viewport::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+
+    .tree-node {
+      display: flex; align-items: center; gap: 7px;
+      padding: 6px 10px; border-radius: 7px;
+      font-size: 12.5px; color: var(--text-sub);
+      cursor: pointer; transition: background 0.12s, color 0.12s;
+    }
+    .tree-node:hover {
+      background: rgba(255, 255, 255, 0.07); color: #fff;
+    }
+    .tree-node.active-file {
+      background: var(--accent-dim); color: #fff; font-weight: 600;
+      border-left: 2px solid var(--accent);
+    }
+    .node-icon { font-size: 14px; opacity: 0.85; flex-shrink: 0; }
+    .node-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .node-size { font-size: 10px; color: var(--text-muted); font-family: monospace; }
+    .node-children { padding-left: 18px; display: flex; flex-direction: column; gap: 1px; }
+
+    /* ── PANEL 4: FILE INSPECTOR & CODE VIEWER ── */
+    #win-inspector {
+      width: 440px; height: 500px;
+    }
+    .inspector-container {
+      display: flex; flex-direction: column; height: 100%;
+    }
+    .inspector-bar {
+      padding: 8px 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(0, 0, 0, 0.2); display: flex; align-items: center; justify-content: space-between;
+    }
+    .inspector-path {
+      font-size: 11px; font-family: 'SF Mono', Consolas, monospace; color: var(--text-sub);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px;
+    }
+    .inspector-actions {
+      display: flex; gap: 6px;
+    }
+    .insp-action-btn {
+      padding: 4px 10px; border-radius: 6px;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
+      font-size: 11px; font-weight: 600; color: var(--text-sub); cursor: pointer;
+    }
+    .insp-action-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    .inspector-code-wrap {
+      flex: 1; overflow: auto; padding: 14px; background: rgba(0, 0, 0, 0.35);
+    }
+    .inspector-code-wrap::-webkit-scrollbar { width: 5px; height: 5px; }
+    .inspector-code-wrap::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
+    .code-pre {
+      font-family: 'SF Mono', Menlo, Consolas, Monaco, monospace;
+      font-size: 12px; line-height: 1.6; color: #e2e8f0;
+      white-space: pre; tab-size: 2;
+    }
+
+    /* ── PANEL 5: WORKSPACE SETTINGS & BAREHANDS ── */
+    #win-settings {
+      width: 380px; height: 480px;
+    }
+    .settings-body {
+      padding: 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px;
+    }
+    .settings-section-title {
+      font-size: 11px; font-weight: 800; letter-spacing: 1.5px;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 10px;
+    }
+    .settings-row {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px; border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .settings-label-group {
+      display: flex; flex-direction: column;
+    }
+    .settings-label {
+      font-size: 13px; font-weight: 600; color: var(--text-main);
+    }
+    .settings-desc {
+      font-size: 11px; color: var(--text-muted); margin-top: 2px;
+    }
+
+    /* Custom Switch */
+    .switch-toggle {
+      position: relative; width: 44px; height: 24px;
+      background: rgba(255, 255, 255, 0.15); border-radius: 99px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .switch-toggle.on { background: var(--accent); }
+    .switch-knob {
+      position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
+      border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .switch-toggle.on .switch-knob { transform: translateX(20px); }
+
+    /* Layout Preset Buttons */
+    .preset-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+    }
+    .preset-btn {
+      padding: 11px; border-radius: 10px;
+      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-sub); font-size: 12px; font-weight: 700;
+      cursor: pointer; text-align: center; transition: all 0.15s ease;
+    }
+    .preset-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    /* Sliders */
+    .range-wrap {
+      display: flex; flex-direction: column; gap: 6px; width: 100%;
+    }
+    .range-input {
+      width: 100%; accent-color: var(--accent);
+    }
+
+    /* ── BAREHANDS HAND TRACKING OVERLAY & CURSOR ── */
+    #hand-overlay-canvas {
+      position: absolute; inset: 0; width: 100%; height: 100%;
+      pointer-events: none; z-index: 990;
+    }
+    .hand-cursor {
+      position: absolute; width: 34px; height: 34px;
+      border-radius: 50%; border: 2px solid rgba(16, 185, 129, 0.9);
+      background: rgba(16, 185, 129, 0.15);
+      transform: translate(-50%, -50%);
+      pointer-events: none; z-index: 995;
+      display: none; transition: width 0.1s ease, height 0.1s ease, background 0.1s ease;
+    }
+    .hand-cursor.pinched {
+      background: rgba(16, 185, 129, 0.9);
+      box-shadow: 0 0 28px rgba(16, 185, 129, 0.95);
+      border-color: #fff; transform: translate(-50%, -50%) scale(0.85);
+    }
+    .hand-cursor.fist {
+      background: rgba(239, 68, 68, 0.85);
+      border-color: #fff;
+      box-shadow: 0 0 32px rgba(239, 68, 68, 0.9);
+      transform: translate(-50%, -50%) scale(1.15);
+    }
+    .hand-cursor.dwelling {
+      border-color: var(--accent);
+      background: rgba(99, 102, 241, 0.35);
+      box-shadow: 0 0 24px var(--accent-glow);
+    }
+    .hand-cursor.simulated {
+      border-style: solid;
+      border-color: #38bdf8;
+    }
+    .cursor-tag {
+      position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+      background: rgba(10, 15, 26, 0.9);
+      border: 1px solid var(--glass-border);
+      border-radius: 99px; padding: 2px 8px;
+      font-size: 10px; font-weight: 700; color: #fff;
+      white-space: nowrap; pointer-events: none;
+      letter-spacing: 0.5px;
+    }
+    .dwell-svg {
+      position: absolute; inset: -8px; width: 50px; height: 50px;
+      transform: rotate(-90deg); pointer-events: none;
+    }
+    .dwell-circle-bg {
+      fill: none; stroke: rgba(255, 255, 255, 0.15); stroke-width: 2.5;
+    }
+    .dwell-circle-bar {
+      fill: none; stroke: var(--emerald); stroke-width: 3;
+      stroke-linecap: round; stroke-dasharray: 125.6; stroke-dashoffset: 125.6;
+      transition: stroke-dashoffset 0.05s linear;
+    }
+
+    /* ── CAMERA DIAGNOSTICS & HELPER BANNER ── */
+    .cam-helper-banner {
+      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+      width: min(780px, calc(100% - 32px));
+      background: rgba(15, 23, 42, 0.92);
+      border: 1px solid rgba(99, 102, 241, 0.4);
+      backdrop-filter: blur(24px) saturate(180%);
+      -webkit-backdrop-filter: blur(24px) saturate(180%);
+      border-radius: 16px; padding: 14px 20px;
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 24px rgba(99, 102, 241, 0.25);
+      display: none; align-items: center; justify-content: space-between; gap: 16px;
+      z-index: 950; animation: bannerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    @keyframes bannerIn {
+      from { opacity: 0; transform: translateX(-50%) translateY(-14px); }
+      to { opacity: 1; transform: translateX(-50%) translateY(0); }
+    }
+    .cam-helper-left {
+      display: flex; align-items: center; gap: 14px; min-width: 0;
+    }
+    .cam-helper-icon {
+      font-size: 26px; flex-shrink: 0;
+    }
+    .cam-helper-title {
+      font-size: 13px; font-weight: 700; color: #fff;
+    }
+    .cam-helper-desc {
+      font-size: 11px; color: var(--text-sub); margin-top: 2px;
+      line-height: 1.4;
+    }
+    .cam-helper-actions {
+      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    }
+    .cam-banner-btn {
+      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 700;
+      border: 1px solid var(--glass-border); cursor: pointer;
+      display: flex; align-items: center; gap: 5px;
+      transition: all 0.15s ease;
+    }
+    .cam-banner-btn.primary {
+      background: var(--accent); border-color: var(--accent); color: #fff;
+      box-shadow: 0 0 14px var(--accent-glow);
+    }
+    .cam-banner-btn.primary:hover {
+      background: #4f46e5;
+    }
+    .cam-banner-btn.secondary {
+      background: rgba(255, 255, 255, 0.08); color: #fff;
+    }
+    .cam-banner-btn.secondary:hover {
+      background: rgba(255, 255, 255, 0.16);
+    }
+    .cam-banner-close {
+      width: 26px; height: 26px; border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
+      color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 11px;
+    }
+    .cam-banner-close:hover {
+      background: rgba(255, 255, 255, 0.15); color: #fff;
+    }
+
+    /* ── SPATIAL STATUS TELEMETRY HUD (Bottom-Right) ── */
+    #spatial-status-hud {
+      position: absolute; bottom: 16px; right: 20px;
+      background: rgba(14, 20, 32, 0.85);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(14px);
+      padding: 8px 16px; border-radius: 99px;
+      display: flex; align-items: center; gap: 14px;
+      font-size: 11px; font-weight: 600; color: var(--text-sub);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+      z-index: 50; user-select: none;
+    }
+    .spatial-badge {
+      display: flex; align-items: center; gap: 5px;
+    }
+    .spatial-dot {
+      width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted);
+    }
+    .spatial-dot.active {
+      background: var(--emerald); box-shadow: 0 0 8px var(--emerald);
+    }
+
+    /* ── TOAST NOTIFICATION ── */
+    #hud-toast {
+      position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
+      background: rgba(14, 20, 32, 0.92);
+      border: 1px solid var(--glass-border);
+      backdrop-filter: blur(16px);
+      color: #fff; font-size: 13px; font-weight: 600;
+      padding: 9px 20px; border-radius: 99px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      opacity: 0; pointer-events: none;
+      transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 1000;
+    }
+    #hud-toast.show {
+      opacity: 1; transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body data-theme="stark">
+
+  <!-- BACKGROUND STAGE -->
+  <div id="stage-container">
+    <video id="bg-camera" autoplay playsinline muted></video>
+    <div id="bg-studio"></div>
+    <div id="bg-scrim"></div>
+  </div>
+
+  <!-- BAREHANDS HAND TRACKING OVERLAY -->
+  <canvas id="hand-overlay-canvas"></canvas>
+  <div id="hand-cursor" class="hand-cursor">
+    <div class="cursor-tag" id="cursor-tag">POINTER</div>
+    <svg class="dwell-svg" viewBox="0 0 50 50">
+      <circle class="dwell-circle-bg" cx="25" cy="25" r="20" />
+      <circle class="dwell-circle-bar" id="dwell-circle-bar" cx="25" cy="25" r="20" />
+    </svg>
+  </div>
+
+  <!-- HUD NAVIGATION HEADER -->
+  <header id="hud-header">
+    <div class="hud-brand" onclick="resetLayout()">
+      <div class="brand-symbol">J</div>
+      <div class="brand-text">
+        <span class="brand-title">JARVIS</span>
+        <span class="brand-sub">Spatial Assistant HUD</span>
+      </div>
+    </div>
+
+    <div class="hud-center-controls">
+      <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle Camera Video Feed">
+        <span class="btn-icon">📷</span>
+        <span id="txt-btn-cam">Camera</span>
+      </button>
+
+      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleBarehandsTracking()" title="Toggle Hand Gesture Tracking">
+        <span class="btn-icon">🖐️</span>
+        <span>Barehands</span>
+      </button>
+
+      <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)">
+        <span class="btn-icon">🎮</span>
+        <span>Sim Hand <small style="opacity:0.6">[V]</small></span>
+      </button>
+
+      <button class="hud-toggle-btn active" id="btn-toggle-tree" onclick="toggleWindow('win-tree')" title="Show/Hide PC File Tree">
+        <span class="btn-icon">📂</span>
+        <span>Files</span>
+      </button>
+
+      <button class="hud-toggle-btn active" id="btn-toggle-chat" onclick="toggleWindow('win-chat')" title="Show/Hide Chat">
+        <span class="btn-icon">💬</span>
+        <span>Directives</span>
+      </button>
+
+      <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace Settings">
+        <span class="btn-icon">⚙️</span>
+        <span>Settings</span>
+      </button>
+
+      <button class="hud-toggle-btn" onclick="openStandaloneTab()" title="Open JARVIS in Standalone Window for direct Camera Hardware access">
+        <span class="btn-icon">↗️</span>
+        <span>Pop Out</span>
+      </button>
+
+      <button class="hud-toggle-btn" onclick="resetLayout()" title="Snap Windows to Balanced HUD">
+        <span class="btn-icon">📐</span>
+        <span>Reset</span>
+      </button>
+    </div>
+
+    <div class="hud-status-group">
+      <div class="status-pill online" id="status-pill">
+        <span class="status-dot"></span>
+        <span id="status-txt">Online</span>
+      </div>
+      <div class="status-pill" id="enc-badge" style="font-size: 10px;">AES-256</div>
+    </div>
+  </header>
+
+  <!-- WORKSPACE DESKTOP STAGE -->
+  <div id="workspace-stage">
+
+    <!-- CAMERA DIAGNOSTICS & HELPER BANNER -->
+    <div id="cam-helper-banner" class="cam-helper-banner">
+      <div class="cam-helper-left">
+        <div class="cam-helper-icon">📷</div>
+        <div>
+          <div class="cam-helper-title" id="cam-banner-title">Camera Feed Notice</div>
+          <div class="cam-helper-desc" id="cam-banner-desc">Webcam access may be blocked inside the preview iframe. Click "Open in New Tab" for direct hardware permission, or use "Sim Hand" to test all gestures instantly!</div>
+        </div>
+      </div>
+      <div class="cam-helper-actions">
+        <button class="cam-banner-btn primary" onclick="openStandaloneTab()">↗️ Open in New Tab</button>
+        <button class="cam-banner-btn secondary" onclick="enableVirtualHandSimulator()">🖐️ Sim Hand Mode</button>
+        <button class="cam-banner-btn secondary" onclick="enableCyberStageFeed()">🎥 Stage Simulation</button>
+        <button class="cam-banner-close" onclick="closeCamHelper()">✕</button>
+      </div>
+    </div>
+
+    <!-- PANEL 1: JARVIS CORE TELEMETRY -->
+    <div class="glass-window" id="win-telemetry" style="top: 24px; left: 24px;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-telemetry')">
+        <div class="window-title-group">
+          <span class="window-icon">⚛️</span>
+          <span>Core Telemetry</span>
+        </div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="toggleMinimize('win-telemetry')">_</button>
+        </div>
+      </div>
+      <div class="window-body telemetry-content">
+        <div class="reactor-pod">
+          <div class="reactor-disc">
+            <div class="reactor-core"></div>
+          </div>
+          <div class="reactor-state-tag" id="reactor-status">JARVIS ACTIVE</div>
+        </div>
+
+        <div class="metric-grid">
+          <div class="metric-card">
+            <div class="metric-lbl">Memory (RSS)</div>
+            <div class="metric-val" id="met-ram">-- MB</div>
+            <div class="metric-sub">Heap: <span id="met-heap">--</span> MB</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-lbl">Uptime</div>
+            <div class="metric-val" id="met-uptime">-- s</div>
+            <div class="metric-sub">Sockets: <span id="met-sockets">1</span></div>
+          </div>
+        </div>
+
+        <div class="telemetry-actions">
+          <button class="action-btn primary" id="btn-wake" onclick="doWake()">Wake System</button>
+          <button class="action-btn secondary" onclick="requestSystemDiagnostics()">Diagnostics</button>
+        </div>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-telemetry')" title="Tactile Glass Grab Handle"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-telemetry')" title="Drag to Resize Glass Window"></div>
+    </div>
+
+    <!-- PANEL 2: SPATIAL DIRECTIVES & CHAT STREAM -->
+    <div class="glass-window" id="win-chat" style="top: 24px; left: 364px;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-chat')">
+        <div class="window-title-group">
+          <span class="window-icon">💬</span>
+          <span>Command & Dialogue</span>
+        </div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="toggleMinimize('win-chat')">_</button>
+        </div>
+      </div>
+      <div class="window-body chat-container">
+        <div class="chat-feed" id="chat-feed"></div>
+
+        <div class="suggestion-row">
+          <div class="sugg-chip" onclick="sendSuggestion('Activate Barehands')">🖐️ Activate Barehands</div>
+          <div class="sugg-chip" onclick="sendSuggestion('System status check')">📊 Status Check</div>
+          <div class="sugg-chip" onclick="sendSuggestion('List active project modules')">🧩 Project Modules</div>
+          <div class="sugg-chip" onclick="sendSuggestion('Explain current workspace architecture')">🏗️ Architecture</div>
+        </div>
+
+        <div class="chat-footer">
+          <input class="chat-input" id="chat-input" placeholder="Give JARVIS a directive or ask a question…" autocomplete="off">
+          
+          <label class="chat-btn chat-btn-icon" for="file-upload-input" title="Attach file">📎</label>
+          <input type="file" id="file-upload-input" multiple style="display:none">
+
+          <button class="chat-btn chat-btn-icon" id="mic-btn" onclick="doMic()" title="Voice command">🎤</button>
+          <button class="chat-btn chat-btn-send" onclick="doSend()">Send</button>
+        </div>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-chat')" title="Tactile Glass Grab Handle"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-chat')" title="Drag to Resize Glass Window"></div>
+    </div>
+
+    <!-- PANEL 3: PC FILE ENVIRONMENT TREE -->
+    <div class="glass-window" id="win-tree" style="top: 24px; left: 864px;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-tree')">
+        <div class="window-title-group">
+          <span class="window-icon">📂</span>
+          <span>PC Environment & Files</span>
+        </div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="toggleMinimize('win-tree')">_</button>
+        </div>
+      </div>
+      <div class="window-body tree-container">
+        <div class="tree-toolbar">
+          <input class="tree-search" id="tree-search" placeholder="Filter files…" oninput="filterTree()">
+          <button class="tree-refresh-btn" onclick="loadProjectTree()" title="Refresh file hierarchy">↻</button>
+        </div>
+        <div class="tree-viewport" id="tree-viewport">
+          <div style="padding: 16px; color: var(--text-muted); font-size: 12px;">Loading workspace files…</div>
+        </div>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-tree')" title="Tactile Glass Grab Handle"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-tree')" title="Drag to Resize Glass Window"></div>
+    </div>
+
+    <!-- PANEL 4: FILE INSPECTOR & CODE VIEWER -->
+    <div class="glass-window" id="win-inspector" style="top: 220px; left: 450px; display: none;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-inspector')">
+        <div class="window-title-group">
+          <span class="window-icon">📄</span>
+          <span id="inspector-title">File Inspector</span>
+        </div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="closeInspector()">✕</button>
+        </div>
+      </div>
+      <div class="window-body inspector-container">
+        <div class="inspector-bar">
+          <span class="inspector-path" id="inspector-path">Select a file</span>
+          <div class="inspector-actions">
+            <button class="insp-action-btn" onclick="copyInspectorCode()">Copy</button>
+            <button class="insp-action-btn" onclick="sendInspectorFileToJarvis()">Ask JARVIS</button>
+          </div>
+        </div>
+        <div class="inspector-code-wrap">
+          <pre class="code-pre" id="inspector-code">// Select a file from the tree to inspect</pre>
+        </div>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-inspector')" title="Tactile Glass Grab Handle"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-inspector')" title="Drag to Resize Glass Window"></div>
+    </div>
+
+    <!-- PANEL 5: WORKSPACE SETTINGS & BAREHANDS -->
+    <div class="glass-window" id="win-settings" style="top: 80px; left: 200px; width: 440px; display: none;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-settings')">
+        <div class="window-title-group">
+          <span class="window-icon">⚙️</span>
+          <span>Workspace & Gestures</span>
+        </div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="toggleWindow('win-settings')">✕</button>
+        </div>
+      </div>
+      <div class="window-body settings-body">
+        <div>
+          <div class="settings-section-title">Spatial Interaction Presets</div>
+          <div class="preset-grid">
+            <button class="preset-btn" onclick="applyPreset('balanced')">📐 Balanced HUD</button>
+            <button class="preset-btn" onclick="applyPreset('dev')">💻 Code & Files Focus</button>
+            <button class="preset-btn" onclick="applyPreset('spatial')">🖐️ Barehands Stage</button>
+            <button class="preset-btn" onclick="resetLayout()">🔄 Reset Positions</button>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Barehands & Gesture Grabbing Modes</div>
+          
+          <!-- Pinch Grab -->
+          <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <span class="settings-label">1. Precision Pinch Sensitivity</span>
+              <span class="settings-desc" id="lbl-pinch-thresh" style="font-weight:700; color:var(--emerald);">52 px</span>
+            </div>
+            <span class="settings-desc">Bring thumb tip & index tip together to grab windows</span>
+            <input type="range" class="range-input" min="30" max="85" value="52" id="rng-pinch" oninput="updatePinchThreshold(this.value)">
+          </div>
+
+          <!-- Fist Grab -->
+          <div class="settings-row" style="margin-top: 8px;">
+            <div class="settings-label-group">
+              <span class="settings-label">2. Closed Fist / Palm Clench Grab</span>
+              <span class="settings-desc">Curl fingers into palm over a window to firmly grasp</span>
+            </div>
+            <div class="switch-toggle on" id="sw-fist" onclick="toggleFistGrab()">
+              <div class="switch-knob"></div>
+            </div>
+          </div>
+
+          <!-- Dwell Grab -->
+          <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 8px;">
+            <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
+              <div class="settings-label-group">
+                <span class="settings-label">3. Magnetic Hover Dwell Lock</span>
+                <span class="settings-desc">Rest palm/pointer over window to auto-lock without pinching</span>
+              </div>
+              <div class="switch-toggle on" id="sw-dwell" onclick="toggleDwellGrab()">
+                <div class="switch-knob"></div>
+              </div>
+            </div>
+            <div class="range-wrap" id="dwell-range-wrap">
+              <div style="display: flex; justify-content: space-between; font-size: 11px;">
+                <span>Hover Lock Time</span>
+                <span id="lbl-dwell-time">750 ms</span>
+              </div>
+              <input type="range" class="range-input" min="400" max="1500" step="50" value="750" id="rng-dwell" oninput="updateDwellDuration(this.value)">
+            </div>
+          </div>
+
+          <!-- Glass Body Grab Anywhere -->
+          <div class="settings-row" style="margin-top: 8px;">
+            <div class="settings-label-group">
+              <span class="settings-label">4. Touch Glass Anywhere Drag</span>
+              <span class="settings-desc">Click or touch any empty glass surface to move window</span>
+            </div>
+            <div class="switch-toggle on" id="sw-glass-drag" onclick="toggleGlassDragAnywhere()">
+              <div class="switch-knob"></div>
+            </div>
+          </div>
+
+          <!-- Haptic Audio Foley -->
+          <div class="settings-row" style="margin-top: 8px;">
+            <div class="settings-label-group">
+              <span class="settings-label">Tactile Sound Foley (Synthesizer)</span>
+              <span class="settings-desc">Acoustic pop on grab, settle on place, whoosh on fling</span>
+            </div>
+            <div class="switch-toggle on" id="sw-foley" onclick="toggleFoleyAudio()">
+              <div class="switch-knob"></div>
+            </div>
+          </div>
+
+          <!-- Camera Source Selector -->
+          <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
+            <span class="settings-label">Camera Video Source</span>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <select id="sel-camera" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:12px;" onchange="switchCameraDevice(this.value)">
+                <option value="">Default User Camera</option>
+              </select>
+              <button class="preset-btn" style="padding: 6px 12px; margin: 0;" onclick="cycleCamera()">Cycle</button>
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Surface Optics & Transparency</div>
+          <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 10px;">
+            <div class="range-wrap">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>Glass Acrylic Opacity</span>
+                <span id="lbl-opacity">82%</span>
+              </div>
+              <input type="range" class="range-input" min="40" max="98" value="82" id="rng-opacity" oninput="updateGlassOpacity(this.value)">
+            </div>
+            <div class="range-wrap">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>Backdrop Blur</span>
+                <span id="lbl-blur">24px</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="40" value="24" id="rng-blur" oninput="updateGlassBlur(this.value)">
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <div class="settings-section-title">Visual Tone & Palette</div>
+          <div class="preset-grid">
+            <button class="preset-btn" onclick="setTheme('stark')">Stark Indigo</button>
+            <button class="preset-btn" onclick="setTheme('emerald')">Matrix Emerald</button>
+            <button class="preset-btn" onclick="setTheme('titanium')">Titanium Cyan</button>
+          </div>
+        </div>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-settings')" title="Tactile Glass Grab Handle"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-settings')" title="Drag to Resize Glass Window"></div>
+    </div>
+
+    <!-- SPATIAL STATUS TELEMETRY HUD (Bottom-Right) -->
+    <div id="spatial-status-hud">
+      <div class="spatial-badge">
+        <span class="spatial-dot" id="dot-cam"></span>
+        <span id="txt-cam-status">Cam: Standby</span>
+      </div>
+      <div class="spatial-badge">
+        <span class="spatial-dot" id="dot-hands"></span>
+        <span id="txt-hands-status">Barehands: Off</span>
+      </div>
+      <div class="spatial-badge" id="badge-gesture" style="color: #38bdf8;">
+        <span>Gesture: Pointer</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- TOAST NOTIFICATION -->
+  <div id="hud-toast"></div>
+
+  <!-- SCRIPT LOGIC -->
+  <script>
+    // ── Authentication & Security ──────────────────────────────────────────
+    const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
+    const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
+
+    function _authHeader() { return { 'Authorization': `Bearer ${_authToken}` }; }
+    function _authFetch(url, opts = {}) {
+      opts.headers = Object.assign({}, opts.headers, _authHeader());
+      return fetch(url, opts);
+    }
+
+    const _AES_SALT = 'JARVIS-DASHBOARD-v1';
+    let _aesKey = null;
+    function _initCrypto(key) {
+      if (typeof CryptoJS === 'undefined') return false;
+      try {
+        _aesKey = CryptoJS.SHA256(key + _AES_SALT);
+        return true;
+      } catch { return false; }
+    }
+    function _encrypt(plaintext) {
+      if (!_aesKey || typeof CryptoJS === 'undefined') return null;
+      try {
+        const iv  = CryptoJS.lib.WordArray.random(16);
+        const enc = CryptoJS.AES.encrypt(CryptoJS.enc.Utf8.parse(plaintext), _aesKey, { iv, mode: CryptoJS.mode.CBC, padding: CryptoJS.pad.Pkcs7 });
+        const ivHex = iv.toString(CryptoJS.enc.Hex);
+        const ctHex = enc.ciphertext.toString(CryptoJS.enc.Hex);
+        const hex   = ivHex + ctHex;
+        const bytes = new Uint8Array(hex.length / 2);
+        for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+        return btoa(String.fromCharCode(...bytes));
+      } catch { return null; }
+    }
+    const _encReady = _initCrypto(_sessionKey);
+
+    // ── Toast Utility ─────────────────────────────────────────────────────────
+    let _toastTimer;
+    function toast(msg) {
+      const t = document.getElementById('hud-toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      clearTimeout(_toastTimer);
+      _toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+    }
+
+    // ── Escaping ──────────────────────────────────────────────────────────────
+    function esc(s) {
+      return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // ── WebSocket Relay ───────────────────────────────────────────────────────
+    const chatFeed   = document.getElementById('chat-feed');
+    const statusPill = document.getElementById('status-pill');
+    const statusTxt  = document.getElementById('status-txt');
+    const reactorTag = document.getElementById('reactor-status');
+
+    const _wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+    const _wsUrl   = `${_wsProto}://${location.host}/ws?token=${encodeURIComponent(_authToken)}`;
+    let ws;
+
+    function initWebSocket() {
+      ws = new WebSocket(_wsUrl);
+      ws.onopen = () => {
+        statusPill.className = 'status-pill online';
+        statusTxt.textContent = 'Active';
+        toast('Connected to JARVIS');
+      };
+      ws.onclose = () => {
+        statusPill.className = 'status-pill';
+        statusTxt.textContent = 'Offline';
+        setTimeout(initWebSocket, 3000);
+      };
+      ws.onerror = () => {
+        statusPill.className = 'status-pill';
+        statusTxt.textContent = 'Error';
+      };
+      ws.onmessage = (e) => {
+        try {
+          const m = JSON.parse(e.data);
+          if (m.type === 'log') appendChat(m.speaker, m.text);
+          if (m.type === 'status') {
+            reactorTag.textContent = m.state === 'active' ? 'JARVIS ACTIVE' : 'JARVIS SLEEPING';
+          }
+          if (m.type === 'wake') {
+            toast('Systems awake and responsive');
+            reactorTag.textContent = 'JARVIS ACTIVE';
+          }
+          if (m.type === 'barehands_control') {
+            if (m.active && !handTrackingActive) {
+              toggleBarehandsTracking();
+            } else if (!m.active && handTrackingActive) {
+              toggleBarehandsTracking();
+            }
+          }
+        } catch (err) { console.error('WS msg parse error:', err); }
+      };
+    }
+    initWebSocket();
+
+    function appendChat(speaker, text) {
+      const b = document.createElement('div');
+      b.className = `chat-bubble speaker-${speaker}`;
+      const name = speaker === 'jarvis' ? 'JARVIS' : (speaker === 'user' ? 'You' : 'System');
+
+      // Check if text has code blocks
+      let formatted = esc(text);
+      if (text.includes('```')) {
+        formatted = text.replace(/```([\s\S]*?)```/g, (_m, code) => `<div class="code-block">${esc(code.trim())}</div>`);
+      }
+
+      b.innerHTML = `<div class="bubble-header">${name}</div>${formatted}`;
+      chatFeed.appendChild(b);
+      chatFeed.scrollTop = chatFeed.scrollHeight;
+    }
+
+    function doSend() {
+      const inp = document.getElementById('chat-input');
+      const txt = inp.value.trim();
+      if (!txt) return;
+      inp.value = '';
+      appendChat('user', txt);
+      const enc = _encrypt(txt);
+      const body = enc ? { enc } : { text: txt };
+      _authFetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+    }
+
+    function sendSuggestion(text) {
+      document.getElementById('chat-input').value = text;
+      doSend();
+    }
+
+    function doWake() {
+      _authFetch('/api/wake', { method: 'POST' });
+      toast('Sending wake directive…');
+    }
+
+    function requestSystemDiagnostics() {
+      sendSuggestion('Report core telemetry and system health');
+    }
+
+    document.getElementById('chat-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        doSend();
+      }
+    });
+
+    // ── Telemetry Polling ─────────────────────────────────────────────────────
+    async function updateTelemetry() {
+      try {
+        const res = await _authFetch('/api/system-status');
+        if (res.ok) {
+          const data = await res.json();
+          document.getElementById('met-ram').textContent = `${data.memory.rssMB} MB`;
+          document.getElementById('met-heap').textContent = `${data.memory.heapUsedMB}`;
+          document.getElementById('met-uptime').textContent = `${data.uptime}s`;
+          document.getElementById('met-sockets').textContent = `${data.activeSockets}`;
+        }
+      } catch {}
+    }
+    setInterval(updateTelemetry, 5000);
+    updateTelemetry();
+
+    // ── PC ENVIRONMENT FILE TREE ──────────────────────────────────────────────
+    let rawTreeData = [];
+
+    async function loadProjectTree() {
+      const vp = document.getElementById('tree-viewport');
+      vp.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 12px;">Scanning workspace…</div>';
+      try {
+        const res = await _authFetch('/api/tree');
+        if (res.ok) {
+          const data = await res.json();
+          rawTreeData = data.tree || [];
+          renderTree(rawTreeData, vp);
+        } else {
+          vp.innerHTML = '<div style="padding: 14px; color: #f87171; font-size: 12px;">Failed to load files</div>';
+        }
+      } catch (e) {
+        vp.innerHTML = `<div style="padding: 14px; color: #f87171; font-size: 12px;">Error: ${esc(e.message)}</div>`;
+      }
+    }
+
+    function renderTree(nodes, container) {
+      container.innerHTML = '';
+      if (!nodes || nodes.length === 0) {
+        container.innerHTML = '<div style="padding: 14px; color: var(--text-muted); font-size: 12px;">No matching files</div>';
+        return;
+      }
+
+      nodes.forEach(node => {
+        const item = document.createElement('div');
+        if (node.type === 'dir') {
+          item.className = 'tree-node';
+          item.innerHTML = `<span class="node-icon">📁</span><span class="node-name">${esc(node.name)}</span>`;
+          const childrenContainer = document.createElement('div');
+          childrenContainer.className = 'node-children';
+          childrenContainer.style.display = 'none';
+
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const isOpen = childrenContainer.style.display !== 'none';
+            childrenContainer.style.display = isOpen ? 'none' : 'flex';
+            item.querySelector('.node-icon').textContent = isOpen ? '📁' : '📂';
+          });
+
+          container.appendChild(item);
+          container.appendChild(childrenContainer);
+          if (node.children) renderTree(node.children, childrenContainer);
+        } else {
+          item.className = 'tree-node';
+          const ext = (node.name.split('.').pop() || '').toLowerCase();
+          let icon = '📄';
+          if (['py', 'pyw'].includes(ext)) icon = '🐍';
+          else if (['ts', 'js', 'json'].includes(ext)) icon = '📜';
+          else if (['html', 'css'].includes(ext)) icon = '🌐';
+          else if (['md', 'txt'].includes(ext)) icon = '📝';
+
+          const sizeStr = node.size ? (node.size > 1024 ? `${(node.size/1024).toFixed(1)}K` : `${node.size}B`) : '';
+          item.innerHTML = `<span class="node-icon">${icon}</span><span class="node-name">${esc(node.name)}</span><span class="node-size">${sizeStr}</span>`;
+
+          item.addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.querySelectorAll('.tree-node').forEach(el => el.classList.remove('active-file'));
+            item.classList.add('active-file');
+            openFileInInspector(node.path);
+          });
+          container.appendChild(item);
+        }
+      });
+    }
+
+    function filterTree() {
+      const q = document.getElementById('tree-search').value.toLowerCase().trim();
+      const vp = document.getElementById('tree-viewport');
+      if (!q) {
+        renderTree(rawTreeData, vp);
+        return;
+      }
+      function searchFilter(list) {
+        const out = [];
+        for (const n of list) {
+          if (n.type === 'dir') {
+            const sub = searchFilter(n.children || []);
+            if (sub.length > 0 || n.name.toLowerCase().includes(q)) {
+              out.push(Object.assign({}, n, { children: sub }));
+            }
+          } else if (n.name.toLowerCase().includes(q)) {
+            out.push(n);
+          }
+        }
+        return out;
+      }
+      const filtered = searchFilter(rawTreeData);
+      renderTree(filtered, vp);
+      // Auto expand all for searched results
+      vp.querySelectorAll('.node-children').forEach(c => c.style.display = 'flex');
+    }
+
+    loadProjectTree();
+
+    // ── FILE INSPECTOR ──
+    let currentInspectedPath = '';
+    let currentInspectedContent = '';
+
+    async function openFileInInspector(filePath) {
+      const win = document.getElementById('win-inspector');
+      win.style.display = 'flex';
+      bringToFront(win);
+      document.getElementById('inspector-title').textContent = filePath.split('/').pop();
+      document.getElementById('inspector-path').textContent = filePath;
+      document.getElementById('inspector-code').textContent = 'Loading content…';
+      currentInspectedPath = filePath;
+
+      try {
+        const res = await _authFetch(`/api/file-content?path=${encodeURIComponent(filePath)}`);
+        if (res.ok) {
+          const data = await res.json();
+          currentInspectedContent = data.content || '';
+          document.getElementById('inspector-code').textContent = currentInspectedContent;
+        } else {
+          document.getElementById('inspector-code').textContent = '// Could not open file';
+        }
+      } catch (err) {
+        document.getElementById('inspector-code').textContent = `// Error reading file: ${err.message}`;
+      }
+    }
+
+    function closeInspector() {
+      document.getElementById('win-inspector').style.display = 'none';
+    }
+
+    function copyInspectorCode() {
+      if (!currentInspectedContent) return;
+      navigator.clipboard?.writeText(currentInspectedContent).then(() => toast('Code copied to clipboard'));
+    }
+
+    function sendInspectorFileToJarvis() {
+      if (!currentInspectedPath) return;
+      const snippet = currentInspectedContent.length > 400 ? currentInspectedContent.slice(0, 400) + '...' : currentInspectedContent;
+      const prompt = `Please review and explain the architecture of file "${currentInspectedPath}":\n\`\`\`\n${snippet}\n\`\`\``;
+      document.getElementById('chat-input').value = prompt;
+      doSend();
+    }
+
+    // ── FOLEY AUDIO SYNTHESIZER ──
+    const FoleyAudio = {
+      ctx: null,
+      enabled: true,
+      init() {
+        if (!this.ctx) {
+          const AudioCtx = window.AudioContext || window.webkitAudioContext;
+          if (AudioCtx) this.ctx = new AudioCtx();
+        }
+        if (this.ctx && this.ctx.state === 'suspended') {
+          this.ctx.resume();
+        }
+      },
+      grab() {
+        if (!this.enabled) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(160, t);
+          osc.frequency.exponentialRampToValueAtTime(360, t + 0.05);
+          gain.gain.setValueAtTime(0.12, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.06);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.06);
+        } catch (_) {}
+      },
+      place() {
+        if (!this.enabled) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(240, t);
+          osc.frequency.exponentialRampToValueAtTime(75, t + 0.09);
+          gain.gain.setValueAtTime(0.14, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.1);
+        } catch (_) {}
+      },
+      throw_() {
+        if (!this.enabled) return;
+        try {
+          this.init();
+          if (!this.ctx) return;
+          const t = this.ctx.currentTime;
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.setValueAtTime(320, t);
+          osc.frequency.exponentialRampToValueAtTime(140, t + 0.12);
+          gain.gain.setValueAtTime(0.08, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(t);
+          osc.stop(t + 0.13);
+        } catch (_) {}
+      }
+    };
+
+    function toggleFoleyAudio() {
+      FoleyAudio.enabled = !FoleyAudio.enabled;
+      document.getElementById('sw-foley').classList.toggle('on', FoleyAudio.enabled);
+      if (FoleyAudio.enabled) FoleyAudio.grab();
+      toast(FoleyAudio.enabled ? 'Acoustic Foley feedback enabled' : 'Foley feedback muted');
+    }
+
+    // ── WORKSPACE WINDOW DRAG, RESIZE & MOMENTUM ──
+    let activeDragWin = null;
+    let dragStartX = 0, dragStartY = 0;
+    let initialLeft = 0, initialTop = 0;
+    let highestZ = 30;
+    let glassDragAnywhere = true;
+    let lastDragPos = { x: 0, y: 0, time: 0 };
+    let dragVelocity = { vx: 0, vy: 0 };
+
+    function bringToFront(win) {
+      highestZ += 2;
+      win.style.zIndex = highestZ;
+      document.querySelectorAll('.glass-window').forEach(w => w.classList.remove('focused'));
+      win.classList.add('focused');
+    }
+
+    function startWindowDrag(e, winId) {
+      if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('.tree-search') || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
+      const win = document.getElementById(winId);
+      if (!win) return;
+
+      bringToFront(win);
+      activeDragWin = win;
+      activeDragWin.classList.add('grabbed');
+      FoleyAudio.grab();
+
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      initialLeft = win.offsetLeft;
+      initialTop = win.offsetTop;
+      lastDragPos = { x: e.clientX, y: e.clientY, time: performance.now() };
+      dragVelocity = { vx: 0, vy: 0 };
+
+      document.addEventListener('pointermove', onWindowDragMove);
+      document.addEventListener('pointerup', onWindowDragEnd);
+      e.preventDefault();
+    }
+
+    function onWindowDragMove(e) {
+      if (!activeDragWin) return;
+      const dx = e.clientX - dragStartX;
+      const dy = e.clientY - dragStartY;
+      const newL = Math.max(8, Math.min(window.innerWidth - activeDragWin.offsetWidth - 8, initialLeft + dx));
+      const newT = Math.max(8, Math.min(window.innerHeight - 60, initialTop + dy));
+      activeDragWin.style.left = `${newL}px`;
+      activeDragWin.style.top = `${newT}px`;
+
+      // Track velocity for tactile release fling
+      const now = performance.now();
+      const dt = Math.max(1, now - lastDragPos.time);
+      dragVelocity = {
+        vx: (e.clientX - lastDragPos.x) / dt,
+        vy: (e.clientY - lastDragPos.y) / dt
+      };
+      lastDragPos = { x: e.clientX, y: e.clientY, time: now };
+    }
+
+    function onWindowDragEnd() {
+      if (activeDragWin) {
+        activeDragWin.classList.remove('grabbed');
+        const speed = Math.hypot(dragVelocity.vx, dragVelocity.vy);
+        if (speed > 0.45) {
+          FoleyAudio.throw_();
+        } else {
+          FoleyAudio.place();
+        }
+        activeDragWin = null;
+      }
+      document.removeEventListener('pointermove', onWindowDragMove);
+      document.removeEventListener('pointerup', onWindowDragEnd);
+    }
+
+    // Window Corner Resizer
+    let activeResizeWin = null;
+    let resizeStartX = 0, resizeStartY = 0;
+    let initialWidth = 0, initialHeight = 0;
+
+    function startWindowResize(e, winId) {
+      e.stopPropagation();
+      const win = document.getElementById(winId);
+      if (!win) return;
+      bringToFront(win);
+      activeResizeWin = win;
+      resizeStartX = e.clientX;
+      resizeStartY = e.clientY;
+      initialWidth = win.offsetWidth;
+      initialHeight = win.offsetHeight;
+      document.addEventListener('pointermove', onWindowResizeMove);
+      document.addEventListener('pointerup', onWindowResizeEnd);
+      e.preventDefault();
+    }
+
+    function onWindowResizeMove(e) {
+      if (!activeResizeWin) return;
+      const nw = Math.max(260, Math.min(window.innerWidth - activeResizeWin.offsetLeft - 16, initialWidth + (e.clientX - resizeStartX)));
+      const nh = Math.max(180, Math.min(window.innerHeight - activeResizeWin.offsetTop - 16, initialHeight + (e.clientY - resizeStartY)));
+      activeResizeWin.style.width = `${nw}px`;
+      activeResizeWin.style.height = `${nh}px`;
+    }
+
+    function onWindowResizeEnd() {
+      if (activeResizeWin) {
+        FoleyAudio.place();
+        activeResizeWin = null;
+      }
+      document.removeEventListener('pointermove', onWindowResizeMove);
+      document.removeEventListener('pointerup', onWindowResizeEnd);
+    }
+
+    function toggleMinimize(winId) {
+      const win = document.getElementById(winId);
+      if (win) {
+        win.classList.toggle('minimized');
+        FoleyAudio.place();
+      }
+    }
+
+    function toggleWindow(winId) {
+      const win = document.getElementById(winId);
+      if (!win) return;
+      if (win.style.display === 'none') {
+        win.style.display = 'flex';
+        bringToFront(win);
+        FoleyAudio.grab();
+      } else {
+        win.style.display = 'none';
+        FoleyAudio.place();
+      }
+    }
+
+    function toggleGlassDragAnywhere() {
+      glassDragAnywhere = !glassDragAnywhere;
+      document.getElementById('sw-glass-drag').classList.toggle('on', glassDragAnywhere);
+      toast(glassDragAnywhere ? 'Glass drag-anywhere enabled' : 'Header grab only');
+    }
+
+    // ── LAYOUT PRESETS ──
+    function resetLayout() {
+      const t = document.getElementById('win-telemetry');
+      const c = document.getElementById('win-chat');
+      const tr = document.getElementById('win-tree');
+
+      if (t) { t.style.display = 'flex'; t.style.left = '24px'; t.style.top = '24px'; t.style.width = '320px'; t.style.height = 'auto'; t.classList.remove('minimized'); }
+      if (c) { c.style.display = 'flex'; c.style.left = '364px'; c.style.top = '24px'; c.style.width = '480px'; c.style.height = 'calc(100vh - 110px)'; c.classList.remove('minimized'); }
+      if (tr) { tr.style.display = 'flex'; tr.style.left = '864px'; tr.style.top = '24px'; tr.style.width = '380px'; tr.style.height = 'calc(100vh - 110px)'; tr.classList.remove('minimized'); }
+      FoleyAudio.place();
+      toast('Workspace layout reset');
+    }
+
+    function applyPreset(mode) {
+      if (mode === 'balanced') {
+        resetLayout();
+      } else if (mode === 'dev') {
+        const c = document.getElementById('win-chat');
+        const tr = document.getElementById('win-tree');
+        const insp = document.getElementById('win-inspector');
+        if (tr) { tr.style.display = 'flex'; tr.style.left = '24px'; tr.style.top = '24px'; tr.style.width = '320px'; tr.style.height = 'calc(100vh - 110px)'; }
+        if (insp) { insp.style.display = 'flex'; insp.style.left = '364px'; insp.style.top = '24px'; insp.style.width = '520px'; insp.style.height = 'calc(100vh - 110px)'; }
+        if (c) { c.style.display = 'flex'; c.style.left = '904px'; c.style.top = '24px'; c.style.width = '420px'; c.style.height = 'calc(100vh - 110px)'; }
+        FoleyAudio.place();
+        toast('Code & Files layout applied');
+      } else if (mode === 'spatial') {
+        enableCameraBackground();
+        const t = document.getElementById('win-telemetry');
+        const c = document.getElementById('win-chat');
+        const tr = document.getElementById('win-tree');
+        if (t) { t.style.display = 'flex'; t.style.left = '40px'; t.style.top = '70px'; t.style.width = '300px'; }
+        if (c) { c.style.display = 'flex'; c.style.left = '360px'; c.style.top = '70px'; t.style.width = '440px'; }
+        if (tr) { tr.style.display = 'flex'; tr.style.left = '820px'; tr.style.top = '70px'; }
+        FoleyAudio.place();
+        toast('Barehands Spatial Stage applied');
+      }
+    }
+
+    // ── CAMERA & HARDWARE DIAGNOSTICS ──
+    let cameraStream = null;
+    let currentCameraId = '';
+    const bgCam = document.getElementById('bg-camera');
+    const btnCam = document.getElementById('btn-toggle-cam');
+    const dotCam = document.getElementById('dot-cam');
+    const txtCamStatus = document.getElementById('txt-cam-status');
+
+    function openStandaloneTab() {
+      window.open(window.location.href, '_blank');
+    }
+
+    function showCamHelperBanner(title, desc) {
+      const banner = document.getElementById('cam-helper-banner');
+      if (title) document.getElementById('cam-banner-title').textContent = title;
+      if (desc) document.getElementById('cam-banner-desc').textContent = desc;
+      banner.style.display = 'flex';
+    }
+
+    function closeCamHelper() {
+      document.getElementById('cam-helper-banner').style.display = 'none';
+    }
+
+    async function populateCameraDevices() {
+      try {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const sel = document.getElementById('sel-camera');
+        if (!sel) return;
+        sel.innerHTML = '<option value="">Default User Camera</option>';
+        devices.filter(d => d.kind === 'videoinput').forEach((dev, idx) => {
+          const opt = document.createElement('option');
+          opt.value = dev.deviceId;
+          opt.textContent = dev.label || `Camera ${idx + 1}`;
+          sel.appendChild(opt);
+        });
+      } catch (_) {}
+    }
+
+    async function switchCameraDevice(devId) {
+      currentCameraId = devId;
+      if (cameraStream) {
+        disableCameraBackground();
+        await enableCameraBackground(devId);
+      }
+    }
+
+    async function cycleCamera() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter(d => d.kind === 'videoinput');
+        if (cams.length === 0) {
+          toast('No video cameras found');
+          return;
+        }
+        const currIdx = cams.findIndex(c => c.deviceId === currentCameraId);
+        const nextIdx = (currIdx + 1) % cams.length;
+        currentCameraId = cams[nextIdx].deviceId;
+        document.getElementById('sel-camera').value = currentCameraId;
+        await switchCameraDevice(currentCameraId);
+        toast(`Switched to: ${cams[nextIdx].label || 'Camera ' + (nextIdx + 1)}`);
+      } catch (err) {
+        toast(`Camera cycle error: ${err.message}`);
+      }
+    }
+
+    async function toggleCameraBackground() {
+      if (cameraStream) {
+        disableCameraBackground();
+      } else {
+        await enableCameraBackground();
+      }
+    }
+
+    async function enableCameraBackground(prefId) {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showCamHelperBanner('Webcam API Unavailable', 'Your browser does not support mediaDevices in this context. Use Sim Hand mode or Pop Out.');
+        enableCyberStageFeed();
+        return;
+      }
+
+      const constraints = prefId ? { video: { deviceId: { exact: prefId } } } : {
+        video: {
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          facingMode: 'user'
+        }
+      };
+
+      try {
+        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
+        bgCam.srcObject = cameraStream;
+        bgCam.classList.add('active');
+        btnCam.classList.add('active');
+        document.getElementById('txt-btn-cam').textContent = 'Camera On';
+        dotCam.classList.add('active');
+        txtCamStatus.textContent = 'Cam: Active';
+        document.body.classList.add('barehands-engaged');
+        closeCamHelper();
+        toast('Camera background active');
+        populateCameraDevices();
+      } catch (primaryErr) {
+        console.warn('Primary camera stream request failed, trying fallback constraints:', primaryErr);
+        try {
+          cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
+          bgCam.srcObject = cameraStream;
+          bgCam.classList.add('active');
+          btnCam.classList.add('active');
+          document.getElementById('txt-btn-cam').textContent = 'Camera On';
+          dotCam.classList.add('active');
+          txtCamStatus.textContent = 'Cam: Fallback';
+          document.body.classList.add('barehands-engaged');
+          closeCamHelper();
+          toast('Camera background connected');
+          populateCameraDevices();
+        } catch (fallbackErr) {
+          console.error('Camera access blocked/failed:', fallbackErr);
+          dotCam.classList.remove('active');
+          txtCamStatus.textContent = 'Cam: Blocked';
+          showCamHelperBanner(
+            'Camera Access Restricted in Iframe',
+            'Webcam permissions are locked by the browser inside this preview container. Pop out to a new tab for direct access, or enable Sim Hand to test all spatial gestures right now!'
+          );
+          enableCyberStageFeed();
+        }
+      }
+    }
+
+    function disableCameraBackground() {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach(t => t.stop());
+        cameraStream = null;
+      }
+      bgCam.srcObject = null;
+      bgCam.classList.remove('active');
+      btnCam.classList.remove('active');
+      document.getElementById('txt-btn-cam').textContent = 'Camera';
+      dotCam.classList.remove('active');
+      txtCamStatus.textContent = 'Cam: Standby';
+      if (!handTrackingActive) {
+        document.body.classList.remove('barehands-engaged');
+      }
+      toast('Camera background disabled');
+    }
+
+    // Dynamic Cyber Stage Feed (renders simulated spatial stage if webcam is locked)
+    let cyberStageActive = false;
+    let cyberCanvas = null;
+    let cyberCtx = null;
+    let cyberAnimId = null;
+
+    function enableCyberStageFeed() {
+      if (cameraStream) return;
+      cyberStageActive = true;
+      if (!cyberCanvas) {
+        cyberCanvas = document.createElement('canvas');
+        cyberCanvas.id = 'cyber-stage-canvas';
+        cyberCanvas.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0.35; z-index:1; pointer-events:none;';
+        document.getElementById('stage-container').appendChild(cyberCanvas);
+        cyberCtx = cyberCanvas.getContext('2d');
+      }
+
+      function resizeCyber() {
+        if (!cyberCanvas) return;
+        cyberCanvas.width = window.innerWidth;
+        cyberCanvas.height = window.innerHeight;
+      }
+      window.addEventListener('resize', resizeCyber);
+      resizeCyber();
+
+      let t = 0;
+      function renderCyberStage() {
+        if (!cyberStageActive || cameraStream) {
+          if (cyberCanvas) cyberCanvas.style.display = 'none';
+          return;
+        }
+        cyberCanvas.style.display = 'block';
+        const w = cyberCanvas.width;
+        const h = cyberCanvas.height;
+        cyberCtx.clearRect(0, 0, w, h);
+
+        // Ambient perspective grid
+        cyberCtx.strokeStyle = 'rgba(99, 102, 241, 0.12)';
+        cyberCtx.lineWidth = 1;
+        const gridStep = 60;
+        const offset = (t * 15) % gridStep;
+        for (let x = 0; x < w; x += gridStep) {
+          cyberCtx.beginPath();
+          cyberCtx.moveTo(x, 0);
+          cyberCtx.lineTo(x, h);
+          cyberCtx.stroke();
+        }
+        for (let y = offset; y < h; y += gridStep) {
+          cyberCtx.beginPath();
+          cyberCtx.moveTo(0, y);
+          cyberCtx.lineTo(w, y);
+          cyberCtx.stroke();
+        }
+
+        // Concentric HUD radar rings
+        const cx = w / 2, cy = h / 2;
+        cyberCtx.save();
+        cyberCtx.translate(cx, cy);
+        cyberCtx.rotate(t * 0.08);
+        cyberCtx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
+        cyberCtx.beginPath();
+        cyberCtx.arc(0, 0, 240, 0, Math.PI * 1.5);
+        cyberCtx.stroke();
+        cyberCtx.strokeStyle = 'rgba(16, 185, 129, 0.15)';
+        cyberCtx.beginPath();
+        cyberCtx.arc(0, 0, 360, Math.PI * 0.4, Math.PI * 1.8);
+        cyberCtx.stroke();
+        cyberCtx.restore();
+
+        t += 0.016;
+        cyberAnimId = requestAnimationFrame(renderCyberStage);
+      }
+      renderCyberStage();
+      toast('Synthesized Cyber Stage active');
+    }
+
+    // ── BAREHANDS GESTURE ENGINE & TUNING ──
+    let handTrackingActive = false;
+    let handTrackerLoaded = false;
+    let pinchThreshold = 52;
+    let fistGrabEnabled = true;
+    let dwellGrabEnabled = true;
+    let dwellDuration = 750;
+
+    const btnHands = document.getElementById('btn-toggle-hands');
+    const swHands = document.getElementById('sw-hands');
+    const dotHands = document.getElementById('dot-hands');
+    const txtHandsStatus = document.getElementById('txt-hands-status');
+    const badgeGesture = document.getElementById('badge-gesture');
+    const handCursor = document.getElementById('hand-cursor');
+    const cursorTag = document.getElementById('cursor-tag');
+    const dwellCircleBar = document.getElementById('dwell-circle-bar');
+    const overlayCanvas = document.getElementById('hand-overlay-canvas');
+    let overlayCtx = overlayCanvas.getContext('2d');
+
+    function resizeOverlay() {
+      overlayCanvas.width = window.innerWidth;
+      overlayCanvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeOverlay);
+    resizeOverlay();
+
+    function updatePinchThreshold(val) {
+      pinchThreshold = parseInt(val, 10);
+      document.getElementById('lbl-pinch-thresh').textContent = `${pinchThreshold} px`;
+    }
+
+    function toggleFistGrab() {
+      fistGrabEnabled = !fistGrabEnabled;
+      document.getElementById('sw-fist').classList.toggle('on', fistGrabEnabled);
+      toast(fistGrabEnabled ? 'Closed fist grab enabled' : 'Fist grab disabled');
+    }
+
+    function toggleDwellGrab() {
+      dwellGrabEnabled = !dwellGrabEnabled;
+      document.getElementById('sw-dwell').classList.toggle('on', dwellGrabEnabled);
+      document.getElementById('dwell-range-wrap').style.display = dwellGrabEnabled ? 'block' : 'none';
+      toast(dwellGrabEnabled ? 'Magnetic dwell lock enabled' : 'Dwell lock disabled');
+    }
+
+    function updateDwellDuration(val) {
+      dwellDuration = parseInt(val, 10);
+      document.getElementById('lbl-dwell-time').textContent = `${dwellDuration} ms`;
+    }
+
+    async function toggleBarehandsTracking() {
+      if (handTrackingActive) {
+        handTrackingActive = false;
+        btnHands.classList.remove('active');
+        if (swHands) swHands.classList.remove('on');
+        dotHands.classList.remove('active');
+        txtHandsStatus.textContent = 'Barehands: Off';
+        handCursor.style.display = 'none';
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        if (!cameraStream) {
+          document.body.classList.remove('barehands-engaged');
+        }
+        toast('Barehands tracking disabled');
+      } else {
+        if (!cameraStream) {
+          await enableCameraBackground();
+        }
+        handTrackingActive = true;
+        document.body.classList.add('barehands-engaged');
+        btnHands.classList.add('active');
+        if (swHands) swHands.classList.add('on');
+        dotHands.classList.add('active');
+        txtHandsStatus.textContent = 'Barehands: Active';
+        toast('Barehands tracking active: Pinch or Clench to grab');
+        startHandTrackingLoop();
+      }
+    }
+
+    // MediaPipe Hand Landmarker loop
+    let landmarker = null;
+    let handGrabbedWin = null;
+    let grabOffsetX = 0, grabOffsetY = 0;
+    let dwellAnchor = { x: 0, y: 0, startTime: 0, activeWin: null };
+
+    async function startHandTrackingLoop() {
+      if (!handTrackerLoaded) {
+        try {
+          const { FilesetResolver, HandLandmarker } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
+          const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+          landmarker = await HandLandmarker.createFromOptions(vision, {
+            baseOptions: {
+              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+              delegate: "GPU"
+            },
+            numHands: 2,
+            runningMode: "VIDEO",
+            minHandDetectionConfidence: 0.6,
+            minHandPresenceConfidence: 0.5
+          });
+          handTrackerLoaded = true;
+        } catch (e) {
+          console.warn('Could not load MediaPipe landmarker, falling back to simulated hand:', e);
+          enableVirtualHandSimulator();
+        }
+      }
+
+      let lastVideoTime = -1;
+
+      function trackingFrame(now) {
+        if (!handTrackingActive) {
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          return;
+        }
+
+        if (landmarker && bgCam && bgCam.currentTime !== lastVideoTime && bgCam.videoWidth > 0) {
+          lastVideoTime = bgCam.currentTime;
+          const res = landmarker.detectForVideo(bgCam, now);
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+          if (res.landmarks && res.landmarks.length > 0) {
+            const lms = res.landmarks[0];
+            processHandLandmarks(lms);
+          } else {
+            handCursor.style.display = 'none';
+            resetDwell();
+          }
+        }
+        requestAnimationFrame(trackingFrame);
+      }
+      requestAnimationFrame(trackingFrame);
+    }
+
+    // Process Hand Landmarks with Pinch, Fist, and Dwell Grabbing
+    function processHandLandmarks(lms) {
+      // 0: Wrist, 4: Thumb tip, 8: Index tip, 12: Middle tip, 16: Ring tip, 20: Pinky tip
+      // Landmark mirror transformation
+      const toScreen = (lm) => ({ x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight });
+
+      const wrist = toScreen(lms[0]);
+      const thmTip = toScreen(lms[4]);
+      const idxTip = toScreen(lms[8]);
+      const midTip = toScreen(lms[12]);
+      const rngTip = toScreen(lms[16]);
+      const pnkTip = toScreen(lms[20]);
+
+      // Draw skeleton joints on overlay canvas
+      drawHandSkeleton(lms, toScreen);
+
+      // Primary interaction cursor center
+      const cursorX = (idxTip.x + thmTip.x) / 2;
+      const cursorY = (idxTip.y + thmTip.y) / 2;
+      const pinchDist = Math.hypot(idxTip.x - thmTip.x, idxTip.y - thmTip.y);
+
+      // 1. PINCH DETECTION
+      const isPinching = pinchDist < pinchThreshold;
+
+      // 2. CLOSED FIST / CLENCH DETECTION
+      // Distance from fingertips to wrist vs knuckle to wrist
+      const distWristIdx = Math.hypot(idxTip.x - wrist.x, idxTip.y - wrist.y);
+      const distWristMid = Math.hypot(midTip.x - wrist.x, midTip.y - wrist.y);
+      const distWristRng = Math.hypot(rngTip.x - wrist.x, rngTip.y - wrist.y);
+      const distWristPnk = Math.hypot(pnkTip.x - wrist.x, pnkTip.y - wrist.y);
+      const avgFingerReach = (distWristIdx + distWristMid + distWristRng + distWristPnk) / 4;
+      const knuckleReach = Math.hypot(toScreen(lms[9]).x - wrist.x, toScreen(lms[9]).y - wrist.y);
+      const isFist = fistGrabEnabled && (avgFingerReach < knuckleReach * 1.35);
+
+      // Render tactile connector laser between thumb and index
+      overlayCtx.save();
+      overlayCtx.beginPath();
+      overlayCtx.moveTo(thmTip.x, thmTip.y);
+      overlayCtx.lineTo(idxTip.x, idxTip.y);
+      overlayCtx.strokeStyle = isPinching ? '#10b981' : (pinchDist < pinchThreshold * 1.5 ? 'rgba(56, 189, 248, 0.8)' : 'rgba(255, 255, 255, 0.3)');
+      overlayCtx.lineWidth = isPinching ? 4 : 2;
+      overlayCtx.stroke();
+
+      // Readout badge
+      overlayCtx.fillStyle = isPinching ? '#10b981' : 'rgba(15, 23, 42, 0.8)';
+      overlayCtx.font = '10px monospace';
+      overlayCtx.fillText(`${Math.round(pinchDist)}px`, cursorX + 12, cursorY - 8);
+      overlayCtx.restore();
+
+      // Update Cursor Element
+      handCursor.style.display = 'block';
+      handCursor.style.left = `${cursorX}px`;
+      handCursor.style.top = `${cursorY}px`;
+      handCursor.classList.toggle('pinched', isPinching);
+      handCursor.classList.toggle('fist', isFist);
+
+      const isGrabbing = isPinching || isFist;
+
+      if (isGrabbing) {
+        resetDwell();
+        const gestureName = isFist ? 'FIST GRASP' : 'PINCH GRAB';
+        cursorTag.textContent = gestureName;
+        badgeGesture.textContent = `Gesture: ${gestureName}`;
+        badgeGesture.style.color = isFist ? '#ef4444' : '#10b981';
+
+        if (!handGrabbedWin) {
+          const el = document.elementFromPoint(cursorX, cursorY);
+          const win = el ? el.closest('.glass-window') : null;
+          if (win) {
+            handGrabbedWin = win;
+            bringToFront(win);
+            win.classList.add('grabbed');
+            grabOffsetX = cursorX - win.offsetLeft;
+            grabOffsetY = cursorY - win.offsetTop;
+            FoleyAudio.grab();
+          }
+        } else {
+          handGrabbedWin.style.left = `${Math.max(8, Math.min(window.innerWidth - handGrabbedWin.offsetWidth - 8, cursorX - grabOffsetX))}px`;
+          handGrabbedWin.style.top = `${Math.max(8, Math.min(window.innerHeight - 60, cursorY - grabOffsetY))}px`;
+        }
+      } else {
+        if (handGrabbedWin) {
+          handGrabbedWin.classList.remove('grabbed');
+          FoleyAudio.place();
+          handGrabbedWin = null;
+        }
+
+        // 3. MAGNETIC DWELL LOCK CHECK
+        if (dwellGrabEnabled) {
+          processDwellLock(cursorX, cursorY);
+        } else {
+          cursorTag.textContent = 'POINTER';
+          badgeGesture.textContent = 'Gesture: Pointer';
+          badgeGesture.style.color = '#38bdf8';
+        }
+      }
+    }
+
+    function processDwellLock(x, y) {
+      const el = document.elementFromPoint(x, y);
+      const win = el ? el.closest('.glass-window') : null;
+
+      if (!win) {
+        resetDwell();
+        cursorTag.textContent = 'POINTER';
+        badgeGesture.textContent = 'Gesture: Pointer';
+        badgeGesture.style.color = '#38bdf8';
+        return;
+      }
+
+      const distFromAnchor = Math.hypot(x - dwellAnchor.x, y - dwellAnchor.y);
+      const now = performance.now();
+
+      if (distFromAnchor > 22 || dwellAnchor.activeWin !== win) {
+        dwellAnchor = { x, y, startTime: now, activeWin: win };
+        dwellCircleBar.style.strokeDashoffset = '125.6';
+        handCursor.classList.remove('dwelling');
+      } else {
+        const elapsed = now - dwellAnchor.startTime;
+        const pct = Math.min(1, elapsed / dwellDuration);
+        dwellCircleBar.style.strokeDashoffset = `${125.6 * (1 - pct)}`;
+        handCursor.classList.add('dwelling');
+        cursorTag.textContent = `DWELL ${Math.round(pct * 100)}%`;
+        badgeGesture.textContent = `Dwell: ${Math.round(pct * 100)}%`;
+        badgeGesture.style.color = 'var(--accent)';
+
+        if (pct >= 1) {
+          // Lock onto window
+          handGrabbedWin = win;
+          bringToFront(win);
+          win.classList.add('grabbed');
+          grabOffsetX = x - win.offsetLeft;
+          grabOffsetY = y - win.offsetTop;
+          FoleyAudio.grab();
+          resetDwell();
+        }
+      }
+    }
+
+    function resetDwell() {
+      dwellAnchor = { x: 0, y: 0, startTime: 0, activeWin: null };
+      dwellCircleBar.style.strokeDashoffset = '125.6';
+      handCursor.classList.remove('dwelling');
+    }
+
+    // Draw full holographic hand skeleton
+    function drawHandSkeleton(lms, toScreen) {
+      const connections = [
+        [0, 1], [1, 2], [2, 3], [3, 4], // thumb
+        [0, 5], [5, 6], [6, 7], [7, 8], // index
+        [5, 9], [9, 10], [10, 11], [11, 12], // middle
+        [9, 13], [13, 14], [14, 15], [15, 16], // ring
+        [13, 17], [17, 18], [18, 19], [19, 20], // pinky
+        [0, 17] // palm base
+      ];
+
+      overlayCtx.save();
+      overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+      overlayCtx.lineWidth = 2;
+      for (const [s, e] of connections) {
+        const p1 = toScreen(lms[s]);
+        const p2 = toScreen(lms[e]);
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(p1.x, p1.y);
+        overlayCtx.lineTo(p2.x, p2.y);
+        overlayCtx.stroke();
+      }
+
+      // Landmarks nodes
+      for (let i = 0; i < lms.length; i++) {
+        const pt = toScreen(lms[i]);
+        overlayCtx.beginPath();
+        overlayCtx.arc(pt.x, pt.y, i === 4 || i === 8 ? 6 : 3, 0, Math.PI * 2);
+        overlayCtx.fillStyle = (i === 4 || i === 8) ? '#10b981' : 'rgba(255, 255, 255, 0.7)';
+        overlayCtx.fill();
+      }
+      overlayCtx.restore();
+    }
+
+    // ── VIRTUAL HAND SIMULATOR ──
+    let simHandActive = false;
+    let simMousePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    let simPinching = false;
+    let simFist = false;
+
+    function toggleVirtualHandSimulator() {
+      if (simHandActive) {
+        disableVirtualHandSimulator();
+      } else {
+        enableVirtualHandSimulator();
+      }
+    }
+
+    function enableVirtualHandSimulator() {
+      simHandActive = true;
+      document.getElementById('btn-toggle-sim').classList.add('active');
+      handCursor.classList.add('simulated');
+      handCursor.style.display = 'block';
+      dotHands.classList.add('active');
+      txtHandsStatus.textContent = 'Sim Hand: Active';
+      toast('Virtual Hand Simulator active! Click / Space to Pinch, Shift+Click for Fist');
+      closeCamHelper();
+
+      window.addEventListener('pointermove', onSimPointerMove);
+      window.addEventListener('pointerdown', onSimPointerDown);
+      window.addEventListener('pointerup', onSimPointerUp);
+      window.addEventListener('keydown', onSimKeyDown);
+      window.addEventListener('keyup', onSimKeyUp);
+      requestAnimationFrame(renderSimHandLoop);
+    }
+
+    function disableVirtualHandSimulator() {
+      simHandActive = false;
+      document.getElementById('btn-toggle-sim').classList.remove('active');
+      handCursor.classList.remove('simulated');
+      if (!handTrackingActive) {
+        dotHands.classList.remove('active');
+        txtHandsStatus.textContent = 'Barehands: Off';
+        handCursor.style.display = 'none';
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      }
+      window.removeEventListener('pointermove', onSimPointerMove);
+      window.removeEventListener('pointerdown', onSimPointerDown);
+      window.removeEventListener('pointerup', onSimPointerUp);
+      window.removeEventListener('keydown', onSimKeyDown);
+      window.removeEventListener('keyup', onSimKeyUp);
+      toast('Virtual Hand Simulator off');
+    }
+
+    function onSimPointerMove(e) {
+      if (!simHandActive) return;
+      simMousePos = { x: e.clientX, y: e.clientY };
+    }
+
+    function onSimPointerDown(e) {
+      if (!simHandActive) return;
+      if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('input') || e.target.closest('button')) return;
+      if (e.shiftKey) {
+        simFist = true;
+      } else {
+        simPinching = true;
+      }
+    }
+
+    function onSimPointerUp() {
+      if (!simHandActive) return;
+      simPinching = false;
+      simFist = false;
+    }
+
+    function onSimKeyDown(e) {
+      if (e.key === 'v' || e.key === 'V') {
+        if (!['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+          toggleVirtualHandSimulator();
+        }
+      }
+      if (!simHandActive) return;
+      if (e.code === 'Space' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
+        simPinching = true;
+        e.preventDefault();
+      }
+    }
+
+    function onSimKeyUp(e) {
+      if (!simHandActive) return;
+      if (e.code === 'Space') {
+        simPinching = false;
+        e.preventDefault();
+      }
+    }
+
+    function renderSimHandLoop() {
+      if (!simHandActive) return;
+
+      // Construct a simulated 21-node hand around simMousePos
+      const mx = simMousePos.x, my = simMousePos.y;
+      const pinchSpan = simPinching ? 12 : (simFist ? 20 : 64);
+      
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+
+      // Synthesize 21 MediaPipe coordinates
+      const mockLms = [
+        { x: 1 - (mx / window.innerWidth), y: (my + 110) / window.innerHeight }, // 0 Wrist
+        { x: 1 - ((mx - 24) / window.innerWidth), y: (my + 60) / window.innerHeight }, // 1
+        { x: 1 - ((mx - 34) / window.innerWidth), y: (my + 30) / window.innerHeight }, // 2
+        { x: 1 - ((mx - 32) / window.innerWidth), y: (my + 6) / window.innerHeight }, // 3
+        { x: 1 - ((mx - pinchSpan/2) / window.innerWidth), y: (my) / window.innerHeight }, // 4 Thumb tip
+        { x: 1 - ((mx - 12) / window.innerWidth), y: (my + 28) / window.innerHeight }, // 5 Index mcp
+        { x: 1 - ((mx - 8) / window.innerWidth), y: (my - 6) / window.innerHeight }, // 6
+        { x: 1 - ((mx - 4) / window.innerWidth), y: (my - 28) / window.innerHeight }, // 7
+        { x: 1 - ((mx + pinchSpan/2) / window.innerWidth), y: (my) / window.innerHeight }, // 8 Index tip
+        { x: 1 - (mx / window.innerWidth), y: (my + 26) / window.innerHeight }, // 9 Middle mcp
+        { x: 1 - ((mx + 10) / window.innerWidth), y: (my - 10) / window.innerHeight }, // 10
+        { x: 1 - ((mx + 12) / window.innerWidth), y: (my - 34) / window.innerHeight }, // 11
+        { x: 1 - ((mx + 14) / window.innerWidth), y: (simFist ? my + 15 : my - 54) / window.innerHeight }, // 12 Middle tip
+        { x: 1 - ((mx + 18) / window.innerWidth), y: (my + 30) / window.innerHeight }, // 13 Ring mcp
+        { x: 1 - ((mx + 26) / window.innerWidth), y: (my - 6) / window.innerHeight }, // 14
+        { x: 1 - ((mx + 28) / window.innerWidth), y: (my - 26) / window.innerHeight }, // 15
+        { x: 1 - ((mx + 30) / window.innerWidth), y: (simFist ? my + 15 : my - 44) / window.innerHeight }, // 16 Ring tip
+        { x: 1 - ((mx + 32) / window.innerWidth), y: (my + 38) / window.innerHeight }, // 17 Pinky mcp
+        { x: 1 - ((mx + 40) / window.innerWidth), y: (my + 10) / window.innerHeight }, // 18
+        { x: 1 - ((mx + 42) / window.innerWidth), y: (my - 10) / window.innerHeight }, // 19
+        { x: 1 - ((mx + 44) / window.innerWidth), y: (simFist ? my + 18 : my - 28) / window.innerHeight }, // 20 Pinky tip
+      ];
+
+      processHandLandmarks(mockLms);
+      requestAnimationFrame(renderSimHandLoop);
+    }
+
+    // ── WORKSPACE APPEARANCE CUSTOMIZATION ──
+    function updateGlassOpacity(val) {
+      document.documentElement.style.setProperty('--glass-bg', `rgba(18, 24, 38, ${val / 100})`);
+      document.getElementById('lbl-opacity').textContent = `${val}%`;
+    }
+
+    function updateGlassBlur(val) {
+      document.documentElement.style.setProperty('--glass-blur', `${val}px`);
+      document.getElementById('lbl-blur').textContent = `${val}px`;
+    }
+
+    function setTheme(theme) {
+      document.body.setAttribute('data-theme', theme);
+      FoleyAudio.place();
+      toast(`Theme set to ${theme}`);
+    }
+
+    // ── FILE UPLOADS ──
+    document.getElementById('file-upload-input').addEventListener('change', function () {
+      Array.from(this.files).forEach(uploadFileToJarvis);
+      this.value = '';
+    });
+
+    function uploadFileToJarvis(file) {
+      const fd = new FormData();
+      fd.append('file', file);
+      toast(`Uploading ${file.name}…`);
+      _authFetch('/api/upload', {
+        method: 'POST',
+        body: fd
+      }).then(r => r.json()).then(data => {
+        if (data.ok) {
+          FoleyAudio.place();
+          toast(`Uploaded: ${file.name}`);
+          loadProjectTree();
+        } else {
+          toast('Upload failed');
+        }
+      }).catch(err => toast(`Upload error: ${err.message}`));
+    }
+
+    // ── MICROPHONE AUDIO & SPEECH COMMANDS ──
+    const micBtn = document.getElementById('mic-btn');
+    let _voiceWs = null;
+    let _audioCtx = null;
+    let _micStm = null;
+    let _speechRec = null;
+
+    async function doMic() {
+      if (_voiceWs || _speechRec) { stopMic(); return; }
+
+      // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate barehands")
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        try {
+          const rec = new SpeechRecognition();
+          rec.continuous = false;
+          rec.interimResults = false;
+          rec.lang = 'en-US';
+
+          rec.onstart = () => {
+            micBtn.classList.add('recording');
+            toast('🎤 Listening for voice command…');
+          };
+
+          rec.onresult = (evt) => {
+            const spoken = evt.results[0][0].transcript;
+            if (spoken) {
+              toast(`Voice: "${spoken}"`);
+              document.getElementById('chat-input').value = spoken;
+              doSend();
+            }
+          };
+
+          rec.onerror = (err) => {
+            console.warn('Speech recognition warning, falling back to audio stream:', err);
+            stopMic();
+            startPcmAudioStream();
+          };
+
+          rec.onend = () => {
+            stopMic();
+          };
+
+          _speechRec = rec;
+          rec.start();
+          return;
+        } catch (e) {
+          console.warn('Could not start webkitSpeechRecognition:', e);
+        }
+      }
+
+      // Fallback: direct PCM audio stream over WebSocket
+      startPcmAudioStream();
+    }
+
+    async function startPcmAudioStream() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micBtn.classList.add('recording');
+        toast('🎤 Recording voice command…');
+
+        const ctx = new AudioContext();
+        const src = ctx.createMediaStreamSource(stream);
+        const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new WebSocket(`${wsProto}://${location.host}/ws/phone-audio?token=${encodeURIComponent(_authToken)}`);
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+          const sp = ctx.createScriptProcessor(4096, 1, 1);
+          sp.onaudioprocess = (e) => {
+            if (ws.readyState === 1) {
+              const input = e.inputBuffer.getChannelData(0);
+              const pcm16 = new Int16Array(input.length);
+              for (let i = 0; i < input.length; i++) pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
+              ws.send(pcm16.buffer);
+            }
+          };
+          src.connect(sp);
+          sp.connect(ctx.destination);
+        };
+
+        ws.onclose = stopMic;
+        ws.onerror = stopMic;
+        _voiceWs = ws; _audioCtx = ctx; _micStm = stream;
+      } catch (err) {
+        toast(`Mic error: ${err.message}`);
+        stopMic();
+      }
+    }
+
+    function stopMic() {
+      if (_speechRec) {
+        try { _speechRec.stop(); } catch (_) {}
+        _speechRec = null;
+      }
+      if (_micStm) { _micStm.getTracks().forEach(t => t.stop()); _micStm = null; }
+      if (_audioCtx) { _audioCtx.close(); _audioCtx = null; }
+      if (_voiceWs) { _voiceWs.close(); _voiceWs = null; }
+      micBtn.classList.remove('recording');
+    }
+
+    // Window focus & touch-anywhere grab handler
+    document.querySelectorAll('.glass-window').forEach(win => {
+      win.addEventListener('pointerdown', (e) => {
+        bringToFront(win);
+        // Glass Drag Anywhere
+        if (glassDragAnywhere && !e.target.closest('.window-header') && !e.target.closest('.window-grab-bar') && !e.target.closest('.window-resizer') && !e.target.closest('input') && !e.target.closest('button') && !e.target.closest('.tree-node') && !e.target.closest('.chat-feed') && !e.target.closest('.code-pre') && !e.target.closest('select')) {
+          startWindowDrag(e, win.id);
+        }
+      });
+    });
+
+    // Auto-probe camera on boot without breaking
+    populateCameraDevices();
+  </script>
+</body>
+</html>

@@ -1,0 +1,43 @@
+[2026-09-16 21:15:45] $ cd ~/barehands && git log -p -2
+  exit=2
+  [stderr] /bin/sh: 1: cd: can't cd to /home/vincent/barehands
+
+[2026-09-16 21:16:30] $ find ~ -maxdepth 3 -name "barehands" 2>/dev/null
+  exit=0
+  /home/vincent/Jarvis_stray/barehands
+/home/vincent/Downloads/barehands
+/home/vincent/Jarvis/barehands
+
+[2026-09-16 21:16:35] $ find ~ -type d -name "barehands" 2>/dev/null
+  exit=timeout
+  TIMEOUT
+
+[2026-09-16 21:17:09] $ find ~ -maxdepth 3 -name "barehands"
+  exit=0
+  /home/vincent/Jarvis_stray/barehands
+/home/vincent/Downloads/barehands
+/home/vincent/Jarvis/barehands
+
+[2026-09-16 21:17:36] $ cd ~/Jarvis/barehands && git log -p -2
+  exit=0
+  commit eb23bed2d772f9d5a24de26fb92f46c3c76d69cf
+Author: jaredrhod <271634304+jaredrhod@users.noreply.github.com>
+Date:   Sun Aug 30 09:37:18 2026 -0400
+
+    Windows update path: ask your agent instead of update.bat
+    
+    The bat file stays on disk so existing shortcuts print a message
+    instead of failing silently. Mac update.sh and its shortcut are
+    unchanged.
+
+diff --git a/.gitattributes b/.gitattributes
+new file mode 100644
+index 0000000..6f7d132
+--- /dev/null
++++ b/.gitattributes
+@@ -0,0 +1 @@
++update.bat -text
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000
+
