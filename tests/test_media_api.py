@@ -187,6 +187,8 @@ def test_a_script_can_be_laid_out_for_scenering(client):
     assert data["title"] == "Why the sea is salty"
     assert "1. The sea is salty." in data["script"]
     assert "[on screen: Salty]" in data["script"]
+    assert data["shot_details"][0]["narration"] == "The sea is salty."
+    assert data["shot_details"][0]["on_screen"] == "Salty"
     assert data["url"] == "https://scenering.com"
 
 
