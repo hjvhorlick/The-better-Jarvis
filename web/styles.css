@@ -708,3 +708,43 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
     grid-template-areas: "brief" "script" "library";
   }
 }
+
+/* Email — local drafts only. No provider credentials and no background sending. */
+.email-room {
+  width: min(1000px, 96%);
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  padding: 18px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(220px, 0.8fr);
+  gap: 16px;
+  overflow: auto;
+}
+.email-compose, .email-saved {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  background: rgba(10, 18, 32, 0.48);
+}
+.email-compose h2, .email-saved h2 { margin: 0 0 8px; font-size: 18px; }
+.email-note { color: var(--dim); font-size: 12px; line-height: 1.45; }
+.email-field { display: grid; gap: 5px; margin: 12px 0; }
+.email-field label { color: var(--dim); font-size: 12px; }
+.email-field input, .email-field textarea {
+  width: 100%; min-width: 0; color: var(--ink);
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 9px; padding: 9px 11px; font: inherit;
+}
+.email-field textarea { min-height: 230px; resize: vertical; line-height: 1.5; }
+.email-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.email-saved-list { display: grid; gap: 8px; margin-top: 12px; }
+.email-saved-item { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 6px; align-items: center; }
+.email-saved-open { min-width: 0; text-align: left; overflow-wrap: anywhere; }
+.email-saved-delete { color: var(--bad); background: transparent; padding: 5px 9px; }
+.email-status { margin-top: 12px; min-height: 20px; color: var(--accent); font-size: 13px; }
+@media (max-width: 760px) {
+  .email-room { grid-template-columns: minmax(0,1fr); padding: 10px; }
+  .email-field textarea { min-height: 180px; }
+}
