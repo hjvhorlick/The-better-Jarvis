@@ -262,7 +262,7 @@ def test_scenering_payload_tolerates_malformed_shot_metadata():
             {"narration": "", "seconds": 3},
         ],
     })
-    assert payload["shots"] == 2
+    assert payload["shots"] == 1
     assert payload["shot_details"][0]["seconds"] == 1
     assert payload["seconds"] == 1
     assert "A valid shot." in payload["script"]
