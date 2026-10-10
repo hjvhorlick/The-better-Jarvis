@@ -1,4 +1,7 @@
+import copy
 import json
+import os
+import shutil
 import re
 from datetime import datetime
 from threading import Lock
@@ -96,26 +99,60 @@ def set_trim_notifier(fn) -> None:
     _trim_notifier = fn
 
 
+ARCHIVE_NAME = "memory_archive.json"
+
+
+def _archive_path() -> Path:
+    return MEMORY_PATH.with_name(ARCHIVE_NAME)
+
+
+def _archive(records: list[dict]) -> None:
+    """Append records to memory_archive.json (append-only, written atomically).
+
+    Raises if the existing archive cannot be read as a list, or the write fails. The caller then
+    leaves long_term.json unchanged, so nothing is removed without a copy."""
+    if not records:
+        return
+    path = _archive_path()
+    current: list = []
+    if path.exists():
+        current = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(current, list):
+            raise ValueError("memory_archive.json is not a list; nothing was archived")
+    stamp = datetime.now().isoformat(timespec="seconds")
+    current.extend({"archived": stamp, **r} for r in records)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
+    os.replace(tmp, path)
+
+
 def _trim_to_limit(memory: dict) -> dict:
+    """If long_term.json is over MEMORY_MAX_CHARS, move the least recently updated entries to the
+    archive. Nothing is deleted. The active file only keeps what fits."""
     if len(json.dumps(memory, ensure_ascii=False)) <= MEMORY_MAX_CHARS:
         return memory
+    memory = copy.deepcopy(memory)
     entries = _all_entries(memory)
     entries.sort(key=lambda t: t[2].get("updated", "0000-00-00"))
-    dropped = []
-    for cat, key, _ in entries:
+    moved = []
+    for cat, key, rec in entries:
         if len(json.dumps(memory, ensure_ascii=False)) <= MEMORY_MAX_CHARS:
             break
         del memory[cat][key]
-        dropped.append(f"{cat}/{key}")
-        print(f"[Memory] 🗑️  Trimmed {cat}/{key}")
-    if dropped and _trim_notifier:
-        try:
-            _trim_notifier(
-                f"SYS: Memory full — forgot {len(dropped)} oldest entries "
-                f"({', '.join(dropped[:3])}{'…' if len(dropped) > 3 else ''})"
-            )
-        except Exception:
-            pass
+        moved.append({"kind": "entry", "category": cat, "key": key, "record": rec})
+    if moved:
+        _archive(moved)                       # raises before anything is written if it fails
+        names = [f"{m['category']}/{m['key']}" for m in moved]
+        print(f"[Memory] 📦 Moved {len(moved)} oldest entries to {ARCHIVE_NAME}: {', '.join(names[:5])}")
+        if _trim_notifier:
+            try:
+                _trim_notifier(
+                    f"SYS: Memory is full. Moved {len(moved)} oldest entries to the archive "
+                    f"({', '.join(names[:3])}{'…' if len(names) > 3 else ''}). Nothing was deleted."
+                )
+            except Exception:
+                pass
     return memory
 
 def save_memory(memory: dict) -> None:
@@ -428,7 +465,7 @@ forget_memory = forget
 
 # ── Session memory ─────────────────────────────────────────────────────────────
 
-_SESSION_MAX = 15   # retain last 15 sessions for context
+_SESSION_MAX = 15   # keep the newest 15 in long_term.json; older ones go to the archive
 
 
 def save_session_summary(summary: str, language: str = "") -> None:
@@ -449,6 +486,8 @@ def save_session_summary(summary: str, language: str = "") -> None:
     if language:
         entry["language"] = language
     sessions.append(entry)
+    if len(sessions) > _SESSION_MAX:
+        _archive([{"kind": "session", "record": r} for r in sessions[:-_SESSION_MAX]])
     memory["sessions"] = sessions[-_SESSION_MAX:]
     with _lock:
         MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -502,103 +541,66 @@ def get_last_session() -> dict | None:
             return None
 
 
-# ── Live dialogue persistence ─────────────────────────────────────────────────
-
-def append_dialogue_turn(speaker: str, text: str) -> None:
-    """Persist a conversation turn to disk immediately so context is never lost."""
-    text = (text or "").strip()
-    if not text:
-        return
-    with _lock:
-        try:
-            turns = []
-            if DIALOGUE_PATH.exists():
-                try:
-                    turns = json.loads(DIALOGUE_PATH.read_text(encoding="utf-8"))
-                    if not isinstance(turns, list):
-                        turns = []
-                except Exception:
-                    turns = []
-            turns.append({
-                "speaker": speaker,
-                "text": text,
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
-            turns = turns[-MAX_DIALOGUE_TURNS:]
-            DIALOGUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            DIALOGUE_PATH.write_text(
-                json.dumps(turns, indent=2, ensure_ascii=False),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            print(f"[Memory] ⚠️ append_dialogue_turn error: {e}")
-
-
-def get_recent_dialogue(limit: int = 12) -> list[dict]:
-    """Retrieve recent conversation turns from persistent storage."""
-    with _lock:
-        if not DIALOGUE_PATH.exists():
-            return []
-        try:
-            turns = json.loads(DIALOGUE_PATH.read_text(encoding="utf-8"))
-            if isinstance(turns, list):
-                return turns[-max(1, limit):]
-            return []
-        except Exception:
-            return []
-
-
-def format_dialogue_for_prompt(limit: int = 8) -> str:
-    """Format recent turns into a context block for the LLM system prompt upon connect/reconnect."""
-    turns = get_recent_dialogue(limit)
-    if not turns:
-        return ""
-    lines = [f"{t.get('speaker', 'Unknown')}: {t.get('text', '')}" for t in turns if t.get('text')]
-    if not lines:
-        return ""
-    return (
-        "[RECENT DIALOGUE CONTEXT — CONTINUING CONVERSATION]\n"
-        "The following is the most recent part of the conversation from this session. "
-        "Use this context to continue smoothly without re-greeting the user or asking what we were doing:\n"
-        + "\n".join(lines)
-        + "\n"
-    )
-
-
-def clear_recent_dialogue() -> None:
-    """Wipe the dialogue log when the user explicitly requests a clean slate."""
-    with _lock:
-        try:
-            if DIALOGUE_PATH.exists():
-                DIALOGUE_PATH.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-
 # --- Live Dialogue Persistence ---
 DIALOGUE_PATH = BASE_DIR / "memory" / "recent_dialogue.json"
 MAX_DIALOGUE_TURNS = 60
 
+def _dialogue_archive_path() -> Path:
+    return DIALOGUE_PATH.with_name("dialogue_archive.jsonl")
+
+
+def _append_dialogue_archive(turns: list) -> None:
+    """Append turns to dialogue_archive.jsonl, one JSON line each. Raises if the write fails, so the
+    caller keeps the turns where they are. Append-only, so each turn costs one line, not a rewrite."""
+    if not turns:
+        return
+    path = _dialogue_archive_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().isoformat(timespec="seconds")
+    with path.open("a", encoding="utf-8") as f:
+        for t in turns:
+            f.write(json.dumps({"archived": stamp, "turn": t}, ensure_ascii=False) + "\n")
+        f.flush()
+
+
+def _read_dialogue_for_append() -> list:
+    """Read the live dialogue log. A log that cannot be read is copied aside (never overwritten)
+    and a fresh log is started."""
+    if not DIALOGUE_PATH.exists():
+        return []
+    try:
+        turns = json.loads(DIALOGUE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(turns, list):
+            raise ValueError("top level is not a list")
+        return turns
+    except Exception as e:
+        aside = DIALOGUE_PATH.with_name(f"{DIALOGUE_PATH.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}")
+        shutil.copy2(DIALOGUE_PATH, aside)
+        print(f"[Memory] recent_dialogue.json could not be read ({e}); a copy is at {aside.name}")
+        return []
+
+
 def append_dialogue_turn(speaker: str, text: str) -> None:
+    """Save a turn now. Turns beyond MAX_DIALOGUE_TURNS move to dialogue_archive.jsonl. If the
+    archive cannot be written, nothing is dropped and the log keeps every turn."""
     text = (text or "").strip()
     if not text:
         return
     with _lock:
         try:
-            turns = []
-            if DIALOGUE_PATH.exists():
-                try:
-                    turns = json.loads(DIALOGUE_PATH.read_text(encoding="utf-8"))
-                    if not isinstance(turns, list):
-                        turns = []
-                except Exception:
-                    turns = []
+            turns = _read_dialogue_for_append()
             turns.append({
                 "speaker": speaker,
                 "text": text,
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             })
-            turns = turns[-MAX_DIALOGUE_TURNS:]
+            if len(turns) > MAX_DIALOGUE_TURNS:
+                overflow = turns[:-MAX_DIALOGUE_TURNS]
+                try:
+                    _append_dialogue_archive(overflow)
+                    turns = turns[-MAX_DIALOGUE_TURNS:]
+                except Exception as e:
+                    print(f"[Memory] dialogue archive unavailable, keeping all turns: {e}")
             DIALOGUE_PATH.parent.mkdir(parents=True, exist_ok=True)
             DIALOGUE_PATH.write_text(json.dumps(turns, indent=2, ensure_ascii=False), encoding="utf-8")
         except Exception as e:
@@ -624,6 +626,129 @@ def format_dialogue_for_prompt(limit: int = 8) -> str:
     return "[RECENT DIALOGUE CONTEXT]\n" + "\n".join(lines) + "\n"
 
 def clear_recent_dialogue() -> None:
+    """Clear the live dialogue log. Every turn is written to dialogue_archive.jsonl first. If that
+    write fails, the live log is left as it is."""
     with _lock:
-        if DIALOGUE_PATH.exists():
-            DIALOGUE_PATH.unlink(missing_ok=True)
+        if not DIALOGUE_PATH.exists():
+            return
+        turns = _read_dialogue_for_append()
+        _append_dialogue_archive(turns)          # raises before the live log is removed
+        DIALOGUE_PATH.unlink(missing_ok=True)
+
+
+# ----- archive search and restore (owner request, 2026-10-09) -----
+# Read-only search over both archives. Restore copies one archived memory fact back into
+# long_term.json. It never overwrites a current entry, and it refuses if there is no room, so the
+# size trim cannot archive the restored fact again. The archive keeps its copy. Only memory facts
+# can be restored. Session summaries and dialogue turns can be searched but not restored.
+
+
+class ArchiveUnreadable(RuntimeError):
+    """memory_archive.json exists but is not a JSON list. It is never rewritten by search or restore."""
+
+
+def _read_memory_archive() -> list:
+    path = _archive_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as e:
+        raise ArchiveUnreadable(f"memory_archive.json is not valid JSON ({e})") from e
+    if not isinstance(data, list):
+        raise ArchiveUnreadable("memory_archive.json is not a list")
+    return data
+
+
+def _read_dialogue_archive() -> list:
+    """(line_number, turn) pairs. An unreadable line is skipped and the file is left alone."""
+    path = _dialogue_archive_path()
+    if not path.exists():
+        return []
+    out = []
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            out.append((n, json.loads(line)["turn"]))
+        except Exception:
+            continue
+    return out
+
+
+def _is_active(category: str, key: str, value) -> bool:
+    cur = load_memory().get(category, {})
+    return isinstance(cur, dict) and isinstance(cur.get(key), dict) and cur[key].get("value") == value
+
+
+def search_archive(query: str, limit: int = 10) -> dict:
+    """Case-insensitive search. Returns {"total": n, "matches": [...]}, newest matches last.
+
+    Memory-fact matches carry an `id` (their position in memory_archive.json, which only grows).
+    Other matches have `id` None and cannot be restored."""
+    q = (query or "").strip().lower()
+    if not q:
+        raise ValueError("search text is empty")
+    hits: list[dict] = []
+    for idx, rec in enumerate(_read_memory_archive()):
+        if not isinstance(rec, dict):
+            continue
+        body = rec.get("record") or {}
+        if rec.get("kind") == "entry":
+            cat, key, value = rec.get("category", ""), rec.get("key", ""), body.get("value")
+            text = f"{cat}/{key}: {value}"
+            if q in text.lower():
+                hits.append({"id": idx, "source": "memory", "text": text,
+                             "archived": rec.get("archived", ""),
+                             "active_now": _is_active(cat, key, value)})
+        elif rec.get("kind") == "session":
+            summary = str(body.get("summary", ""))
+            if q in summary.lower():
+                hits.append({"id": None, "source": "session", "text": summary,
+                             "archived": rec.get("archived", ""), "active_now": False})
+    for n, turn in _read_dialogue_archive():
+        text = f"{turn.get('speaker', '?')}: {turn.get('text', '')}"
+        if q in text.lower():
+            hits.append({"id": None, "source": "dialogue", "text": text, "line": n,
+                         "archived": turn.get("time", ""), "active_now": False})
+    return {"total": len(hits), "matches": hits[-max(1, limit):]}
+
+
+def describe_archive_entry(archive_id: int) -> str | None:
+    """Short text for a restorable memory-fact archive entry, or None if there is none."""
+    try:
+        archive = _read_memory_archive()
+    except Exception:
+        return None
+    if 0 <= archive_id < len(archive) and isinstance(archive[archive_id], dict) \
+            and archive[archive_id].get("kind") == "entry":
+        r = archive[archive_id]
+        return f"{r.get('category')}/{r.get('key')} = {(r.get('record') or {}).get('value')}"
+    return None
+
+
+def restore_archive_entry(archive_id: int) -> str:
+    """Copy archived memory fact `archive_id` back into long_term.json. Returns a message.
+
+    Raises LookupError (no such memory fact), FileExistsError (the key already has a value; nothing
+    is changed) or ValueError (no room under MEMORY_MAX_CHARS; nothing is changed)."""
+    archive = _read_memory_archive()
+    if not (0 <= archive_id < len(archive)) or not isinstance(archive[archive_id], dict) \
+            or archive[archive_id].get("kind") != "entry":
+        raise LookupError(f"There is no archived memory fact number {archive_id}.")
+    rec = archive[archive_id]
+    cat, key, record = rec["category"], rec["key"], dict(rec["record"])
+    memory = load_memory()
+    bucket = memory.setdefault(cat, {})
+    if not isinstance(bucket, dict):
+        raise ValueError(f"the '{cat}' category is not a list of facts")
+    if key in bucket:
+        raise FileExistsError(f"{cat}/{key} already has a value. Change or forget it first, then restore.")
+    candidate = copy.deepcopy(memory)
+    candidate[cat][key] = record
+    if len(json.dumps(candidate, ensure_ascii=False)) > MEMORY_MAX_CHARS:
+        raise ValueError("memory is full. Forget or change something first, then restore.")
+    bucket[key] = record
+    save_memory(memory)
+    return f"Restored {cat}/{key}. The archive still has its copy."
+

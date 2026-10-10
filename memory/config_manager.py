@@ -1,5 +1,7 @@
 import json
+import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 def get_base_dir() -> Path:
@@ -11,6 +13,34 @@ BASE_DIR    = get_base_dir()
 CONFIG_DIR  = BASE_DIR / "config"
 CONFIG_FILE = CONFIG_DIR / "api_keys.json"
 
+
+class ConfigUnreadable(RuntimeError):
+    """api_keys.json exists but is not a readable JSON object. Nothing was written."""
+
+
+def _read_for_update() -> dict:
+    """Return the stored settings so that one setting can change without losing the others.
+
+    If the file exists but cannot be parsed as a JSON object, a copy is saved beside it and
+    ConfigUnreadable is raised. The original is left as it is, so no setting is lost. (Owner
+    decision, 2026-10-09, audit §15 finding 3. Before this, a bad file was silently replaced.)
+    """
+    if not CONFIG_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("top level is not a JSON object")
+        return data
+    except Exception as e:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        aside = CONFIG_FILE.with_name(f"{CONFIG_FILE.name}.corrupt-{stamp}")
+        shutil.copy2(CONFIG_FILE, aside)
+        raise ConfigUnreadable(
+            f"api_keys.json cannot be read ({e}). A copy was saved as {aside.name}. "
+            "Nothing was changed. Repair or restore the file, then try again."
+        ) from e
+
 def ensure_config_dir() -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -20,12 +50,7 @@ def config_exists() -> bool:
 def save_api_keys(gemini_api_key: str) -> None:
     ensure_config_dir()
 
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
 
     data["gemini_api_key"] = gemini_api_key.strip()
 
@@ -64,12 +89,7 @@ def get_user_name() -> str:
 def save_assistant_config(assistant_name: str, user_name: str) -> None:
     """Persist assistant name and user name to config."""
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     data["assistant_name"] = assistant_name.strip() or "JARVIS"
     data["user_name"] = user_name.strip()
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
@@ -177,12 +197,7 @@ def get_voice_style_text() -> str:
 
 def save_voice_style(style: str) -> None:
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     data["voice_style"] = style if style in VOICE_STYLES else DEFAULT_VOICE_STYLE
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -199,12 +214,7 @@ def save_voice(voice_name: str) -> None:
     """Persist the chosen Live voice. Unknown names collapse to the default so a
     bad value can never reach the API and break the session."""
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     v = (voice_name or "").strip()
     data["voice_name"] = v if v in AVAILABLE_VOICES else DEFAULT_VOICE
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
@@ -217,12 +227,7 @@ def get_wake_word_enabled() -> bool:
 
 def save_wake_word_enabled(enabled: bool) -> None:
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     data["wake_word_enabled"] = bool(enabled)
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -233,12 +238,7 @@ def get_brief_enabled() -> bool:
 
 def save_brief_enabled(enabled: bool) -> None:
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     data["morning_brief_enabled"] = enabled
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -257,12 +257,7 @@ def _patch_config(**fields) -> None:
     setting is one line, and there is one place where a corrupt config file is
     handled instead of nine."""
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     data.update(fields)
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
@@ -312,12 +307,7 @@ def save_plugin_config(namespace: str, values: dict) -> None:
     """Merge `values` into a namespace's stored config (read-modify-write, like
     every other helper here). Only the provided keys are touched."""
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     pc = data.get("plugin_config")
     if not isinstance(pc, dict):
         pc = {}
@@ -332,12 +322,7 @@ def save_plugin_config(namespace: str, values: dict) -> None:
 
 def save_plugin_enabled(plugin_name: str, enabled: bool) -> None:
     ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
+    data = _read_for_update()
     plugins_cfg = data.get("plugins_enabled")
     if not isinstance(plugins_cfg, dict):
         plugins_cfg = {}

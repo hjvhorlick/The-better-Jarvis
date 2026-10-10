@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Supper AI Agent</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Supper AI Agent</div>
+    <div class="status" id="status" role="status" aria-live="polite">checking…</div>
+    <span class="quota-chip" id="quota-chip" title="Gemini calls counted by this app today">Gemini today: …</span>
+    <button type="button" id="btn-diag" aria-pressed="false" aria-controls="diag-panel">Diagnostics</button>
+    <nav class="workspaces" aria-label="Workspaces">
+      <button data-open="coding">Coding</button>
+      <button data-open="marketing">Marketing</button>
+      <button data-open="design">Design</button>
+      <button data-open="files">Files</button>
+      <button type="button" id="btn-myhands" aria-pressed="false"
+              title="Control the desktop with your hands. Camera frames stay on this computer.">My Hands</button>
+    </nav>
+    <div class="mh-chip" id="mh-chip" role="status" aria-live="polite" hidden>
+      <span class="mh-dot" aria-hidden="true"></span><span id="mh-text">off</span>
+      <button type="button" id="btn-mh-view" aria-pressed="true" hidden>Hide camera</button>
+    </div>
+  </header>
+
+  <main class="stage" id="stage">
+    <div class="ring" id="ring" aria-hidden="true"><span id="ring-label">ready</span></div>
+    <div class="mh-view" id="mh-view" hidden>
+      <img id="mh-preview" alt="Camera view for My Hands, mirrored so it matches your hand">
+    </div>
+
+    <section class="desktop" aria-label="Folders and files">
+      <div class="crumbs">
+        <button id="btn-up" class="ghost" disabled>↑ up</button>
+        <span id="crumb-path">choose a folder</span>
+      </div>
+      <div class="surface" id="surface" tabindex="-1"></div>
+      <p class="hint" id="surface-hint">Drag to move. Double-click or press Enter to open.</p>
+    </section>
+  </main>
+
+  <section class="confirm-tray" id="confirm-tray" aria-label="Waiting for your OK" aria-live="assertive" hidden></section>
+
+  <section class="dock" aria-label="Conversation">
+    <div class="log" id="log" aria-live="polite"></div>
+    <form class="composer" id="composer">
+      <input id="input" type="text" maxlength="4000" placeholder="Ask anything…" autocomplete="off">
+      <button type="submit" id="send">Send</button>
+      <div class="voice-cluster" role="group" aria-label="Voice on this computer">
+        <button type="button" id="btn-voice" aria-pressed="false"
+                title="Start or stop voice. The microphone and speaker are on this computer; the Gemini key stays on the server.">Voice</button>
+        <button type="button" id="btn-mute" aria-pressed="false" title="Mute the microphone">Mute</button>
+        <button type="button" id="btn-wake" aria-pressed="false"
+                title="Listen for “Hey Jarvis” on this computer. Nothing leaves the computer until the wake word is heard.">Wake word</button>
+        <span class="voice-chip" id="voice-chip" role="status" aria-live="polite">voice: checking…</span>
+      </div>
+    </form>
+  </section>
+
+  <aside class="panel" data-ws="coding" aria-label="Coding workspace" hidden>
+    <header><h2>Coding</h2><button class="close" aria-label="Close">×</button></header>
+    <p>Technical work. Replies are precise and code-first. Ask here, and the assistant knows you are coding.</p>
+    <form class="panel-form" data-ws="coding"><input type="text" maxlength="4000" placeholder="Ask about code…" autocomplete="off"><button>Send</button></form>
+  </aside>
+  <aside class="panel" data-ws="marketing" aria-label="Marketing workspace" hidden>
+    <header><h2>Marketing</h2><button class="close" aria-label="Close">×</button></header>
+    <p>Copy, campaigns, audience and messaging. Ask for drafts, ideas and feedback.</p>
+    <form class="panel-form" data-ws="marketing"><input type="text" maxlength="4000" placeholder="Ask about marketing…" autocomplete="off"><button>Send</button></form>
+  </aside>
+  <aside class="panel" data-ws="design" aria-label="Design workspace" hidden>
+    <header><h2>Design</h2><button class="close" aria-label="Close">×</button></header>
+    <p>Layout, colour, typography and assets. Ask for direction and critique.</p>
+    <form class="panel-form" data-ws="design"><input type="text" maxlength="4000" placeholder="Ask about design…" autocomplete="off"><button>Send</button></form>
+  </aside>
+  <aside class="panel" data-ws="files" aria-label="Files workspace" hidden>
+    <header><h2>Files</h2><button class="close" aria-label="Close">×</button></header>
+    <p>Preview of the file you opened. Read-only in this milestone.</p>
+    <div class="preview" id="preview"><em>Open a file on the desktop to preview it.</em></div>
+    <form class="panel-form" data-ws="files"><input type="text" maxlength="4000" placeholder="Ask about this file…" autocomplete="off"><button>Send</button></form>
+  </aside>
+
+  <aside class="panel drawer" id="diag-panel" aria-label="Diagnostics" hidden>
+    <header><h2>Diagnostics</h2><button class="close" id="diag-close" aria-label="Close">×</button></header>
+    <p>What is running, which device is in use, the Gemini budget, the permission tiers and recent problems. Nothing secret is shown.</p>
+    <div id="diag-body"></div>
+  </aside>
+
+  <div class="hand-cursor" id="hand-cursor" aria-hidden="true" hidden></div>
+
+  <script src="app.js"></script>
+  <script src="myhands.js"></script>
+  <script src="control.js"></script>
+  <script src="voice.js"></script>
+</body>
+</html>

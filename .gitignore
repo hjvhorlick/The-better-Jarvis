@@ -8,3 +8,6 @@ config/certs/
 memory/long_term.json
 barehands/state/
 barehands/barehands.json
+runtime/
+# Local voice models (large, downloaded by the owner; see docs/LOCAL_VOICE.md)
+models/
