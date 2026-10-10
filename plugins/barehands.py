@@ -411,9 +411,9 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             ok, msg = _cmd(payload); log(f"{payload['a']} → {title}")
             return (f"It's on the glass: {title or 'note'}." if ok else f"Board command failed: {msg}")
 
-        return "Barehands actions are: open, close, present, card, clear, status."
+        return "My Hands actions are: open, close, present, card, clear, status."
     except Exception as e:
-        return f"Sir, the barehands plugin failed: {e}"
+        return f"Sir, the My Hands plugin failed: {e}"
 
 
 # ── settings panel (⚙ → PLUGIN SETTINGS) ───────────────────────────────────────

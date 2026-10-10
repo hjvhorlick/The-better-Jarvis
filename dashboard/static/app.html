@@ -584,7 +584,7 @@
       white-space: pre; tab-size: 2;
     }
 
-    /* ── PANEL 5: WORKSPACE SETTINGS & BAREHANDS ── */
+    /* ── PANEL 5: WORKSPACE SETTINGS & MY HANDS ── */
     #win-settings {
       width: 380px; height: 480px;
     }
@@ -644,7 +644,7 @@
       width: 100%; accent-color: var(--accent);
     }
 
-    /* ── BAREHANDS HAND TRACKING OVERLAY & CURSOR ── */
+    /* ── MY HANDS HAND TRACKING OVERLAY & CURSOR ── */
     #hand-overlay-canvas {
       position: absolute; inset: 0; width: 100%; height: 100%;
       pointer-events: none; z-index: 990;
@@ -810,7 +810,7 @@
     <div id="bg-scrim"></div>
   </div>
 
-  <!-- BAREHANDS HAND TRACKING OVERLAY -->
+  <!-- MY HANDS HAND TRACKING OVERLAY -->
   <canvas id="hand-overlay-canvas"></canvas>
   <div id="hand-cursor" class="hand-cursor">
     <div class="cursor-tag" id="cursor-tag">POINTER</div>
@@ -1028,7 +1028,7 @@
       <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-inspector')" title="Drag to Resize Glass Window"></div>
     </div>
 
-    <!-- PANEL 5: WORKSPACE SETTINGS & BAREHANDS -->
+    <!-- PANEL 5: WORKSPACE SETTINGS & MY HANDS -->
     <div class="glass-window" id="win-settings" style="top: 80px; left: 200px; width: 440px; display: none;">
       <div class="window-header" onpointerdown="startWindowDrag(event, 'win-settings')">
         <div class="window-title-group">
@@ -1965,7 +1965,7 @@
       toast('Synthesized Cyber Stage active');
     }
 
-    // ── BAREHANDS GESTURE ENGINE & TUNING ──
+    // ── MY HANDS GESTURE ENGINE & TUNING ──
     let handTrackingActive = false;
     let handTrackerLoaded = false;
     let pinchThreshold = 52;
@@ -2457,7 +2457,7 @@
     async function doMic() {
       if (_voiceWs || _speechRec) { stopMic(); return; }
 
-      // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate barehands")
+      // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate my hands" or "activate barehands")
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
