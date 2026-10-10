@@ -381,12 +381,32 @@ def scenering_payload(script: dict) -> dict:
         lines.append("")
     body = "\n".join(lines).strip()
 
+    shots = script.get("shots") or []
+    # Keep the original paste-ready fields, and include the structured metadata
+    # that a future Scenering import endpoint can consume without re-parsing text.
     return {
         "title": script.get("title") or "",
+        "title_variants": list(script.get("title_variants") or []),
+        "hook": script.get("hook") or "",
+        "logline": script.get("logline") or "",
+        "description": script.get("description") or "",
+        "hashtags": list(script.get("hashtags") or []),
         "script": body,
         "plain": f"{script.get('title') or ''}\n\n{body}",
-        "shots": len(script.get("shots") or []),
-        "seconds": script.get("seconds") or 0,
+        "shots": len(shots),
+        "shot_details": [
+            {
+                "narration": str(shot.get("narration") or ""),
+                "on_screen": str(shot.get("on_screen") or ""),
+                "image_prompt": str(shot.get("image_prompt") or ""),
+                "seconds": max(1, min(600, int(shot.get("seconds") or 1))),
+            }
+            for shot in shots if isinstance(shot, dict)
+        ],
+        "seconds": script.get("seconds") or sum(
+            max(1, min(600, int(shot.get("seconds") or 1)))
+            for shot in shots if isinstance(shot, dict)
+        ),
         "url": "https://scenering.com",
     }
 
