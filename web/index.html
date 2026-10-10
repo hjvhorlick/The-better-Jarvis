@@ -3,87 +3,109 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>JARVIS</title>
-  <meta name="description" content="JARVIS personal AI assistant web dashboard with voice commands, real-time WebSocket communication, file sharing, and Gemini integration.">
-  <meta property="og:title" content="JARVIS">
-  <meta property="og:description" content="JARVIS personal AI assistant web dashboard with voice commands, real-time WebSocket communication, file sharing, and Gemini integration.">
+  <title>Super AI Agent</title>
   <link rel="stylesheet" href="styles.css">
+
+  <!-- The 3D engine is kept in the repo, so the design room works with no
+       internet. The import map lets the loaders find it without a build step. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/three.module.js",
+      "three/addons/": "/vendor/three/"
+    }
+  }
+  </script>
 </head>
 <body>
+  <!-- The top line: every function that is not tied to one environment has its
+       button here, so the workspace underneath stays clear. -->
   <header class="topbar">
-    <div class="brand">Supper AI Agent</div>
+    <div class="brand">Super AI Agent</div>
     <div class="status" id="status" role="status" aria-live="polite">checking…</div>
     <span class="quota-chip" id="quota-chip" title="Gemini calls counted by this app today">Gemini today: …</span>
     <button type="button" id="btn-diag" aria-pressed="false" aria-controls="diag-panel">Diagnostics</button>
-    <nav class="workspaces" aria-label="Workspaces">
-      <button data-open="coding">Coding</button>
-      <button data-open="marketing">Marketing</button>
-      <button data-open="design">Design</button>
-      <button data-open="files">Files</button>
-      <button type="button" id="btn-myhands" aria-pressed="false"
-              title="Control the desktop with your hands. Camera frames stay on this computer.">My Hands</button>
-    </nav>
+
+    <!-- The environment switcher. The shell fills this in, one button per
+         environment, in slide order. -->
+    <nav class="env-switcher" id="env-switcher" aria-label="Environments"></nav>
+
+    <button type="button" id="btn-myhands" aria-pressed="false"
+            title="Control the desktop with your hands. Camera frames stay on this computer.">My Hands</button>
     <div class="mh-chip" id="mh-chip" role="status" aria-live="polite" hidden>
       <span class="mh-dot" aria-hidden="true"></span><span id="mh-text">off</span>
       <button type="button" id="btn-mh-view" aria-pressed="true" hidden>Hide camera</button>
     </div>
   </header>
 
-  <main class="stage" id="stage">
-    <div class="ring" id="ring" aria-hidden="true"><span id="ring-label">ready</span></div>
-    <div class="mh-view" id="mh-view" hidden>
-      <img id="mh-preview" alt="Camera view for My Hands, mirrored so it matches your hand">
-    </div>
-
-    <section class="desktop" aria-label="Folders and files">
-      <div class="crumbs">
-        <button id="btn-up" class="ghost" disabled>↑ up</button>
-        <span id="crumb-path">choose a folder</span>
+  <!-- One workbench: a thin rail on the left for Jarvis's voice and the chat,
+       and everything else for the environment you are working in. -->
+  <div class="workbench">
+    <aside class="sidebar" id="sidebar" aria-label="Jarvis">
+      <!-- The voice visualiser. It sits at the top of the rail and stays there
+           in every environment, so you always see whether Jarvis is listening,
+           thinking or speaking without giving up working space. -->
+      <div class="orb">
+        <div class="ring" id="ring" role="status" aria-live="polite">
+          <span id="ring-label">ready</span>
+        </div>
+        <button type="button" class="rail-toggle" id="rail-toggle" aria-expanded="true"
+                aria-controls="rail-body" title="Make the rail thinner">‹</button>
       </div>
-      <div class="surface" id="surface" tabindex="-1"></div>
-      <p class="hint" id="surface-hint">Drag to move. Double-click or press Enter to open.</p>
-    </section>
-  </main>
+
+      <div class="rail-body" id="rail-body">
+        <!-- The chat, underneath the voice visualiser. -->
+        <section class="chat" aria-label="Conversation">
+          <div class="log" id="log" aria-live="polite"></div>
+          <form class="composer" id="composer">
+            <input id="input" type="text" maxlength="4000" placeholder="Ask anything…" autocomplete="off">
+            <button type="submit" id="send">Send</button>
+            <div class="voice-cluster" role="group" aria-label="Voice on this computer">
+              <button type="button" id="btn-voice" aria-pressed="false"
+                      title="Start or stop voice. The microphone and speaker are on this computer; the Gemini key stays on the server.">Voice</button>
+              <button type="button" id="btn-mute" aria-pressed="false" title="Mute the microphone">Mute</button>
+              <button type="button" id="btn-wake" aria-pressed="false"
+                      title="Listen for “Hey Jarvis” on this computer. Nothing leaves the computer until the wake word is heard.">Wake word</button>
+              <span class="voice-chip" id="voice-chip" role="status" aria-live="polite">voice: checking…</span>
+            </div>
+          </form>
+        </section>
+      </div>
+    </aside>
+
+    <main class="stage" id="stage">
+      <!-- The camera picture sits behind everything, so you can see your own
+           hand through the room. It lets clicks straight through. -->
+      <div class="mh-view" id="mh-view" hidden>
+        <img id="mh-preview" alt="Camera view for My Hands, mirrored so it matches your hand">
+      </div>
+
+      <!-- The windowing environment: one rail, sliding left and right. -->
+      <section class="env-rail" id="env-rail" aria-label="Workspace">
+        <div class="env-bar">
+          <button type="button" id="env-prev" class="env-arrow" aria-label="Previous environment" disabled>‹</button>
+          <span class="env-label" id="env-label">Super AI Agent</span>
+          <span class="env-fps d3-fps" id="env-fps" aria-hidden="true"></span>
+          <button type="button" id="env-next" class="env-arrow" aria-label="Next environment" disabled>›</button>
+        </div>
+        <div class="env-track" id="env-track"></div>
+      </section>
+
+      <!-- The old tile desktop is kept but switched off: the environments above
+           replace it, and this keeps the older code paths working. -->
+      <section class="desktop" aria-label="Folders and files" hidden>
+        <div class="crumbs">
+          <button id="btn-up" class="ghost" disabled>↑ up</button>
+          <span id="crumb-path">choose a folder</span>
+        </div>
+        <div class="surface" id="surface" tabindex="-1"></div>
+        <pre class="preview" id="preview" hidden></pre>
+        <p class="hint" id="surface-hint">Drag to move. Double-click or press Enter to open.</p>
+      </section>
+    </main>
+  </div>
 
   <section class="confirm-tray" id="confirm-tray" aria-label="Waiting for your OK" aria-live="assertive" hidden></section>
-
-  <section class="dock" aria-label="Conversation">
-    <div class="log" id="log" aria-live="polite"></div>
-    <form class="composer" id="composer">
-      <input id="input" type="text" maxlength="4000" placeholder="Ask anything…" autocomplete="off">
-      <button type="submit" id="send">Send</button>
-      <div class="voice-cluster" role="group" aria-label="Voice on this computer">
-        <button type="button" id="btn-voice" aria-pressed="false"
-                title="Start or stop voice. The microphone and speaker are on this computer; the Gemini key stays on the server.">Voice</button>
-        <button type="button" id="btn-mute" aria-pressed="false" title="Mute the microphone">Mute</button>
-        <button type="button" id="btn-wake" aria-pressed="false"
-                title="Listen for “Hey Jarvis” on this computer. Nothing leaves the computer until the wake word is heard.">Wake word</button>
-        <span class="voice-chip" id="voice-chip" role="status" aria-live="polite">voice: checking…</span>
-      </div>
-    </form>
-  </section>
-
-  <aside class="panel" data-ws="coding" aria-label="Coding workspace" hidden>
-    <header><h2>Coding</h2><button class="close" aria-label="Close">×</button></header>
-    <p>Technical work. Replies are precise and code-first. Ask here, and the assistant knows you are coding.</p>
-    <form class="panel-form" data-ws="coding"><input type="text" maxlength="4000" placeholder="Ask about code…" autocomplete="off"><button>Send</button></form>
-  </aside>
-  <aside class="panel" data-ws="marketing" aria-label="Marketing workspace" hidden>
-    <header><h2>Marketing</h2><button class="close" aria-label="Close">×</button></header>
-    <p>Copy, campaigns, audience and messaging. Ask for drafts, ideas and feedback.</p>
-    <form class="panel-form" data-ws="marketing"><input type="text" maxlength="4000" placeholder="Ask about marketing…" autocomplete="off"><button>Send</button></form>
-  </aside>
-  <aside class="panel" data-ws="design" aria-label="Design workspace" hidden>
-    <header><h2>Design</h2><button class="close" aria-label="Close">×</button></header>
-    <p>Layout, colour, typography and assets. Ask for direction and critique.</p>
-    <form class="panel-form" data-ws="design"><input type="text" maxlength="4000" placeholder="Ask about design…" autocomplete="off"><button>Send</button></form>
-  </aside>
-  <aside class="panel" data-ws="files" aria-label="Files workspace" hidden>
-    <header><h2>Files</h2><button class="close" aria-label="Close">×</button></header>
-    <p>Preview of the file you opened. Read-only in this milestone.</p>
-    <div class="preview" id="preview"><em>Open a file on the desktop to preview it.</em></div>
-    <form class="panel-form" data-ws="files"><input type="text" maxlength="4000" placeholder="Ask about this file…" autocomplete="off"><button>Send</button></form>
-  </aside>
 
   <aside class="panel drawer" id="diag-panel" aria-label="Diagnostics" hidden>
     <header><h2>Diagnostics</h2><button class="close" id="diag-close" aria-label="Close">×</button></header>
@@ -94,6 +116,8 @@
   <div class="hand-cursor" id="hand-cursor" aria-hidden="true" hidden></div>
 
   <script src="app.js"></script>
+  <script src="shell.js"></script>
+  <script src="environments/register.js"></script>
   <script src="myhands.js"></script>
   <script src="control.js"></script>
   <script src="voice.js"></script>

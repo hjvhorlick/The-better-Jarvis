@@ -56,7 +56,7 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 |---|---|---|
 | `backend/__init__.py` | package marker | none |
 | `backend/__main__.py` | start-up (`python -m backend`) | `app`, `config` |
-| `backend/app.py` | the one server: routes, lifespan (starts and stops reminders), wiring of all parts, phone pairing page and code exchange | `agent`, `pairing`, `chat`, `config`, `devices`, `diagnostics`, `events`, `files`, `memory_view`, `myhands_api`, `permissions`, `quota`, `reminders`, `repair`, `security`, `stream`, `voice`, `workspaces` |
+| `backend/app.py` | the one server: routes, lifespan (starts and stops reminders), wiring of all parts, phone pairing page and code exchange | `agent`, `pairing`, `chat`, `config`, `devices`, `diagnostics`, `events`, `files`, `memory_view`, `media`, `myhands_api`, `permissions`, `quota`, `reminders`, `repair`, `security`, `stream`, `voice`, `workspaces` |
 | `backend/config.py` | paths and settings (env vars, saved keys) | none |
 | `backend/events.py` | the event bus: sequenced, bounded, replayable | none |
 | `backend/stream.py` | the bus over one WebSocket (`/ws/events`) | `events` |
@@ -77,6 +77,7 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 | `backend/pairing.py` | phone pairing: 6-digit code, device tokens stored as hashes, 30-day expiry, forget | none |
 | `backend/diagnostics.py` | the diagnostics panel data | `config`, `events`, `files` |
 | `backend/files.py` | file list and preview inside allowed folders | `config` |
+| `backend/media.py` | the Studio: pictures from Pollinations (free, no key), scripts and titles from Gemini counted against the daily budget, a media library in `runtime/media/` (indexed, searchable, nothing served from outside it), and the script laid out for pasting into Scenering | `config` |
 | `backend/workspaces.py` | the workspace folders the agent may read and write | none |
 | `backend/memory_view.py` | read-only memory summary for the panel | none |
 | `backend/myhands_api.py` | My Hands routes (start, stop, status, the camera preview, scene, events) and session wiring; one MIRROR setting for the pointer and the picture (imports `myhands`) | `myhands.camera`, `myhands.gestures`, `myhands.session` |
@@ -102,10 +103,14 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 | `myhands/__init__.py` | package marker | none |
 | `myhands/camera.py` | camera source and the single-owner camera service (cv2: the only importer); `preview_jpeg` flips and encodes one frame for the preview | none |
 | `myhands/tracker.py` | hand tracking (mediapipe: the only importer) | none |
-| `myhands/gestures.py` | pinch and grab detection | none |
+| `myhands/gestures.py` | the gesture engine: pinch, fist, hold-still rotate, two-hand scale, clap, claw-pull | `myhands.filters`, `myhands.handframe` |
+| `myhands/handframe.py` | reads a whole hand: palm centre, normal, tilt, per-finger curl, spread, depth | none |
 | `myhands/filters.py` | smoothing of the cursor | none |
 | `myhands/session.py` | My Hands session: start, stop, events, grabs; publishes as `my_hands` | `backend.events` |
-| `web/index.html`, `web/styles.css` | the screen: panels, glass desktop, the camera picture behind the tiles | none |
+| `web/index.html`, `web/styles.css` | the screen: the top line of function buttons, the thin left rail (the voice visualiser on top, the conversation below it, squeezable to almost nothing), the environment rail and its tool tabs, and the camera picture behind them | none |
+| `web/shell.js` | the environment shell: slides whole workspaces left and right, fetches each one's code only when it is first opened, keeps exactly one live at a time, and lends each one its tool strip (`env._tools`) so it can add controls when it mounts | page globals: provides `Shell` |
+| `web/environments/*.js` | one workspace each: Coding (code tree, ask Jarvis about the open file), Design (the 3D room), Flat (the 2D room: layers, drawing tools, image and video frames), **Studio** (Jarvis writes the script and the title; Pollinations makes a picture per shot; a canvas plays the shot list and `MediaRecorder` records it; the title and script are laid out for Scenering), Files (browse and read) | `three`, loaded on demand by Design only |
+| `web/vendor/**` | the 3D engine and its model loaders, kept in the repo so the Design room works with no internet (three.js, Apache-2.0; see THIRD_PARTY_NOTICES.md) | none |
 | `web/app.js` | glass desktop tiles, file panel, chat log; loads first | page globals: provides `SupperUI`, uses `SupperCtl` if present |
 | `web/myhands.js` | moves tiles from My Hands gesture events; shows and hides the camera picture with My Hands | page globals: uses `SupperUI` |
 | `web/control.js` | shared event stream, confirmations, budget chip, diagnostics | page globals: provides `SupperCtl`, uses `SupperUI`, `SupperVoice` |

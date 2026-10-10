@@ -3,7 +3,7 @@ barehands — hand-tracked glass board for JARVIS  (drop-in plugin)
 
 Gives JARVIS:
   • a voice tool:  "open barehands" / "show me X on the board" / "clear the board" / "close barehands"
-  • a settings panel (⚙ → PLUGIN SETTINGS → BAREHANDS): start/stop button, auto-start toggle, port, browser
+  • a settings panel (⚙ → PLUGIN SETTINGS → MY HANDS): start/stop button, auto-start toggle, port, browser
   • a live ring: JARVIS's LISTENING / THINKING / SPEAKING state is mirrored into barehands/state/
 
 barehands itself: https://github.com/jaredrhod/barehands  (AGPL-3.0). It runs as its own local
@@ -146,12 +146,12 @@ def start(open_page: bool = True) -> tuple[bool, str]:
                     break
                 time.sleep(0.1)
             if not _alive():
-                return False, "the barehands server did not come up — check the port in settings."
+                return False, "the hand board server did not come up — check the port in settings."
         _STATE.mkdir(exist_ok=True)
         (_STATE / "state").write_text("listening")
         if open_page:
             _open_browser()
-        return True, f"barehands is up at {_url()}"
+        return True, f"My Hands is up at {_url()}"
 
 
 def stop() -> tuple[bool, str]:
@@ -167,10 +167,10 @@ def stop() -> tuple[bool, str]:
             except Exception:
                 _PROC.terminate()
             _PROC = None
-            return True, "barehands stopped."
+            return True, "My Hands stopped."
         if _alive():
-            return False, "barehands is running but was not started by me — close its terminal to stop it."
-        return True, "barehands was not running."
+            return False, "My Hands is running but was not started by me — close its terminal to stop it."
+        return True, "My Hands was not running."
 
 
 def _cmd(payload: dict) -> tuple[bool, str]:
@@ -323,11 +323,11 @@ def _show_image(query_or_path: str, spotlight: bool = True, title: str = "") -> 
 
 # ── the voice tool ─────────────────────────────────────────────────────────────
 PLUGIN = {
-    "name": "barehands",
+    "name": "my_hands",
     "description": (
-        "Control the barehands hand-tracked glass board (a browser window the user moves with "
-        "their bare hands via webcam). Use action 'open' when the user says open/start/launch "
-        "barehands, the board, the glass, hand tracking, or 'let me use my hands'. Use 'close' to "
+        "Control the My Hands glass board (a browser window the user moves with "
+        "their hands via webcam). Use action 'open' when the user says open/start/launch "
+        "my hands, the board, the glass, hand tracking, or 'let me use my hands'. Use 'close' to "
         "stop it. When the user asks to SEE something — 'show me', 'put it up', 'put that on the "
         "board/glass' — use 'present' with a title and short body instead of reading a long answer "
         "aloud. Use 'card' to add a smaller note card, 'clear' to wipe the board, 'status' to ask "
@@ -357,7 +357,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
     def log(t):
         if player:
             try:
-                player.write_log(f"BAREHANDS: {t}")
+                player.write_log(f"MY HANDS: {t}")
             except Exception:
                 pass
     try:
@@ -365,7 +365,7 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
             ok, msg = start(open_page=True)
             log(msg)
             return ("The board is up, sir. Allow the camera when the browser asks, and raise a hand."
-                    if ok else f"I couldn't start barehands: {msg}")
+                    if ok else f"I couldn't start My Hands: {msg}")
 
         if action in ("close", "stop", "off"):
             ok, msg = stop(); log(msg)
@@ -373,8 +373,8 @@ def run(parameters: dict, player=None, session_memory=None) -> str:
 
         if action == "status":
             if not _alive():
-                return "barehands is not running. Say 'open barehands' to start it."
-            return f"barehands is running. On the board right now: {board_state()}"
+                return "My Hands is not running. Say 'open my hands' to start it."
+            return f"My Hands is running. On the board right now: {board_state()}"
 
         if action in ("image", "picture", "photo", "show_image", "model"):
             if not _alive():

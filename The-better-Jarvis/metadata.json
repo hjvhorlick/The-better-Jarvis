@@ -1,6 +1,0 @@
-{
-  "name": "JARVIS",
-  "description": "JARVIS personal AI assistant web dashboard with voice commands, real-time WebSocket communication, file sharing, and Gemini integration.",
-  "requestFramePermissions": ["microphone", "camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

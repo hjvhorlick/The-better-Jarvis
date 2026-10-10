@@ -71,6 +71,19 @@
     const chip = chipFor(s);
     el.chip.textContent = chip.text;
     el.chip.className = `voice-chip ${chip.bad ? "bad" : ""}`.trim();
+
+    // The visualiser: listening when the microphone is open, speaking when the
+    // speaker is working. It goes quiet again the moment voice stops, so it
+    // never claims to be doing something it is not.
+    const speaking = !!(s && s.speaker && s.speaker.speaking);
+    if (speaking) setRing("speaking", "speaking");
+    else if (live) setRing(muted ? "" : "listening", muted ? "muted" : "listening");
+    else if (s && s.last_error) setRing("error", "no audio");
+    else setRing("", "ready");
+  }
+
+  function setRing(mode, label) {
+    if (window.SupperRing) window.SupperRing(mode, label);
   }
 
   async function refresh() {

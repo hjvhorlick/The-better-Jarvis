@@ -52,30 +52,72 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 .status.warn { color: var(--warn); }
 .workspaces { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
 
-.stage {
-  position: fixed; inset: 64px 0 210px 0;
-  display: flex; align-items: stretch; justify-content: center;
+/* The workbench: a thin rail on the left for Jarvis, the rest for the work.
+   The rail is deliberately narrow -- it holds the voice visualiser and the
+   chat and nothing else, so the environment gets the room. */
+.workbench {
+  position: fixed; inset: 64px 0 0 0;
+  display: flex; align-items: stretch;
+}
+
+.sidebar {
+  position: relative; z-index: 12;
+  flex: 0 0 auto; width: 248px;
+  display: flex; flex-direction: column;
+  background: var(--glass); backdrop-filter: blur(14px);
+  border-right: 1px solid var(--glass-edge);
+  transition: width 0.18s ease;
+}
+/* Squeezed right down: just the voice visualiser, so almost nothing is lost. */
+.sidebar.is-thin { width: 74px; }
+.sidebar.is-thin .rail-body { display: none; }
+
+/* The voice visualiser, top-left, in every environment. */
+.orb {
+  display: flex; align-items: center; gap: 6px;
+  padding: 10px 8px 8px 10px;
+  border-bottom: 1px solid var(--glass-edge);
 }
 .ring {
-  position: absolute; left: 50%; top: 14px; transform: translateX(-50%);
-  width: 92px; height: 92px; border-radius: 50%;
+  flex: 0 0 auto;
+  width: 54px; height: 54px; border-radius: 50%;
   border: 2px solid var(--accent);
-  box-shadow: 0 0 28px rgba(88, 215, 255, 0.45), inset 0 0 22px rgba(88, 215, 255, 0.25);
-  display: grid; place-items: center; z-index: 5; pointer-events: none;
+  box-shadow: 0 0 18px rgba(88, 215, 255, 0.4), inset 0 0 14px rgba(88, 215, 255, 0.22);
+  display: grid; place-items: center;
   animation: breathe 3.2s ease-in-out infinite;
 }
-.ring span { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+.ring span {
+  font-size: 8px; letter-spacing: 0.08em; text-transform: uppercase;
+  color: var(--dim); text-align: center; line-height: 1.1; padding: 0 2px;
+}
 .ring.thinking { animation-duration: 0.9s; border-color: var(--warn); }
+.ring.speaking { animation-duration: 1.1s; border-color: #7ef0b5; }
+.ring.listening { border-color: #7ef0b5; }
 .ring.error { border-color: var(--bad); }
 @keyframes breathe {
-  0%, 100% { transform: translateX(-50%) scale(1); }
-  50% { transform: translateX(-50%) scale(1.06); }
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.07); }
+}
+.rail-toggle {
+  margin-left: auto; padding: 4px 8px; font-size: 13px; line-height: 1;
+  background: transparent;
+}
+.sidebar.is-thin .rail-toggle { transform: rotate(180deg); }
+
+/* The chat fills whatever the rail has left. */
+.rail-body { flex: 1; min-height: 0; display: flex; }
+.chat { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+
+.stage {
+  position: relative; flex: 1; min-width: 0;
+  display: flex; align-items: stretch; justify-content: center;
 }
 
 .desktop {
   position: relative; width: min(1100px, 96vw); margin-top: 120px;
   display: flex; flex-direction: column;
 }
+.desktop[hidden] { display: none; }
 .crumbs { display: flex; align-items: center; gap: 10px; color: var(--dim); font-size: 13px; }
 .surface {
   position: relative; flex: 1; min-height: 240px; margin-top: 8px;
@@ -84,6 +126,13 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   overflow: hidden;
 }
 .hint { color: var(--dim); font-size: 12px; margin: 6px 2px 0; }
+.preview {
+  flex: 1; min-height: 120px; margin: 8px 0 0; overflow: auto;
+  font-size: 12px; line-height: 1.5; color: var(--dim);
+  background: rgba(5, 10, 20, 0.55); border: 1px solid var(--glass-edge);
+  border-radius: 10px; padding: 10px; white-space: pre-wrap; word-break: break-word;
+}
+.preview[hidden] { display: none; }
 
 .tile {
   position: absolute; width: 132px; padding: 12px 8px;
@@ -100,22 +149,17 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 .tile .name { margin-top: 6px; font-size: 13px; word-break: break-word; }
 .tile .meta { margin-top: 2px; font-size: 11px; color: var(--dim); }
 
-.dock {
-  position: fixed; left: 0; right: 0; bottom: 0; height: 200px; z-index: 15;
-  display: flex; flex-direction: column; gap: 8px; padding: 10px 16px 14px;
-  background: var(--glass); backdrop-filter: blur(14px);
-  border-top: 1px solid var(--glass-edge);
-}
 .log {
-  flex: 1; overflow-y: auto; font-size: 14px; line-height: 1.45;
-  display: flex; flex-direction: column; gap: 6px; padding-right: 6px;
+  flex: 1; min-height: 0; overflow-y: auto; font-size: 13px; line-height: 1.45;
+  display: flex; flex-direction: column; gap: 6px; padding-right: 4px;
 }
 .msg { white-space: pre-wrap; word-break: break-word; max-width: 900px; }
 .msg.user { color: var(--accent); }
 .msg.assistant { color: var(--ink); }
 .msg.system { color: var(--dim); font-size: 12px; }
 .msg.error { color: var(--bad); }
-.composer { display: flex; gap: 8px; align-items: center; }
+.composer { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.composer input[type=text] { flex: 1 1 100%; }
 .composer button[type=submit] { background: rgba(88, 215, 255, 0.25); }
 .voice-cluster { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .voice-cluster button[aria-pressed=true] { background: rgba(88, 215, 255, 0.25); }
@@ -124,7 +168,7 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 .voice-chip.bad { color: var(--bad); }
 
 .panel {
-  position: fixed; top: 64px; bottom: 210px; right: 0; width: min(380px, 92vw); z-index: 30;
+  position: fixed; top: 64px; bottom: 0; right: 0; width: min(380px, 92vw); z-index: 30;
   display: flex; flex-direction: column; gap: 12px; padding: 16px;
   background: rgba(12, 20, 34, 0.86); backdrop-filter: blur(18px);
   border-left: 1px solid var(--glass-edge); border-radius: 16px 0 0 16px;
@@ -146,8 +190,15 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 
 @media (max-width: 720px) {
   .workspaces { margin-left: 0; }
-  .stage { inset: 110px 0 230px 0; }
+  .sidebar { width: 200px; }
+  .sidebar.is-thin { width: 62px; }
+  .ring { width: 46px; height: 46px; }
   .desktop { margin-top: 60px; }
+}
+/* Very narrow: the rail squeezes to the voice visualiser on its own. */
+@media (max-width: 560px) {
+  .sidebar { width: 62px; }
+  .sidebar .rail-body { display: none; }
 }
 
 /* ---------- My Hands ---------- */
@@ -168,6 +219,8 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   border: 2px solid var(--accent); pointer-events: none; z-index: 50; box-shadow: 0 0 14px rgba(88, 215, 255, 0.45);
   transition: background 0.08s; }
 .hand-cursor.pinched { background: rgba(88, 215, 255, 0.55); }
+/* Holding still: the thing you are holding is being turned. */
+.hand-cursor.turning { background: rgba(255, 205, 120, 0.6); box-shadow: 0 0 0 6px rgba(255, 205, 120, 0.22); }
 
 /* ---------- V2-2: budget chip, permission prompts, diagnostics drawer ---------- */
 .quota-chip { font-size: 13px; color: var(--dim); padding: 3px 9px; border: 1px solid var(--glass-edge); border-radius: 999px; }
@@ -202,3 +255,456 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 .drawer dd.tier-confirm { color: var(--warn); }
 .drawer dd.tier-blocked { color: var(--bad); }
 #btn-diag[aria-pressed="true"] { border-color: var(--accent); }
+
+/* ===================================================================
+   The environment shell — a windowing environment, not a page of tabs.
+   You slide between worlds left and right. Each world carries its own
+   compact tool tabs at the top, so the middle stays free for the thing
+   you are moving.
+
+   Speed rules, in order of how much they matter:
+     · one world is live at a time; the rest are `content-visibility:hidden`,
+       so a 3D room costs nothing while you are coding
+     · sliding is one transform on one compositor layer
+     · `contain` stops a world's layout from leaking into its neighbours
+   =================================================================== */
+
+.env-switcher {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.env-switch {
+  font-size: 13px;
+  padding: 5px 11px;
+  border-radius: 999px;
+}
+.env-switch[aria-pressed="true"] {
+  background: rgba(88, 215, 255, 0.28);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.env-rail {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;          /* the slide track runs wider than the window */
+  border-radius: var(--radius);
+}
+
+.env-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 8px;
+  flex: 0 0 auto;
+}
+.env-arrow {
+  width: 30px; height: 30px;
+  padding: 0;
+  font-size: 17px;
+  line-height: 1;
+  border-radius: 9px;
+}
+.env-arrow:disabled { opacity: 0.3; }
+.env-label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.env-fps {
+  margin-left: auto;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+  min-width: 52px;
+  text-align: right;
+}
+
+.env-track {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  will-change: transform;
+  transition: transform 0.3s cubic-bezier(0.22, 0.61, 0.36, 1);
+  backface-visibility: hidden;
+}
+/* While a finger or a key is driving the slide, drop the easing so the
+   window tracks the hand exactly instead of trailing it. */
+.env-track.is-dragging { transition: none; }
+
+.env-slide {
+  position: relative;
+  flex: 0 0 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  contain: layout paint style;
+}
+/* Off-screen worlds are removed from layout and paint entirely. This is the
+   single biggest reason the app stays quick with a 3D room in it. */
+.env-slide:not(.is-live) { content-visibility: hidden; }
+.env-slide[aria-hidden="true"] .env-tools { visibility: hidden; }
+
+.env-tools {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  padding: 7px 10px;
+  background: var(--glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--glass-edge);
+  border-radius: 11px;
+  margin-bottom: 8px;
+}
+.env-tools-name {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-right: 4px;
+}
+.env-tool {
+  font-size: 12px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.env-tool[aria-pressed="true"],
+.env-tool[aria-selected="true"] {
+  background: rgba(88, 215, 255, 0.28);
+  border-color: var(--accent);
+}
+.env-tool .d3-slider { width: 84px; }
+
+.env-body {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 18, 32, 0.34);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.env-body[aria-busy="true"]::after {
+  content: "starting…";
+  position: absolute; inset: 0;
+  display: grid; place-items: center;
+  color: var(--dim); font-size: 13px;
+  background: rgba(7, 11, 20, 0.6);
+}
+.env-error { color: var(--bad); font-size: 13px; padding: 14px; margin: 0; }
+
+/* ---------- Design: the 3D room ---------- */
+.d3 { position: relative; flex: 1; min-height: 0; }
+.d3-canvas {
+  position: absolute; inset: 0;
+  width: 100%; height: 100%;
+  display: block;
+  touch-action: none;         /* let the orbit control own the gesture */
+}
+.d3-drop {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 18px 26px;
+  border: 1px dashed var(--glass-edge);
+  border-radius: 14px;
+  color: var(--dim);
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+  background: rgba(7, 11, 20, 0.55);
+  max-width: 80%;
+}
+.d3.is-over .d3-drop { border-color: var(--accent); color: var(--ink); }
+/* A clap lights the status line, so the gesture is felt and not just heard. */
+.d3-readout.is-flash {
+  color: #ffd98a;
+  border-color: rgba(255, 217, 138, 0.65);
+  box-shadow: 0 0 18px rgba(255, 200, 110, 0.35);
+}
+
+.d3-readout {
+  position: absolute; left: 12px; bottom: 12px;
+  margin: 0;
+  font-size: 12px;
+  color: var(--dim);
+  background: rgba(7, 11, 20, 0.7);
+  border: 1px solid var(--glass-edge);
+  border-radius: 9px;
+  padding: 6px 10px;
+  max-width: calc(100% - 24px);
+  pointer-events: none;
+}
+.d3-fps { position: absolute; right: 12px; top: 12px; }
+
+/* ---------- Coding ---------- */
+.code-env, .files-env { flex: 1; min-height: 0; }
+.code-pane, .files-pane {
+  flex: 1; min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(190px, 260px) 1fr;
+}
+.code-tree, .files-list {
+  overflow: auto;
+  border-right: 1px solid var(--glass-edge);
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.code-row, .files-row {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-row:hover, .files-row:hover { background: rgba(88, 215, 255, 0.14); }
+.code-row.is-folder { color: var(--accent); }
+.code-viewer, .files-view {
+  margin: 0;
+  overflow: auto;
+  padding: 12px 14px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--ink);
+  background: rgba(5, 10, 20, 0.45);
+}
+.code-status, .files-status {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--dim);
+  border-top: 1px solid var(--glass-edge);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* On a narrow screen the two panes stack, so the file is never squeezed to
+   nothing beside the tree. */
+@media (max-width: 760px) {
+  .code-pane, .files-pane { grid-template-columns: 1fr; grid-template-rows: 40% 60%; }
+  .code-tree, .files-list { border-right: 0; border-bottom: 1px solid var(--glass-edge); }
+  .env-tools { gap: 4px; padding: 6px; }
+  .env-tool { font-size: 11px; padding: 4px 8px; }
+}
+
+/* ---------- Flat: the 2D room ---------- */
+.flat {
+  position: relative; flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px; padding: 4px 2px 8px;
+}
+/* The picture sits on a checkerboard, so transparent areas read as
+   transparent instead of as black. */
+.flat-canvas-wrap {
+  position: relative; flex: 1; min-height: 0;
+  display: grid; place-items: center; overflow: hidden;
+  border-radius: var(--radius);
+  background: rgba(6, 12, 24, 0.5);
+  border: 1px solid var(--glass-edge);
+}
+.flat-check {
+  position: absolute; inset: 0; z-index: 0;
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.05) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.05) 75%);
+  background-size: 22px 22px;
+  background-position: 0 0, 0 11px, 11px -11px, -11px 0;
+}
+.flat-canvas {
+  position: relative; z-index: 1;
+  max-width: 100%; max-height: 100%;
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  border-radius: 6px;
+  touch-action: none;                 /* a drag draws, it does not scroll */
+}
+.flat-readout { position: absolute; left: 12px; bottom: 12px; z-index: 3; }
+
+/* The layer stack, along the right edge of the window. */
+.flat-layers {
+  position: absolute; top: 8px; right: 8px; z-index: 3;
+  width: 168px; max-height: 46%; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 3px; padding: 6px;
+  background: rgba(9, 15, 28, 0.82); backdrop-filter: blur(8px);
+  border: 1px solid var(--glass-edge); border-radius: 10px;
+  font-size: 12px;
+}
+.flat-layer { display: flex; align-items: center; gap: 4px; }
+.flat-layer.is-active { outline: 1px solid var(--accent); border-radius: 7px; }
+.flat-layer-name {
+  flex: 1; min-width: 0; text-align: left; padding: 3px 6px; font-size: 12px;
+  background: transparent; border: 0; border-radius: 6px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.flat-eye {
+  padding: 2px 5px; font-size: 11px; line-height: 1.2;
+  background: transparent; border: 0; border-radius: 6px;
+}
+.flat-eye:disabled { opacity: 0.3; }
+
+/* The tool controls that sit on the tab strip. */
+.env-tool-control input[type=color] {
+  width: 30px; height: 24px; padding: 0; border: 1px solid var(--glass-edge);
+  border-radius: 6px; background: transparent; cursor: pointer;
+}
+.env-tool-control input[type=range] { width: 78px; vertical-align: middle; }
+.env-tool-control input[type=text] {
+  width: 108px; padding: 4px 7px; font-size: 12px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 7px; color: var(--ink);
+}
+.env-tool[aria-pressed="true"] { background: rgba(88, 215, 255, 0.28); }
+
+/* ---------- Studio: the AI media room ---------- */
+.studio {
+  position: relative; flex: 1; min-height: 0;
+  display: grid; gap: 10px; padding: 4px 2px 8px;
+  grid-template-columns: minmax(0, 1.55fr) minmax(220px, 0.85fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "brief library" "script library";
+}
+.studio-brief { grid-area: brief; display: flex; flex-direction: column; gap: 7px; }
+.studio-script { grid-area: script; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
+.studio-library { grid-area: library; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+
+.studio-label { font-size: 12px; color: var(--dim); }
+.studio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.studio-row input[type=number] {
+  width: 74px; padding: 5px 7px; font-size: 13px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 8px; color: var(--ink);
+}
+.studio-row select, .studio-brief input[type=text] {
+  padding: 5px 8px; font-size: 13px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 8px; color: var(--ink);
+}
+.studio-brief input[type=text] { flex: 1; min-width: 0; }
+
+.studio-title-line { display: flex; gap: 8px; align-items: center; }
+.studio-title-line input[type=text] {
+  flex: 1; min-width: 0; padding: 7px 10px; font-size: 15px; font-weight: 600;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 9px; color: var(--ink);
+}
+.studio-title-line select { max-width: 40%; font-size: 12px; padding: 5px 7px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 8px; color: var(--dim); }
+
+.studio-shots {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px; padding-right: 4px;
+}
+.studio-empty { color: var(--dim); font-size: 13px; margin: 4px 2px; }
+.studio-shot {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+  background: rgba(12, 20, 34, 0.55); border: 1px solid var(--glass-edge);
+  border-radius: 11px;
+}
+.studio-shot.has-image { border-color: rgba(126, 240, 181, 0.35); }
+.studio-shot-head { display: flex; align-items: center; gap: 7px; }
+.studio-shot-num {
+  flex: 0 0 auto; width: 21px; height: 21px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 11px; font-weight: 700;
+  background: rgba(88, 215, 255, 0.18); color: var(--accent);
+}
+.studio-shot-secs {
+  width: 52px; padding: 3px 5px; font-size: 12px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 7px; color: var(--ink);
+}
+.studio-shot-del { padding: 2px 7px; font-size: 13px; background: transparent; }
+.studio-shot-caption, .studio-shot-prompt {
+  width: 100%; padding: 4px 7px; font-size: 12px;
+  background: rgba(5, 10, 20, 0.55); border: 1px solid var(--glass-edge);
+  border-radius: 7px; color: var(--ink);
+}
+.studio-shot-prompt { color: var(--dim); }
+.studio-shot-narration {
+  width: 100%; padding: 5px 7px; font-size: 13px; line-height: 1.4; resize: vertical;
+  background: rgba(5, 10, 20, 0.55); border: 1px solid var(--glass-edge);
+  border-radius: 7px; color: var(--ink); font-family: inherit;
+}
+.studio-shot-img {
+  width: 100%; max-height: 190px; object-fit: cover;
+  border-radius: 8px; background: #05080f;
+}
+.studio-total { color: var(--dim); font-size: 12px; margin: 2px; }
+
+.studio-library-head { display: flex; align-items: center; gap: 7px; font-size: 13px; }
+.studio-library-head input[type=search] {
+  flex: 1; min-width: 0; padding: 4px 7px; font-size: 12px;
+  background: rgba(5, 10, 20, 0.6); border: 1px solid var(--glass-edge);
+  border-radius: 7px; color: var(--ink);
+}
+.studio-library-grid {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; padding-right: 3px;
+}
+.studio-cell {
+  display: grid; grid-template-columns: 62px minmax(0, 1fr) auto; gap: 6px;
+  align-items: center; padding: 5px;
+  background: rgba(12, 20, 34, 0.5); border: 1px solid var(--glass-edge);
+  border-radius: 9px;
+}
+.studio-cell img { width: 62px; height: 42px; object-fit: cover; border-radius: 5px; }
+.studio-cell-kind {
+  display: grid; place-items: center; width: 62px; height: 42px;
+  font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--dim); background: rgba(5, 10, 20, 0.6); border-radius: 5px;
+}
+.studio-cell-name {
+  min-width: 0; padding: 3px 6px; font-size: 12px;
+  background: transparent; border: 1px solid transparent; border-radius: 6px;
+  color: var(--ink);
+}
+.studio-cell-name:hover, .studio-cell-name:focus { border-color: var(--glass-edge); }
+.studio-cell-del { padding: 2px 7px; font-size: 11px; background: transparent; color: var(--bad); }
+.studio-readout { position: absolute; left: 12px; bottom: 12px; z-index: 4; max-width: 60%; }
+.studio-raw {
+  width: 100%; min-height: 140px; font-family: ui-monospace, monospace; font-size: 12px;
+  padding: 8px; color: var(--ink); background: rgba(5, 10, 20, 0.7);
+  border: 1px solid var(--glass-edge); border-radius: 9px;
+}
+.studio-download {
+  display: inline-block; margin: 6px 2px 0; padding: 7px 12px; font-size: 13px;
+  color: var(--accent); text-decoration: none;
+  border: 1px solid var(--glass-edge); border-radius: 9px;
+}
+
+/* Narrow: the library drops below the script instead of beside it. */
+@media (max-width: 900px) {
+  .studio {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-areas: "brief" "script" "library";
+  }
+}

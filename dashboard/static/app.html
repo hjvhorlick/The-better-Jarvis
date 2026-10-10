@@ -16,7 +16,7 @@
       --glass-blur: 24px;
       --glass-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
 
-      /* Dull Glass Acrylic Mode (applied when Barehands camera feed is active) */
+      /* Dull Glass Acrylic Mode (applied when the My Hands camera feed is active) */
       --dull-glass-bg: rgba(14, 19, 30, 0.58);
       --dull-glass-border: rgba(255, 255, 255, 0.14);
       --dull-glass-blur: 28px;
@@ -66,7 +66,7 @@
       position: absolute; inset: 0; width: 100%; height: 100%; overflow: hidden; z-index: 0;
     }
 
-    /* Video camera background (Barehands style) */
+    /* Video camera background (My Hands style) */
     #bg-camera {
       position: absolute; inset: 0; width: 100%; height: 100%;
       object-fit: cover; transform: scaleX(-1);
@@ -175,18 +175,18 @@
       overflow: hidden; z-index: 10;
     }
 
-    /* Dull glass modifier when Barehands is engaged */
-    body.barehands-engaged .glass-window {
+    /* Dull glass modifier when My Hands is engaged */
+    body.myhands-engaged .glass-window {
       background: var(--dull-glass-bg);
       backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
       -webkit-backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
       border: 1px solid var(--dull-glass-border);
       box-shadow: var(--dull-glass-shadow);
     }
-    body.barehands-engaged #bg-scrim {
+    body.myhands-engaged #bg-scrim {
       background: rgba(4, 7, 12, 0.28);
     }
-    body.barehands-engaged #bg-studio {
+    body.myhands-engaged #bg-studio {
       opacity: 0.15;
     }
 
@@ -836,14 +836,14 @@
         <span id="txt-btn-cam">Camera</span>
       </button>
 
-      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleBarehandsTracking()" title="Toggle Hand Gesture Tracking (My Hands)">
+      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleMyHandsTracking()" title="Toggle Hand Gesture Tracking (My Hands)">
         <span class="btn-icon">🖐️</span>
         <span>My Hands</span>
       </button>
 
       <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)">
         <span class="btn-icon">🎮</span>
-        <span>Sim Hand <small style="opacity:0.6">[V]</small></span>
+        <span>Hand <small style="opacity:0.6">[V]</small></span>
       </button>
 
       <button class="hud-toggle-btn active" id="btn-toggle-tree" onclick="toggleWindow('win-tree')" title="Show/Hide PC File Tree">
@@ -890,12 +890,12 @@
         <div class="cam-helper-icon">📷</div>
         <div>
           <div class="cam-helper-title" id="cam-banner-title">Camera Feed Notice</div>
-          <div class="cam-helper-desc" id="cam-banner-desc">Webcam access may be blocked inside the preview iframe. Click "Open in New Tab" for direct hardware permission, or use "Sim Hand" to test all gestures instantly!</div>
+          <div class="cam-helper-desc" id="cam-banner-desc">Webcam access may be blocked inside the preview iframe. Click "Open in New Tab" for direct hardware permission, or use "Mouse Hand" to test all gestures instantly!</div>
         </div>
       </div>
       <div class="cam-helper-actions">
         <button class="cam-banner-btn primary" onclick="openStandaloneTab()">↗️ Open in New Tab</button>
-        <button class="cam-banner-btn secondary" onclick="enableVirtualHandSimulator()">🖐️ Sim Hand Mode</button>
+        <button class="cam-banner-btn secondary" onclick="enableMouseHand()">🖐️ Mouse Hand</button>
         <button class="cam-banner-btn secondary" onclick="enableCyberStageFeed()">🎥 Stage Simulation</button>
         <button class="cam-banner-close" onclick="closeCamHelper()">✕</button>
       </div>
@@ -1269,11 +1269,11 @@
             toast('Systems awake and responsive');
             reactorTag.textContent = 'JARVIS ACTIVE';
           }
-          if (m.type === 'barehands_control' || m.type === 'myhands_control') {
+          if (m.type === 'myhands_control') {
             if (m.active && !handTrackingActive) {
-              toggleBarehandsTracking();
+              toggleMyHandsTracking();
             } else if (!m.active && handTrackingActive) {
-              toggleBarehandsTracking();
+              toggleMyHandsTracking();
             }
           }
         } catch (err) { console.error('WS msg parse error:', err); }
@@ -1820,7 +1820,7 @@
 
     async function enableCameraBackground(prefId) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showCamHelperBanner('Webcam API Unavailable', 'Your browser does not support mediaDevices in this context. Use Sim Hand mode or Pop Out.');
+        showCamHelperBanner('Webcam API Unavailable', 'Your browser does not support mediaDevices in this context. Use Mouse Hand mode or Pop Out.');
         enableCyberStageFeed();
         return;
       }
@@ -1841,7 +1841,7 @@
         document.getElementById('txt-btn-cam').textContent = 'Camera On';
         dotCam.classList.add('active');
         txtCamStatus.textContent = 'Cam: Active';
-        document.body.classList.add('barehands-engaged');
+        document.body.classList.add('myhands-engaged');
         closeCamHelper();
         toast('Camera background active');
         populateCameraDevices();
@@ -1855,7 +1855,7 @@
           document.getElementById('txt-btn-cam').textContent = 'Camera On';
           dotCam.classList.add('active');
           txtCamStatus.textContent = 'Cam: Fallback';
-          document.body.classList.add('barehands-engaged');
+          document.body.classList.add('myhands-engaged');
           closeCamHelper();
           toast('Camera background connected');
           populateCameraDevices();
@@ -1865,7 +1865,7 @@
           txtCamStatus.textContent = 'Cam: Blocked';
           showCamHelperBanner(
             'Camera Access Restricted in Iframe',
-            'Webcam permissions are locked by the browser inside this preview container. Pop out to a new tab for direct access, or enable Sim Hand to test all spatial gestures right now!'
+            'Webcam permissions are locked by the browser inside this preview container. Pop out to a new tab for direct access, or enable Mouse Hand to test all spatial gestures right now!'
           );
           enableCyberStageFeed();
         }
@@ -1884,7 +1884,7 @@
       dotCam.classList.remove('active');
       txtCamStatus.textContent = 'Cam: Standby';
       if (!handTrackingActive) {
-        document.body.classList.remove('barehands-engaged');
+        document.body.classList.remove('myhands-engaged');
       }
       toast('Camera background disabled');
     }
@@ -2014,7 +2014,7 @@
       document.getElementById('lbl-dwell-time').textContent = `${dwellDuration} ms`;
     }
 
-    async function toggleBarehandsTracking() {
+    async function toggleMyHandsTracking() {
       if (handTrackingActive) {
         handTrackingActive = false;
         btnHands.classList.remove('active');
@@ -2024,7 +2024,7 @@
         handCursor.style.display = 'none';
         overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         if (!cameraStream) {
-          document.body.classList.remove('barehands-engaged');
+          document.body.classList.remove('myhands-engaged');
         }
         toast('My Hands tracking disabled');
       } else {
@@ -2032,7 +2032,7 @@
           await enableCameraBackground();
         }
         handTrackingActive = true;
-        document.body.classList.add('barehands-engaged');
+        document.body.classList.add('myhands-engaged');
         btnHands.classList.add('active');
         if (swHands) swHands.classList.add('on');
         dotHands.classList.add('active');
@@ -2041,7 +2041,7 @@
         startHandTrackingLoop();
       }
     }
-    window.toggleMyHandsTracking = toggleBarehandsTracking;
+    window.toggleMyHandsTracking = toggleMyHandsTracking;
 
     // MediaPipe Hand Landmarker loop
     let landmarker = null;
@@ -2067,7 +2067,7 @@
           handTrackerLoaded = true;
         } catch (e) {
           console.warn('Could not load MediaPipe landmarker, falling back to simulated hand:', e);
-          enableVirtualHandSimulator();
+          enableMouseHand();
         }
       }
 
@@ -2277,26 +2277,26 @@
     }
 
     // ── VIRTUAL HAND SIMULATOR ──
-    let simHandActive = false;
+    let mouseHandActive = false;
     let simMousePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
     let simPinching = false;
     let simFist = false;
 
     function toggleVirtualHandSimulator() {
-      if (simHandActive) {
+      if (mouseHandActive) {
         disableVirtualHandSimulator();
       } else {
-        enableVirtualHandSimulator();
+        enableMouseHand();
       }
     }
 
-    function enableVirtualHandSimulator() {
-      simHandActive = true;
+    function enableMouseHand() {
+      mouseHandActive = true;
       document.getElementById('btn-toggle-sim').classList.add('active');
       handCursor.classList.add('simulated');
       handCursor.style.display = 'block';
       dotHands.classList.add('active');
-      txtHandsStatus.textContent = 'Sim Hand: Active';
+      txtHandsStatus.textContent = 'Mouse Hand: Active';
       toast('Virtual Hand Simulator active! Click / Space to Pinch, Shift+Click for Fist');
       closeCamHelper();
 
@@ -2305,11 +2305,11 @@
       window.addEventListener('pointerup', onSimPointerUp);
       window.addEventListener('keydown', onSimKeyDown);
       window.addEventListener('keyup', onSimKeyUp);
-      requestAnimationFrame(renderSimHandLoop);
+      requestAnimationFrame(renderHandSimLoop);
     }
 
     function disableVirtualHandSimulator() {
-      simHandActive = false;
+      mouseHandActive = false;
       document.getElementById('btn-toggle-sim').classList.remove('active');
       handCursor.classList.remove('simulated');
       if (!handTrackingActive) {
@@ -2327,12 +2327,12 @@
     }
 
     function onSimPointerMove(e) {
-      if (!simHandActive) return;
+      if (!mouseHandActive) return;
       simMousePos = { x: e.clientX, y: e.clientY };
     }
 
     function onSimPointerDown(e) {
-      if (!simHandActive) return;
+      if (!mouseHandActive) return;
       if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('input') || e.target.closest('button')) return;
       if (e.shiftKey) {
         simFist = true;
@@ -2342,7 +2342,7 @@
     }
 
     function onSimPointerUp() {
-      if (!simHandActive) return;
+      if (!mouseHandActive) return;
       simPinching = false;
       simFist = false;
     }
@@ -2353,7 +2353,7 @@
           toggleVirtualHandSimulator();
         }
       }
-      if (!simHandActive) return;
+      if (!mouseHandActive) return;
       if (e.code === 'Space' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
         simPinching = true;
         e.preventDefault();
@@ -2361,15 +2361,15 @@
     }
 
     function onSimKeyUp(e) {
-      if (!simHandActive) return;
+      if (!mouseHandActive) return;
       if (e.code === 'Space') {
         simPinching = false;
         e.preventDefault();
       }
     }
 
-    function renderSimHandLoop() {
-      if (!simHandActive) return;
+    function renderHandSimLoop() {
+      if (!mouseHandActive) return;
 
       // Construct a simulated 21-node hand around simMousePos
       const mx = simMousePos.x, my = simMousePos.y;
@@ -2403,7 +2403,7 @@
       ];
 
       processHandLandmarks(mockLms);
-      requestAnimationFrame(renderSimHandLoop);
+      requestAnimationFrame(renderHandSimLoop);
     }
 
     // ── WORKSPACE APPEARANCE CUSTOMIZATION ──
@@ -2457,7 +2457,7 @@
     async function doMic() {
       if (_voiceWs || _speechRec) { stopMic(); return; }
 
-      // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate my hands" or "activate barehands")
+      // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate my hands" or "activate my hands")
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
       if (SpeechRecognition) {
         try {
