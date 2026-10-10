@@ -49,6 +49,14 @@ window.Shell.register({
 });
 
 window.Shell.register({
+  id: "email",
+  name: "Email",
+  hint: "Prepare, save and review email drafts; sending stays in your chosen mail app",
+  tools: [],
+  mount: null,   // supplied by environments/email.js when first opened
+});
+
+window.Shell.register({
   id: "files",
   name: "Files",
   hint: "Browse and read files on this computer",
