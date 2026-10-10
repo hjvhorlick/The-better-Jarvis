@@ -119,14 +119,16 @@ async function processCommand(userCommand: string): Promise<string> {
   if (!trimmed) return 'Awaiting your command, sir.';
 
   const lower = trimmed.toLowerCase();
-  // Intercept Barehands spatial commands directly for instantaneous UI state toggling
-  if (lower.includes('barehands') || lower.includes('bare hands') || (lower.includes('hand') && lower.includes('gesture')) || lower.includes('gesture tracking')) {
+  // Intercept My Hands / Barehands spatial commands directly for instantaneous UI state toggling
+  if (lower.includes('my hands') || lower.includes('myhands') || lower.includes('barehands') || lower.includes('bare hands') || (lower.includes('hand') && lower.includes('gesture')) || lower.includes('gesture tracking')) {
     if (lower.includes('off') || lower.includes('stop') || lower.includes('disable') || lower.includes('close') || lower.includes('exit')) {
       broadcast({ type: 'barehands_control', active: false });
-      return 'Disengaging Barehands gesture tracking and restoring HUD overview.';
+      broadcast({ type: 'myhands_control', active: false });
+      return 'Disengaging My Hands gesture tracking and restoring HUD overview.';
     } else {
       broadcast({ type: 'barehands_control', active: true });
-      return 'Engaging Barehands spatial tracking. Camera background initialized and dull glass interfaces ready for gesture manipulation.';
+      broadcast({ type: 'myhands_control', active: true });
+      return 'Engaging My Hands spatial tracking. Camera background initialized and dull glass interfaces ready for gesture manipulation.';
     }
   }
 
@@ -288,6 +290,7 @@ app.get('/static/crypto.js', (_req: Request, res: Response) => {
 
 app.use('/static', express.static(STATIC_DIR));
 app.use('/barehands', express.static(BAREHANDS_DIR));
+app.use('/myhands', express.static(BAREHANDS_DIR));
 
 // Direct route to serve Barehands stage if accessed directly
 app.get('/stage.html', (_req: Request, res: Response) => {
@@ -619,7 +622,7 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       heapUsedMB: Math.round(mem.heapUsed / (1024 * 1024)),
     },
     modules: [
-      { name: 'Barehands Spatial Controller', status: 'ready', icon: '✋' },
+      { name: 'My Hands Spatial Controller', status: 'ready', icon: '✋' },
       { name: 'PC File System Tree & Inspector', status: 'ready', icon: '📂' },
       { name: 'Physical Glass Acrylic Surfaces', status: 'active', icon: '🪟' },
       { name: 'Gemini 2.5 Neural Core', status: 'ready', icon: '🧠' },

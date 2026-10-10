@@ -427,16 +427,16 @@ def _toggle_action(values: dict):
 
 PLUGIN_SETTINGS = {
     "namespace": _NS,
-    "title": "BAREHANDS — hand-tracked board",
+    "title": "MY HANDS — hand-tracked board",
     "fields": [
-        {"key": "autostart",  "type": "toggle", "label": "Start barehands with JARVIS", "default": False},
+        {"key": "autostart",  "type": "toggle", "label": "Start My Hands with JARVIS", "default": False},
         {"key": "app_window", "type": "toggle", "label": "Open as its own window (no tabs)", "default": True},
         {"key": "browser",    "type": "choice", "label": "Browser",
          "options": ["opera", "default", "chrome", "brave"], "default": "opera"},
         {"key": "port",       "type": "text",   "label": "Port", "default": "8794"},
         {"key": "camera",     "type": "text",   "label": "Camera (part of its name, e.g. Microdia; blank = auto)", "default": "Microdia"},
     ],
-    "action": {"label": "▶ / ■  START · STOP BAREHANDS", "run": _toggle_action},
+    "action": {"label": "▶ / ■  START · STOP MY HANDS", "run": _toggle_action},
 }
 
 

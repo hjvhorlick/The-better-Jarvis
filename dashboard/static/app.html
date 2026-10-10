@@ -836,9 +836,9 @@
         <span id="txt-btn-cam">Camera</span>
       </button>
 
-      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleBarehandsTracking()" title="Toggle Hand Gesture Tracking">
+      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleBarehandsTracking()" title="Toggle Hand Gesture Tracking (My Hands)">
         <span class="btn-icon">🖐️</span>
-        <span>Barehands</span>
+        <span>My Hands</span>
       </button>
 
       <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)">
@@ -957,7 +957,7 @@
         <div class="chat-feed" id="chat-feed"></div>
 
         <div class="suggestion-row">
-          <div class="sugg-chip" onclick="sendSuggestion('Activate Barehands')">🖐️ Activate Barehands</div>
+          <div class="sugg-chip" onclick="sendSuggestion('Activate My Hands')">🖐️ Activate My Hands</div>
           <div class="sugg-chip" onclick="sendSuggestion('System status check')">📊 Status Check</div>
           <div class="sugg-chip" onclick="sendSuggestion('List active project modules')">🧩 Project Modules</div>
           <div class="sugg-chip" onclick="sendSuggestion('Explain current workspace architecture')">🏗️ Architecture</div>
@@ -1045,13 +1045,13 @@
           <div class="preset-grid">
             <button class="preset-btn" onclick="applyPreset('balanced')">📐 Balanced HUD</button>
             <button class="preset-btn" onclick="applyPreset('dev')">💻 Code & Files Focus</button>
-            <button class="preset-btn" onclick="applyPreset('spatial')">🖐️ Barehands Stage</button>
+            <button class="preset-btn" onclick="applyPreset('spatial')">🖐️ My Hands Stage</button>
             <button class="preset-btn" onclick="resetLayout()">🔄 Reset Positions</button>
           </div>
         </div>
 
         <div>
-          <div class="settings-section-title">Barehands & Gesture Grabbing Modes</div>
+          <div class="settings-section-title">My Hands & Gesture Grabbing Modes</div>
           
           <!-- Pinch Grab -->
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
@@ -1169,7 +1169,7 @@
       </div>
       <div class="spatial-badge">
         <span class="spatial-dot" id="dot-hands"></span>
-        <span id="txt-hands-status">Barehands: Off</span>
+        <span id="txt-hands-status">My Hands: Off</span>
       </div>
       <div class="spatial-badge" id="badge-gesture" style="color: #38bdf8;">
         <span>Gesture: Pointer</span>
@@ -1269,7 +1269,7 @@
             toast('Systems awake and responsive');
             reactorTag.textContent = 'JARVIS ACTIVE';
           }
-          if (m.type === 'barehands_control') {
+          if (m.type === 'barehands_control' || m.type === 'myhands_control') {
             if (m.active && !handTrackingActive) {
               toggleBarehandsTracking();
             } else if (!m.active && handTrackingActive) {
@@ -1740,7 +1740,7 @@
         if (c) { c.style.display = 'flex'; c.style.left = '360px'; c.style.top = '70px'; t.style.width = '440px'; }
         if (tr) { tr.style.display = 'flex'; tr.style.left = '820px'; tr.style.top = '70px'; }
         FoleyAudio.place();
-        toast('Barehands Spatial Stage applied');
+        toast('My Hands Spatial Stage applied');
       }
     }
 
@@ -2020,13 +2020,13 @@
         btnHands.classList.remove('active');
         if (swHands) swHands.classList.remove('on');
         dotHands.classList.remove('active');
-        txtHandsStatus.textContent = 'Barehands: Off';
+        txtHandsStatus.textContent = 'My Hands: Off';
         handCursor.style.display = 'none';
         overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
         if (!cameraStream) {
           document.body.classList.remove('barehands-engaged');
         }
-        toast('Barehands tracking disabled');
+        toast('My Hands tracking disabled');
       } else {
         if (!cameraStream) {
           await enableCameraBackground();
@@ -2036,11 +2036,12 @@
         btnHands.classList.add('active');
         if (swHands) swHands.classList.add('on');
         dotHands.classList.add('active');
-        txtHandsStatus.textContent = 'Barehands: Active';
-        toast('Barehands tracking active: Pinch or Clench to grab');
+        txtHandsStatus.textContent = 'My Hands: Active';
+        toast('My Hands tracking active: Pinch or Clench to grab');
         startHandTrackingLoop();
       }
     }
+    window.toggleMyHandsTracking = toggleBarehandsTracking;
 
     // MediaPipe Hand Landmarker loop
     let landmarker = null;
@@ -2313,7 +2314,7 @@
       handCursor.classList.remove('simulated');
       if (!handTrackingActive) {
         dotHands.classList.remove('active');
-        txtHandsStatus.textContent = 'Barehands: Off';
+        txtHandsStatus.textContent = 'My Hands: Off';
         handCursor.style.display = 'none';
         overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
       }

@@ -3880,7 +3880,7 @@ class MainWindow(QMainWindow):
         lay.addWidget(settings_btn)
 
         # @@BAREHANDS_BTN@@ — one-click start/stop of the hand-tracked board
-        bh_btn = QPushButton("🖐  BAREHANDS")
+        bh_btn = QPushButton("🖐  MY HANDS")
         bh_btn.setFixedHeight(26)
         bh_btn.setFont(QFont("Courier New", 7))
         bh_btn.setCursor(Qt.CursorShape.PointingHandCursor)
