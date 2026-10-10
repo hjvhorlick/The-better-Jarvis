@@ -1,0 +1,12 @@
+# Voice on this computer (V2-3). Optional: without these the app runs, and voice reports why it is off.
+#
+# sounddevice (MIT): the server microphone and speaker. On Linux it needs the PortAudio system
+# library first (for example: sudo apt install libportaudio2). Without it, starting voice says so.
+# Checked from the package metadata: sounddevice 0.5.6, licence MIT.
+sounddevice==0.5.6
+numpy>=1.26
+
+# Wake word ("Hey Jarvis"): installed with backend/requirements-local-voice.txt (openwakeword, Apache-2.0 code).
+# The "Hey Jarvis" model files are bundled in backend/voice/wake_models/ (CC BY-NC-SA 4.0; see NOTICE.md there).
+# Check them with tools/check_wake_model.py.
+# See docs/V2_REDESIGN.md §13 and docs/LOCAL_VOICE.md.

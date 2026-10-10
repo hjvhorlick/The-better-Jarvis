@@ -1,0 +1,162 @@
+[
+  {
+    "key": "git-undo-last-commit",
+    "question": "undo last git commit",
+    "answer": "Run git reset --soft HEAD~1. This removes the last commit and keeps your changes staged. Use git reset HEAD~1 (no flag) to keep them unstaged. Do not use --hard unless you want the changes thrown away. If the commit was already pushed, use git revert instead."
+  },
+  {
+    "key": "git-revert-pushed",
+    "question": "undo pushed git commit",
+    "answer": "Run git revert <commit-hash>. It adds a new commit that reverses the old one, so the shared history is not rewritten. Then push as normal."
+  },
+  {
+    "key": "git-stash",
+    "question": "git stash uncommitted changes",
+    "answer": "git stash saves uncommitted changes and gives you a clean folder. git stash pop brings them back. git stash list shows what is saved."
+  },
+  {
+    "key": "git-delete-branch",
+    "question": "delete git branch",
+    "answer": "Locally: git branch -d name (refuses if unmerged); git branch -D name forces it. On the remote: git push origin --delete name."
+  },
+  {
+    "key": "python-venv",
+    "question": "python virtual environment",
+    "answer": "Run python -m venv .venv. Activate it with .venv\\Scripts\\activate on Windows, or source .venv/bin/activate on macOS and Linux. Then install with pip install -r requirements.txt."
+  },
+  {
+    "key": "pip-outdated",
+    "question": "outdated pip packages",
+    "answer": "Run pip list --outdated. To update one package: pip install --upgrade package-name. To save your exact versions: pip freeze > requirements.txt."
+  },
+  {
+    "key": "port-in-use",
+    "question": "port in use",
+    "answer": "On macOS and Linux: lsof -i :8000 shows the process ID; then kill <PID>. On Windows: netstat -ano | findstr :8000 shows the PID; then taskkill /PID <PID> /F. Replace 8000 with your port."
+  },
+  {
+    "key": "chmod-executable",
+    "question": "make script executable",
+    "answer": "Run chmod +x script.sh, then start it with ./script.sh."
+  },
+  {
+    "key": "http-404",
+    "question": "http 404",
+    "answer": "404 Not Found: the server has no resource at that address. Check the spelling and the path of the URL."
+  },
+  {
+    "key": "http-401-403",
+    "question": "http 401 403",
+    "answer": "401 Unauthorized: the request has no valid login or key. 403 Forbidden: the login is valid, but this user is not allowed to do this."
+  },
+  {
+    "key": "http-500",
+    "question": "http 500",
+    "answer": "500 Internal Server Error: the server failed while handling the request. The fault is on the server side. The server's log usually shows the error."
+  },
+  {
+    "key": "python-comprehension",
+    "question": "python list comprehension",
+    "answer": "squares = [x * x for x in numbers if x > 0] builds a new list: each item x that is above zero, squared."
+  },
+  {
+    "key": "js-fetch-json",
+    "question": "fetch json javascript",
+    "answer": "Use async and await: const response = await fetch(url); const data = await response.json(); Check response.ok before using the data."
+  },
+  {
+    "key": "sql-count-by-group",
+    "question": "sql count per group",
+    "answer": "SELECT category, COUNT(*) AS total FROM items GROUP BY category;"
+  },
+  {
+    "key": "npm-dev-dependency",
+    "question": "npm dev dependency",
+    "answer": "Run npm install --save-dev package-name. It is recorded under devDependencies in package.json."
+  },
+  {
+    "key": "email-check-regex",
+    "question": "email address check regex",
+    "answer": "^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$ . It catches obvious typos only. It cannot prove that an address exists; send a confirmation email for that."
+  },
+  {
+    "key": "email-subject",
+    "question": "marketing email subject line",
+    "answer": "Keep it under about 50 characters, name one clear benefit, and avoid all capitals and excess punctuation. Test two versions on a small group before sending to everyone."
+  },
+  {
+    "key": "utm-tags",
+    "question": "utm parameters",
+    "answer": "utm_source says where the visit came from, utm_medium the type (for example email or social), and utm_campaign the campaign name. Use lowercase and the same spelling every time, so the reports can be compared."
+  },
+  {
+    "key": "ctr",
+    "question": "click through rate",
+    "answer": "Click-through rate = clicks divided by impressions, times 100. For example, 50 clicks from 2,000 impressions is 2.5 percent."
+  },
+  {
+    "key": "cac",
+    "question": "customer acquisition cost",
+    "answer": "Customer acquisition cost = total marketing and sales spend in a period, divided by the number of new customers won in that period."
+  },
+  {
+    "key": "roas",
+    "question": "return on ad spend",
+    "answer": "Return on ad spend = revenue from the ads divided by the ad spend. A ROAS of 4 means 4 units of revenue for every 1 spent on ads."
+  },
+  {
+    "key": "ab-test",
+    "question": "a/b test duration",
+    "answer": "Decide the main metric and the sample size before you start. Do not stop the test the first day one version looks ahead; wait until the planned sample is reached, so the difference is real and not chance."
+  },
+  {
+    "key": "persona",
+    "question": "customer persona",
+    "answer": "Describe one typical customer: their goal, their main problem, where they spend time, and what they would pay for. Base it on real customer conversations, not guesses."
+  },
+  {
+    "key": "wcag-contrast",
+    "question": "wcag contrast ratio",
+    "answer": "WCAG AA needs at least 4.5 to 1 for normal text, and 3 to 1 for large text (18 point, or 14 point bold, and bigger)."
+  },
+  {
+    "key": "hex-to-rgb",
+    "question": "hex colour to rgb",
+    "answer": "A hex colour has three pairs for red, green and blue, each from 00 to FF (0 to 255). For example #FF8800 is rgb(255, 136, 0)."
+  },
+  {
+    "key": "web-body-text",
+    "question": "body text font size",
+    "answer": "16 pixels is the usual starting size for body text, with a line height of about 1.5 for easy reading."
+  },
+  {
+    "key": "spacing-scale",
+    "question": "spacing scale layout",
+    "answer": "Pick a base unit, usually 4 or 8 pixels, and make all spacing a multiple of it. This keeps layouts even without guesswork."
+  },
+  {
+    "key": "tap-target",
+    "question": "touch target size",
+    "answer": "Aim for at least 44 by 44 pixels, Apple's guideline. Android's Material guidance is 48 density-independent pixels. Leave space between neighbouring targets."
+  },
+  {
+    "key": "celsius-fahrenheit",
+    "question": "celsius to fahrenheit",
+    "answer": "Multiply the Celsius value by 9 divided by 5, then add 32. For example 25 C is 77 F."
+  },
+  {
+    "key": "km-miles",
+    "question": "kilometres to miles",
+    "answer": "1 kilometre is about 0.621 miles. Multiply kilometres by 0.621371 to get miles, or miles by 1.609344 to get kilometres."
+  },
+  {
+    "key": "strong-password",
+    "question": "strong password",
+    "answer": "Use a passphrase of four or more random words, or 16 or more characters, with a different password for each account. A password manager helps. Turn on two-factor authentication where it is offered."
+  },
+  {
+    "key": "backup-321",
+    "question": "3 2 1 backup rule",
+    "answer": "Keep three copies of important data, on two different kinds of storage, with one copy kept away from the main place (off site or in the cloud). Test restoring from it now and then."
+  }
+]

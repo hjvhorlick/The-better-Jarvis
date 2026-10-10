@@ -1,0 +1,14 @@
+# My Hands: hand tracking for the glass UI (optional; loaded only when My Hands starts).
+#
+# Verified install recipe (Linux, clean venv). mediapipe declares opencv-contrib-python as a
+# dependency; the headless build must be the only cv2 provider, or cv2 breaks on machines
+# without libGL:
+#
+#   pip install mediapipe==0.10.14
+#   pip uninstall -y opencv-contrib-python
+#   pip install --force-reinstall --no-deps opencv-python-headless==4.10.0.84
+#
+# Both packages are Apache-2.0 (see THIRD_PARTY_NOTICES.md). Do not upgrade mediapipe past
+# 0.10.14 without checking: later releases removed the `solutions.hands` API and the bundled models.
+mediapipe==0.10.14
+opencv-python-headless==4.10.0.84
