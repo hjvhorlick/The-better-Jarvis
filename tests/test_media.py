@@ -230,6 +230,16 @@ def test_the_script_is_laid_out_for_scenering():
     assert payload["title"] == "Why the ocean is salty"
     assert payload["url"] == "https://scenering.com"
     assert payload["shots"] == 2
+    assert payload["hook"] == "The sea is salty. Here is why."
+    assert payload["description"] == "A short explainer."
+    assert payload["hashtags"] == ["ocean", "science"]
+    assert payload["title_variants"] == ["The salt in the sea", "Where ocean salt comes from"]
+    assert payload["shot_details"][0] == {
+        "narration": "The ocean covers most of the planet.",
+        "on_screen": "71 percent",
+        "image_prompt": "earth from space, blue ocean",
+        "seconds": 5,
+    }
     # every shot's narration is in the script, in order
     text = payload["script"]
     assert text.index("The ocean covers") < text.index("Rivers carry salt")
