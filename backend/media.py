@@ -374,7 +374,8 @@ def scenering_payload(script: dict) -> dict:
     browser. Nothing is sent anywhere by this function.
     """
     raw_shots = script.get("shots") or []
-    shots = [shot for shot in raw_shots if isinstance(shot, dict)]
+    shots = [shot for shot in raw_shots
+             if isinstance(shot, dict) and str(shot.get("narration") or "").strip()]
     lines = [script.get("title") or "", ""]
     for i, shot in enumerate(shots, 1):
         narration = str(shot.get("narration") or "").strip()
