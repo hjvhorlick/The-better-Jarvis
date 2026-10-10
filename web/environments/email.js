@@ -181,9 +181,14 @@ export default {
         await navigator.clipboard.writeText(text);
         say("Email copied to clipboard.");
       } catch (_) {
-        fields.body.focus();
-        fields.body.select();
-        say("Clipboard access was blocked. The message body is selected so you can copy it manually.");
+        const fallback = document.createElement("textarea");
+        fallback.className = "studio-raw";
+        fallback.value = text;
+        fallback.setAttribute("aria-label", "Complete email draft ready to copy");
+        compose.appendChild(fallback);
+        fallback.focus();
+        fallback.select();
+        say("Clipboard access was blocked. The complete email is selected below so you can copy it manually.");
       }
     });
     button("Open in mail app", () => {
@@ -192,11 +197,12 @@ export default {
         say("Enter a recipient, subject or message first.");
         return;
       }
-      const params = new URLSearchParams();
-      if (draft.cc) params.set("cc", draft.cc);
-      if (draft.subject) params.set("subject", draft.subject);
-      if (draft.body) params.set("body", draft.body);
-      const url = `mailto:${encodeURIComponent(draft.to)}?${params.toString()}`;
+      const params = [];
+      if (draft.cc) params.push(`cc=${encodeURIComponent(draft.cc)}`);
+      if (draft.subject) params.push(`subject=${encodeURIComponent(draft.subject)}`);
+      if (draft.body) params.push(`body=${encodeURIComponent(draft.body)}`);
+      const recipient = encodeURIComponent(draft.to).replace(/%40/gi, "@");
+      const url = `mailto:${recipient}${params.length ? `?${params.join("&")}` : ""}`;
       say("Opening your configured mail app. Check the message there; Supper AI Agent has not sent it.");
       window.location.href = url;
     });
