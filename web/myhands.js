@@ -33,7 +33,8 @@
     sceneTimer: null,
     lastSceneSig: "",
     sceneTiles: new Map(),   // object id -> tile element
-    grabbed: null,           // tile currently held by a pinch
+    grabbed: null,           // tile currently held by a pinch or a fist
+    scaling: false,         // two hands on screen, scaling
   };
 
   // ---------- helpers ----------
@@ -189,16 +190,51 @@
       case "hand_lost":
         setChip("looking for a hand", "live");
         cursor.hidden = true;
-        cursor.classList.remove("pinched");
+        cursor.classList.remove("pinched", "turning");
+        st.scaling = false;
         break;
       case "cursor_moved":
         moveCursor(ev.x, ev.y);
         break;
+      // A pinch for precision, a fist for something too big to pinch. Both grab.
       case "pinch_started":
+      case "fist_started":
         cursor.classList.add("pinched");
+        setChip("holding", "live");
         break;
       case "pinch_released":
+      case "fist_released":
         cursor.classList.remove("pinched");
+        if (!st.scaling) setChip("hand found", "live");
+        break;
+      // Hold your hand still and the thing you are holding starts to turn.
+      case "rotate_started":
+        cursor.classList.add("turning");
+        setChip("turning", "live");
+        break;
+      case "rotate_ended":
+        cursor.classList.remove("turning");
+        setChip(st.grabbed ? "holding" : "hand found", "live");
+        break;
+      // Two hands: move them apart or together to scale.
+      case "scale_started":
+        st.scaling = true;
+        setChip("scaling", "live");
+        break;
+      case "scale_ended":
+        st.scaling = false;
+        setChip("hand found", "live");
+        break;
+      // Bring your palms together: centre it.
+      case "clap":
+        setChip("centred", "live");
+        break;
+      // A half-closed hand drawn toward you: it comes closer.
+      case "pull_started":
+        setChip("pulling", "live");
+        break;
+      case "pull_ended":
+        setChip("hand found", "live");
         break;
       case "object_grabbed": {
         const tile = st.sceneTiles.get(ev.id);

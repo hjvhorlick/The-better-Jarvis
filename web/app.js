@@ -15,6 +15,7 @@
     surface: $("#surface"), hint: $("#surface-hint"), crumb: $("#crumb-path"),
     up: $("#btn-up"), log: $("#log"), composer: $("#composer"), input: $("#input"),
     preview: $("#preview"),
+    sidebar: $("#sidebar"), railToggle: $("#rail-toggle"),
   };
 
   const state = { path: null, parent: null, workspace: "general" };
@@ -37,8 +38,23 @@
   }
 
   function setRing(mode, label) {
+    if (!el.ring) return;                      // no visualiser: never fatal
     el.ring.className = `ring ${mode || ""}`.trim();
-    el.ringLabel.textContent = label;
+    if (el.ringLabel) el.ringLabel.textContent = label;
+  }
+
+  /* The rail squeezes down to just the voice visualiser, so the environment
+     gets the room back. The choice is remembered. */
+  const RAIL_KEY = "supper.railThin.v1";
+
+  function setRailThin(thin) {
+    if (!el.sidebar) return;
+    el.sidebar.classList.toggle("is-thin", thin);
+    if (el.railToggle) {
+      el.railToggle.setAttribute("aria-expanded", thin ? "false" : "true");
+      el.railToggle.title = thin ? "Widen the rail" : "Make the rail thinner";
+    }
+    try { localStorage.setItem(RAIL_KEY, thin ? "1" : "0"); } catch (_) { /* storage off */ }
   }
 
   // tag: optional short label showing where an answer came from (text only).
@@ -242,6 +258,14 @@
     ask(text, state.workspace);
   });
 
+  // ---------- the environment shell ----------
+  // The shell slides whole environments in and out of the window. When one is
+  // on screen it tells us here, so a question asked while you are designing is
+  // answered the way a designer would answer it, not the way a chat would.
+  window.SupperWorkspace = (name) => {
+    state.workspace = name || "general";
+  };
+
   // ---------- panels ----------
   function showPanel(name) {
     $$(".panel").forEach((p) => {
@@ -279,11 +303,20 @@
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closePanels(); });
 
+  if (el.railToggle) {
+    el.railToggle.addEventListener("click", () => {
+      setRailThin(!el.sidebar.classList.contains("is-thin"));
+    });
+  }
+
   // Small surface for myhands.js (loaded after this file).
   window.SupperUI = { addMsg, savePosition, surface: el.surface };
+  // The voice visualiser, so voice.js can show listening and speaking on it.
+  window.SupperRing = setRing;
 
   // ---------- start ----------
   $$(".panel").forEach((p) => { p.hidden = true; });
+  try { setRailThin(localStorage.getItem(RAIL_KEY) === "1"); } catch (_) { /* storage off */ }
   setRing("", "ready");
   refreshStatus();
   showRoots();

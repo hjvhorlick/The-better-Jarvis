@@ -21,7 +21,7 @@ const server = http.createServer(app);
 // Directory paths
 const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
 const STATIC_DIR = path.join(process.cwd(), 'dashboard', 'static');
-const BAREHANDS_DIR = path.join(process.cwd(), 'barehands');
+const HAND_BOARD_DIR = path.join(process.cwd(), 'barehands');
 const PROMPT_FILE = path.join(process.cwd(), 'core', 'prompt.txt');
 
 if (!fs.existsSync(UPLOADS_DIR)) {
@@ -119,14 +119,12 @@ async function processCommand(userCommand: string): Promise<string> {
   if (!trimmed) return 'Awaiting your command, sir.';
 
   const lower = trimmed.toLowerCase();
-  // Intercept My Hands / Barehands spatial commands directly for instantaneous UI state toggling
-  if (lower.includes('my hands') || lower.includes('myhands') || lower.includes('barehands') || lower.includes('bare hands') || (lower.includes('hand') && lower.includes('gesture')) || lower.includes('gesture tracking')) {
+  // Intercept My Hands spatial commands directly for instantaneous UI state toggling
+  if (lower.includes('my hands') || lower.includes('myhands') || (lower.includes('hand') && lower.includes('gesture')) || lower.includes('gesture tracking')) {
     if (lower.includes('off') || lower.includes('stop') || lower.includes('disable') || lower.includes('close') || lower.includes('exit')) {
-      broadcast({ type: 'barehands_control', active: false });
       broadcast({ type: 'myhands_control', active: false });
       return 'Disengaging My Hands gesture tracking and restoring HUD overview.';
     } else {
-      broadcast({ type: 'barehands_control', active: true });
       broadcast({ type: 'myhands_control', active: true });
       return 'Engaging My Hands spatial tracking. Camera background initialized and dull glass interfaces ready for gesture manipulation.';
     }
@@ -289,12 +287,12 @@ app.get('/static/crypto.js', (_req: Request, res: Response) => {
 });
 
 app.use('/static', express.static(STATIC_DIR));
-app.use('/barehands', express.static(BAREHANDS_DIR));
-app.use('/myhands', express.static(BAREHANDS_DIR));
+app.use('/hand-board', express.static(HAND_BOARD_DIR));
+app.use('/myhands', express.static(HAND_BOARD_DIR));
 
-// Direct route to serve Barehands stage if accessed directly
+// Direct route to serve the hand board stage if accessed directly
 app.get('/stage.html', (_req: Request, res: Response) => {
-  const stagePath = path.join(BAREHANDS_DIR, 'stage.html');
+  const stagePath = path.join(HAND_BOARD_DIR, 'stage.html');
   if (fs.existsSync(stagePath)) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.setHeader('Cache-Control', 'no-store');
@@ -304,9 +302,9 @@ app.get('/stage.html', (_req: Request, res: Response) => {
   }
 });
 
-// Barehands config endpoint
+// Hand board config endpoint
 app.get('/config', (_req: Request, res: Response) => {
-  const cfgPath = path.join(BAREHANDS_DIR, 'barehands.json');
+  const cfgPath = path.join(HAND_BOARD_DIR, 'barehands.json');
   if (fs.existsSync(cfgPath)) {
     try {
       const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));

@@ -11,3 +11,6 @@ barehands/barehands.json
 runtime/
 # Local voice models (large, downloaded by the owner; see docs/LOCAL_VOICE.md)
 models/
+
+# Test scratch (generated; never commit)
+.pytest_cache/
