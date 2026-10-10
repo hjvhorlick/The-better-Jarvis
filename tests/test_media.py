@@ -253,6 +253,22 @@ def test_nothing_is_uploaded_by_laying_a_script_out():
     assert scenering_payload(script)["script"]
 
 
+def test_scenering_payload_tolerates_malformed_shot_metadata():
+    payload = scenering_payload({
+        "title": "Safe handoff",
+        "shots": [
+            {"narration": "A valid shot.", "seconds": "not-a-number"},
+            None,
+            {"narration": "", "seconds": 3},
+        ],
+    })
+    assert payload["shots"] == 2
+    assert payload["shot_details"][0]["seconds"] == 1
+    assert payload["seconds"] == 1
+    assert "A valid shot." in payload["script"]
+    assert "not-a-number" not in payload["script"]
+
+
 # ---------- budget ----------
 
 def test_a_script_is_refused_once_the_day_is_spent():
