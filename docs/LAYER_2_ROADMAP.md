@@ -16,7 +16,7 @@ repository. “Present in code” is not the same as “verified on the owner's 
 | My Hands | `myhands/`, whole-hand landmarks and gesture state machines | Implemented in code; real-camera tracking and gesture tuning still need testing |
 | Internet research | Web-search path and budget-aware Gemini request | Partly present; broader research workflow, source notes and saved research projects are not yet established |
 | Video creation | Studio script generation, picture generation, editable shots, canvas playback/recording and media library | Present in code; live image service and real browser recording need owner verification |
-| Scenering | Existing paste-ready handoff via `scenering_payload`; no direct API upload is evidenced | Partial; this branch enriches the handoff with structured shot and publishing metadata |
+| Scenering (separate app) | Studio already copies the prepared script and opens `https://scenering.com` in a separate browser tab | Existing workflow present. Scenering remains its own application; Supper AI Agent should launch/access the website and prepare content for it, not recreate Scenering or assume a private API exists. This branch improves the optional structured handoff data only |
 | Email | No provider connection or email-send workflow was found in the reviewed current files | Not implemented |
 | Book publishing | No end-to-end manuscript, formatting, metadata or publishing workflow was found | Not implemented |
 | Social publishing | Studio creates title/description/hashtags, but no authenticated posting workflow was found | Partial content preparation only; posting is not implemented |
@@ -26,7 +26,7 @@ repository. “Present in code” is not the same as “verified on the owner's 
 
 ## Safe implementation order
 
-1. **Improve the existing Scenering handoff first.** Keep all current response fields compatible, and add structured title variants, hook, logline, description, hashtags and per-shot details. Do not send data to Scenering automatically.
+1. **Preserve the separate-app boundary for Scenering.** Keep the existing Studio workflow that opens `https://scenering.com` and copies a prepared script. This branch adds structured metadata to the handoff response for future use, but it does not embed Scenering, automate its UI, upload content, or claim an API integration.
 2. **Establish provider-neutral integration boundaries and permission rules.** Read-only access and drafting can be separate from sending, publishing, deleting or changing external accounts.
 3. **Email:** start with composing and previewing a draft. Do not send messages until the owner has selected a provider, connected credentials securely, and explicitly approved the individual send action.
 4. **Research:** save queries, source URLs, short summaries and timestamps so results can be revisited and checked.
@@ -46,6 +46,7 @@ repository. “Present in code” is not the same as “verified on the owner's 
 ## First change in progress
 
 The branch `layer-2-scenering-handoff` extends `scenering_payload` with structured fields while
-preserving the existing `title`, `script`, `plain`, `shots`, `seconds` and `url` fields.
+preserving the existing `title`, `script`, `plain`, `shots`, `seconds` and `url` fields. Scenering is
+still a separate application at `https://scenering.com`; no direct upload or API connection is added.
 Unit and API tests are updated. The GitHub connector cannot execute the test suite, so these
 tests still need to be run in the project environment before merging.
