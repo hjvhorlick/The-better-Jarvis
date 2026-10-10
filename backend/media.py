@@ -373,15 +373,25 @@ def scenering_payload(script: dict) -> dict:
     their narration — as plain text he can paste, plus a copy he can hand to a
     browser. Nothing is sent anywhere by this function.
     """
+    raw_shots = script.get("shots") or []
+    shots = [shot for shot in raw_shots if isinstance(shot, dict)]
     lines = [script.get("title") or "", ""]
-    for i, shot in enumerate(script.get("shots") or [], 1):
-        lines.append(f"{i}. {shot['narration']}")
+    for i, shot in enumerate(shots, 1):
+        narration = str(shot.get("narration") or "").strip()
+        if not narration:
+            continue
+        lines.append(f"{i}. {narration}")
         if shot.get("on_screen"):
-            lines.append(f"   [on screen: {shot['on_screen']}]")
+            lines.append(f"   [on screen: {str(shot['on_screen'])[:80]}]")
         lines.append("")
     body = "\n".join(lines).strip()
 
-    shots = script.get("shots") or []
+    def safe_seconds(value) -> int:
+        try:
+            seconds = int(value or 1)
+        except (TypeError, ValueError, OverflowError):
+            seconds = 1
+        return max(1, min(600, seconds))
     # Keep the original paste-ready fields, and include the structured metadata
     # that a future Scenering import endpoint can consume without re-parsing text.
     return {
@@ -399,14 +409,11 @@ def scenering_payload(script: dict) -> dict:
                 "narration": str(shot.get("narration") or ""),
                 "on_screen": str(shot.get("on_screen") or ""),
                 "image_prompt": str(shot.get("image_prompt") or ""),
-                "seconds": max(1, min(600, int(shot.get("seconds") or 1))),
+                "seconds": safe_seconds(shot.get("seconds")),
             }
             for shot in shots if isinstance(shot, dict)
         ],
-        "seconds": script.get("seconds") or sum(
-            max(1, min(600, int(shot.get("seconds") or 1)))
-            for shot in shots if isinstance(shot, dict)
-        ),
+        "seconds": script.get("seconds") or sum(safe_seconds(shot.get("seconds")) for shot in shots),
         "url": "https://scenering.com",
     }
 
