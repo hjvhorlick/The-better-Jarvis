@@ -492,13 +492,25 @@ function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
   return Buffer.concat([header, pcm]);
 }
 
-async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<{ type: string; text?: string; message?: string }> {
+interface VoiceResult {
+  type: 'transcript' | 'error';
+  text?: string;
+  message?: string;
+  /** Machine-readable reason, so the page can print the right advice. */
+  code?: 'too-short' | 'no-key' | 'empty' | 'failed';
+}
+
+async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceResult> {
   if (pcm.length < sampleRate * 2 * 0.4) {
-    return { type: 'error', message: 'I heard almost nothing, sir. Click the mic, speak, then click it again.' };
+    return { type: 'error', code: 'too-short', message: 'I heard almost nothing, sir. Click the mic, speak, then click it again.' };
   }
   const ai = getGeminiClient();
   if (!ai) {
-    return { type: 'error', message: 'Voice transcription needs GEMINI_API_KEY in the server .env file. (The browser\u2019s own speech recognition works without it in Chrome.)' };
+    return {
+      type: 'error',
+      code: 'no-key',
+      message: 'Server-side transcription needs a Gemini key. Open Settings \u2192 "The Brain" and paste your key (the same key powers chat replies), or use Chrome/Edge, whose own speech recogniser needs no key.',
+    };
   }
   try {
     const wav = pcmToWav(pcm, sampleRate);
@@ -515,11 +527,12 @@ async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<{ type:
       ],
     });
     const text = response.text?.trim();
-    if (!text) return { type: 'error', message: 'I could not make out any words in that, sir.' };
+    if (!text) return { type: 'error', code: 'empty', message: 'I could not make out any words in that, sir.' };
+    console.log(`[voice] transcribed ${(pcm.length / 2 / sampleRate).toFixed(1)}s: "${text.slice(0, 120)}"`);
     return { type: 'transcript', text };
   } catch (err) {
     console.error('Voice transcription error:', err);
-    return { type: 'error', message: 'Voice transcription failed on the server. Check the server logs.' };
+    return { type: 'error', code: 'failed', message: 'Voice transcription failed on the server. Check the server logs.' };
   }
 }
 
@@ -591,7 +604,7 @@ app.use(express.json({ limit: '25mb' })); // room pictures travel to the AI tool
 app.use(express.urlencoded({ extended: true }));
 
 // Handle User Command execution
-async function handleIncomingUserCommand(text: string) {
+async function handleIncomingUserCommand(text: string): Promise<string> {
   const userMsg: LogMessage = {
     type: 'log',
     speaker: 'user',
@@ -616,6 +629,7 @@ async function handleIncomingUserCommand(text: string) {
   messageHistory.push(jarvisMsg);
   broadcast(jarvisMsg);
   saveHistory();
+  return replyText;
 }
 
 // ── HTTP Endpoints ───────────────────────────────────────────────────────────
@@ -774,8 +788,43 @@ app.post('/api/command', requireAuth, async (req: Request, res: Response) => {
     return;
   }
 
-  await handleIncomingUserCommand(commandText);
-  res.json({ ok: true });
+  // The reply is sent back in the response AND broadcast on the websocket. The page
+  // uses this copy only when its replies socket is down, so a blocked websocket (or a
+  // proxy that drops upgrades) can never leave a spoken command unanswered.
+  const reply = await handleIncomingUserCommand(commandText);
+  res.json({ ok: true, reply });
+});
+
+// POST /api/voice/transcribe -> the dashboard's own ears.
+// Body: { rate: number, pcm: base64 of mono little-endian PCM16 }.
+// The page uses this when the browser's built-in speech recognition is missing,
+// blocked, or simply hears nothing. One plain HTTP request — no websocket, so it
+// survives proxies that block upgrades.
+app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Response) => {
+  const rateRaw = Number(req.body?.rate);
+  const rate = Number.isFinite(rateRaw) && rateRaw > 0 ? Math.min(Math.max(rateRaw, 8000), 96000) : 48000;
+  const b64 = typeof req.body?.pcm === 'string' ? req.body.pcm : '';
+  if (!b64) {
+    res.status(400).json({ ok: false, code: 'empty', message: 'No audio reached the server, sir.' });
+    return;
+  }
+  let pcm: Buffer;
+  try {
+    pcm = Buffer.from(b64, 'base64');
+  } catch {
+    res.status(400).json({ ok: false, code: 'empty', message: 'The audio arrived in a form I cannot read.' });
+    return;
+  }
+  if (!pcm.length) {
+    res.status(400).json({ ok: false, code: 'empty', message: 'The audio arrived empty, sir.' });
+    return;
+  }
+  const result = await transcribeVoice(pcm, rate);
+  if (result.type === 'transcript') {
+    res.json({ ok: true, text: result.text });
+  } else {
+    res.json({ ok: false, code: result.code, message: result.message });
+  }
 });
 
 // POST /api/wake -> Wake up JARVIS
