@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>JARVIS — Rooms</title>
+  <!-- Relative URLs (the room modules, styles) resolve under the engine sources. -->
+  <base href="/rooms-src/">
+  <!-- three.js is vendored with the project; the import map lets the 3D room and
+       its loaders find it without a build step and without the internet. -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/vendor/three/three.module.js",
+      "three/addons/": "/vendor/three/"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    /* This page shows ONLY the sliding rooms: it fills the frame it is embedded in. */
+    html, body { height: 100%; }
+    body { display: flex; flex-direction: column; overflow: hidden; }
+    .rooms-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex: 0 0 auto; }
+    .env-rail { flex: 1 1 auto; min-height: 0; }
+
+    /* ── Fit for hands and voice ─────────────────────────────────────────
+       The rooms are driven by a hand in the air and by talking to Jarvis,
+       so: big targets, and no technical dials. */
+
+    /* Technical clutter, hidden: the fps readout, the Studio's aspect-ratio
+       and picture-model pickers, the 3D room's wireframe switch and
+       see-through slider. Their defaults carry on underneath. */
+    #env-fps { display: none !important; }
+    label[for="studio-aspect"], #studio-aspect,
+    label[for="studio-model"], #studio-model { display: none !important; }
+    #tool-design-wireframe, #tool-design-opacity { display: none !important; }
+
+    /* The Flat room's tool drawer: the real design tools live in this
+       sub-section, grouped, and only the groups that matter for what you
+       brought in are shown. */
+    .flat-drawer {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      padding: 8px 12px; flex: 0 0 auto;
+      background: rgba(13, 18, 33, 0.85);
+      border-bottom: 1px solid rgba(140, 160, 255, 0.18);
+    }
+    .flat-group {
+      display: flex; align-items: center; gap: 6px;
+      padding: 5px 9px; border-radius: 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .flat-group-title {
+      font: 700 9.5px/1 system-ui; letter-spacing: 0.12em;
+      text-transform: uppercase; color: #8ea0c9; margin-right: 2px;
+    }
+
+    /* The chooser: the AI made two takes, the owner picks one. */
+    .flat-choices {
+      position: absolute; inset: 0; z-index: 40;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 16px; background: rgba(4, 8, 18, 0.86);
+    }
+    .flat-choices-title { margin: 0; font: 600 16px/1.4 system-ui; color: #cfe3ff; letter-spacing: 0.04em; }
+    .flat-choices-row { display: flex; gap: 20px; align-items: center; justify-content: center; max-width: 92%; }
+    .flat-choices-row img {
+      max-width: 42vw; max-height: 60vh; border-radius: 14px; cursor: pointer;
+      border: 2px solid rgba(140, 160, 255, 0.35);
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .flat-choices-row img:hover { transform: scale(1.03); border-color: #7dd3fc; }
+    .flat-choices button {
+      padding: 10px 18px; border-radius: 12px; cursor: pointer;
+      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.16);
+      color: #9fb2d8; font: 600 13px/1 system-ui;
+    }
+    .flat-choices button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+    /* Big, fingerable targets everywhere. */
+    .env-switch { font-size: 15px; padding: 10px 18px; border-radius: 12px; }
+    .env-tool { font-size: 14px; padding: 9px 14px; border-radius: 11px; }
+    .env-arrow { font-size: 24px; padding: 8px 20px; border-radius: 12px; }
+    .env-tool-control input[type="range"] { min-height: 30px; }
+    .env-tool-control input[type="color"] { width: 42px; height: 34px; }
+  </style>
+</head>
+<body>
+  <div class="rooms-top">
+    <nav id="env-switcher" aria-label="Rooms"></nav>
+  </div>
+
+  <!-- The windowing environment: one rail, sliding left and right. -->
+  <section class="env-rail" id="env-rail" aria-label="Workspace">
+    <div class="env-bar">
+      <button type="button" id="env-prev" class="env-arrow" aria-label="Previous environment" disabled>‹</button>
+      <span class="env-label" id="env-label">JARVIS Rooms</span>
+      <span class="env-fps d3-fps" id="env-fps" aria-hidden="true"></span>
+      <button type="button" id="env-next" class="env-arrow" aria-label="Next environment" disabled>›</button>
+    </div>
+    <div class="env-track" id="env-track"></div>
+  </section>
+
+  <script>
+    // The room modules call the file and media APIs with plain fetch. The main
+    // build guards those routes with the session token, so it is added here.
+    (() => {
+      const token = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
+      const realFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input.url;
+        if (url.startsWith('/api/')) {
+          init = init || {};
+          init.headers = Object.assign({}, init.headers, { 'Authorization': `Bearer ${token}` });
+        }
+        return realFetch(input, init);
+      };
+    })();
+  </script>
+  <script src="shell.js"></script>
+  <script src="environments/register.js"></script>
+</body>
+</html>
