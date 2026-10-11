@@ -13,16 +13,25 @@ import { GoogleGenAI } from '@google/genai';
 import {
   BrainError,
   brainCheck,
+  classifyGeminiError,
+  explainBrainFailure,
+  markBudgetExhausted,
+  trySpendGeminiBudget,
+  trySpendVoiceBudget,
+  voiceQuotaSnapshot,
   configStatus,
   resolveBaseUrl,
   resolveGeminiKey,
   resolveNames,
   resolveTextModel,
   runBrain,
+  runBrainStream,
   saveGeminiKey,
   type BrainCaller,
   type GeminiRaw,
 } from './config.js';
+import { KnowledgeStore } from './knowledge.js';
+import { DraftDesk, parseDraftRequest, composeDraft } from './drafts.js';
 
 // The port is fixed at 3000 in normal use; the harness sets
 // SUPPER_DASHBOARD_PORT so its own server can never collide with a live one.
@@ -54,16 +63,67 @@ CRITICAL CONDUCT:
 3. Be proactive and helpful with system queries, planning, research, commands, and file operations.
 4. If asked about status or capabilities, summarize smoothly.`;
 
-if (fs.existsSync(PROMPT_FILE)) {
+/**
+ * The owner's personality file, used IN FULL.
+ *
+ * It used to be cut to its first 4000 characters — and the owner's own conduct
+ * rules ("🎙️ JARVIS CONDUCT", the greeting, one question at a time, the ground
+ * rules) sit at the END of the file, so the assistant never actually saw them.
+ * The whole file is loaded now. Repeated blocks are collapsed (the file contains
+ * the same conduct section twice), which keeps the personality complete while
+ * spending fewer tokens on every call.
+ */
+function loadPersonality(file: string): { text: string; source: string; raw: number; kept: number } {
+  const fallback = jarvisSystemPrompt;
+  if (!fs.existsSync(file)) return { text: fallback, source: 'the built-in default (core/prompt.txt is missing)', raw: 0, kept: fallback.length };
   try {
-    const customPrompt = fs.readFileSync(PROMPT_FILE, 'utf-8');
-    if (customPrompt.trim().length > 0) {
-      jarvisSystemPrompt = customPrompt.slice(0, 4000);
+    const raw = fs.readFileSync(file, 'utf-8');
+    if (!raw.trim()) return { text: fallback, source: 'the built-in default (core/prompt.txt is empty)', raw: 0, kept: fallback.length };
+    const blocks = raw.split(/\n{2,}/);
+    const seen = new Set<string>();
+    const kept: string[] = [];
+    for (const block of blocks) {
+      const key = block.replace(/\s+/g, ' ').trim().toLowerCase();
+      if (!key) continue;
+      if (seen.has(key)) continue;                 // the same paragraph twice: keep one
+      seen.add(key);
+      kept.push(block.trim());
     }
+    const text = kept.join('\n\n');
+    return { text, source: 'core/prompt.txt (in full)', raw: raw.length, kept: text.length };
   } catch (err) {
     console.warn('Could not read core/prompt.txt:', err);
+    return { text: fallback, source: 'the built-in default (core/prompt.txt could not be read)', raw: 0, kept: fallback.length };
   }
 }
+
+/**
+ * How the assistant CONVERSES — the owner's own description of what he wants:
+ * ask about the family and the projects, argue a point, ask a question to find
+ * out more. This is added to the personality file rather than replacing it, and
+ * is deliberately outside the local knowledge store: a conversation is not an
+ * answer to be cached.
+ */
+const CONVERSATION_RULES = `
+🎙️ HOW YOU TALK (the owner asked for this in so many words)
+- You are a companion as well as a tool. Ask about his family, his projects, his day — when it fits, not as a form to fill in.
+- Have opinions. If he puts a point to you, take a side, say why in one or two sentences, and defend it if he pushes back. Do not fold just to be agreeable, and do not argue for sport.
+- Ask ONE good follow-up question when you want to know more — the single most useful thing to know next, never a list.
+- Remember what matters and bring it up later: "how did the meeting go?" is worth more than "how can I help?".
+- Never say "as an AI", never lecture, never pad. Short, warm, direct — the way a capable assistant who knows the household actually talks.
+- When the owner asks something that could be answered by the computer itself (a file, a note, something you were taught, the time), that is already handled elsewhere — do not turn a computer task into a conversation.`;
+
+const PERSONALITY = loadPersonality(PROMPT_FILE);
+jarvisSystemPrompt = `${PERSONALITY.text}\n${CONVERSATION_RULES}`;
+console.log(`[JARVIS] personality: ${PERSONALITY.source} — ${PERSONALITY.raw || PERSONALITY.kept} characters read, ${PERSONALITY.kept} kept after removing repeated blocks (plus the conversation rules)`);
+
+// The local knowledge base — the SAME store the desktop app uses
+// (runtime/knowledge.json, knowledge/starter.json). Every question is looked up
+// here first: an answer that is already known costs nothing at all.
+const knowledge = KnowledgeStore.get();
+const drafts = new DraftDesk(path.join(process.cwd(), 'runtime', 'drafts'));
+console.log(`[JARVIS] local knowledge: ${knowledge.count()} answers ready (runtime/knowledge.json + knowledge/starter.json) — questions it can answer never reach Gemini`);
+console.log(`[JARVIS] local drafting desk: ${drafts.load().length} draft(s) kept in runtime/drafts — an email or a letter is written here, never by the AI`);
 
 // Multer storage for uploads
 const storage = multer.diskStorage({
@@ -94,6 +154,10 @@ interface LogMessage {
   text: string;
   timestamp: number;
   image?: string; // a picture Jarvis made, shown in the dialogue
+  /** Ties a finished reply to the live bubble that was streamed for it. */
+  id?: string;
+  /** Only ever true for the history replayed to a newly opened page. */
+  replay?: boolean;
 }
 
 const greetingName = NAMES.user ? `, ${NAMES.user}` : ', sir';
@@ -230,6 +294,57 @@ function brainCaller(): BrainCaller | null {
       const response = await client.models.generateContent(request as never);
       return response as unknown as GeminiRaw;
     },
+    /**
+     * The same call, answered in pieces — the page prints and speaks the first
+     * sentence while the rest is still being written, which is most of what makes
+     * a spoken assistant feel instant. Three fallbacks keep it honest: settings
+     * the model refuses are dropped and the stream retried, a stream that cannot
+     * start at all falls back to the ordinary call, and a stream that breaks
+     * part-way keeps the words it already said.
+     */
+    generateStream(model: string, contents: unknown[], config?: Record<string, unknown>): AsyncIterable<string> {
+      const build = (cfg?: Record<string, unknown>) => (cfg ? { model, contents, config: cfg } : { model, contents });
+      const plainAnswer = async function* (): AsyncIterable<string> {
+        console.warn(`[JARVIS] asking the ordinary way for ${model}.`);
+        const response = await client.models.generateContent(build(config) as never);
+        const one = (response as unknown as GeminiRaw).text;
+        if (typeof one === 'string' && one) yield one;
+      };
+      const streamWith = async function* (cfg?: Record<string, unknown>): AsyncIterable<string> {
+        const stream = await client.models.generateContentStream(build(cfg) as never) as unknown as AsyncIterable<{ text?: string }>;
+        for await (const chunk of stream) {
+          const piece = typeof chunk?.text === 'string' ? chunk.text : '';
+          if (piece) yield piece;
+        }
+      };
+      const withoutThinking = { ...(config || {}) };
+      delete withoutThinking.thinkingConfig;
+      const retryPlain = config !== undefined && 'thinkingConfig' in config;
+
+      return (async function* (): AsyncIterable<string> {
+        let text = '';
+        try {
+          for await (const piece of streamWith(config)) { text += piece; yield piece; }
+          return;
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          if (text) throw err;                       // the words that arrived are real: keep them
+          if (retryPlain && /thinking|invalid[_ ]argument|unknown name|unsupported|cannot find field/i.test(message)) {
+            console.warn(`[JARVIS] ${model} refused the speed settings (${message}) — retrying without them.`);
+            try {
+              for await (const piece of streamWith(Object.keys(withoutThinking).length ? withoutThinking : undefined)) { text += piece; yield piece; }
+              return;
+            } catch (err2) {
+              if (text) throw err2;
+              console.warn(`[JARVIS] the stream failed again (${err2 instanceof Error ? err2.message : err2}).`);
+            }
+          } else {
+            console.warn(`[JARVIS] streaming failed for ${model} (${message}).`);
+          }
+          yield* plainAnswer();
+        }
+      })();
+    },
     async listModels(): Promise<string[]> {
       const ids: string[] = [];
       const pager = await client.models.list({ config: { pageSize: 200 } });
@@ -279,8 +394,11 @@ async function makeAiImage(promptText: string, imageBase64?: string): Promise<{ 
   }
 }
 
-// Process user command through JARVIS reasoning
-async function processCommand(userCommand: string): Promise<string> {
+// Process user command through JARVIS reasoning.
+// `onDelta` — when the caller wants a live answer — receives the whole reply so
+// far, every time more of it exists, so the page can print (and speak) the first
+// sentence while the model is still writing the last one.
+async function processCommand(userCommand: string, onDelta?: (textSoFar: string) => void): Promise<string> {
   const trimmed = userCommand.trim();
   if (!trimmed) return 'Awaiting your command, sir.';
 
@@ -379,6 +497,170 @@ async function processCommand(userCommand: string): Promise<string> {
     return realStatusReport();
   }
 
+  // ── THE LOCAL KNOWLEDGE BASE — before any AI call ────────────────────────
+  // Everything the assistant was taught, every answer Gemini gave before (kept
+  // for exactly this reason), and the starter answers that shipped with the
+  // project. A hit costs nothing: no Gemini call, no budget unit. This is the
+  // owner's rule — the AI is used only when nothing on the computer knows.
+
+  // "learn: <question> = <answer>" / "learn that <question> means <answer>"
+  const learnMatch = trimmed.match(/^learn(?:\s+that)?\s*:?\s+(.+?)\s*=\s*(.+)$/i)
+    || trimmed.match(/^learn(?:\s+that)?\s*:?\s+(.+?)\s+means\s+(.+)$/i)
+    || trimmed.match(/^learn(?:\s+that)?\s*:?\s+(.+?)\s+is\s+(.+)$/i);
+  if (learnMatch) {
+    try {
+      const entry = knowledge.teach(learnMatch[1], learnMatch[2]);
+      return `Learned, sir — number ${entry.id}: “${entry.question}”. It is kept in runtime/knowledge.json, and the desktop app reads the same file, so it answers there too.`;
+    } catch (err) {
+      return `I could not keep that one, sir: ${(err as Error).message}`;
+    }
+  }
+  if (/^(?:what have you learned|what do you know|list (?:your )?(?:knowledge|answers))\b/i.test(lower)) {
+    const entries = knowledge.listEntries();
+    if (!entries.length) return 'Nothing is stored in the local knowledge base yet, sir. Teach me with "learn: <question> = <answer>".';
+    const shown = entries.slice(0, 10).map((e) => `${e.id}. [${e.kind}] ${e.question}`).join('\n');
+    return `The local knowledge base holds ${entries.length} answer${entries.length === 1 ? '' : 's'} (runtime/knowledge.json — the desktop app uses the same file). The first ${Math.min(10, entries.length)}:\n${shown}\nSay "forget <number>" to move one to the archive, or ask any of them — those cost nothing.`;
+  }
+  const forgetMatch = trimmed.match(/^forget\s+(?:entry\s+|number\s+|#)?(\d+)$/i);
+  if (forgetMatch) {
+    const moved = knowledge.forget(Number(forgetMatch[1]));
+    return moved
+      ? `Moved “${moved.question}” to the archive, sir. Nothing is deleted — “what have you learned” still lists what remains.`
+      : `There is no entry numbered ${forgetMatch[1]} in the local knowledge base, sir.`;
+  }
+
+  const known = knowledge.lookup(trimmed);
+  if (known) {
+    console.log(`[JARVIS] answered locally from the knowledge base (${known.kind}, entry ${known.id}) — no Gemini call`);
+    return knowledge.describe(known);
+  }
+
+  // ── Local everyday things, before the AI ─────────────────────────────────
+  // Reminders are kept on this computer and read back from it: no AI, ever.
+  const remindMatch = trimmed.match(/^(?:jarvis,?\s+)?remind me(?:\s+to|\s+about)?\s+(.{2,200})$/i);
+  if (remindMatch) {
+    const text = remindMatch[1].trim();
+    const list = readReminders();
+    list.push({ text, at: new Date().toISOString() });
+    writeReminders(list);
+    return `Kept on this computer, sir: “${text}”. Say “what are my reminders” whenever you want them.`;
+  }
+  if (/^(?:what are my|show my|list my|any)\s+reminders\b/i.test(lower) || /^reminders$/i.test(lower)) {
+    const list = readReminders();
+    if (!list.length) return 'You have no reminders kept, sir. Say “remind me to …” and I keep it here, on this computer.';
+    return `You have ${list.length} reminder${list.length === 1 ? '' : 's'}, sir:\n` + list.map((r, i) => `${i + 1}. ${r.text}`).join('\n');
+  }
+  if (/^(?:clear|delete|forget)\s+(?:my\s+)?reminders?$/i.test(lower)) {
+    writeReminders([]);
+    return 'All reminders cleared, sir.';
+  }
+
+  // The time and the date are the computer's own business.
+  if (/\b(what(?:'s| is)? the time|what time is it|the time please)\b/i.test(lower)) {
+    return `It is ${new Date().toLocaleTimeString()} on this computer, sir.`;
+  }
+  if (/\b(what(?:'s| is)? (?:the |today's )?date|what day is it)\b/i.test(lower)) {
+    return `Today is ${new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}, sir.`;
+  }
+
+  // ── THE LOCAL DRAFTING DESK — an email or a letter, written here, no AI ──
+  // "draft an email to the plumber about the leak" and friends. The shape of the
+  // letter comes from drafts.ts; the words the owner gave come through as they
+  // are, and anything the assistant cannot know is left in brackets rather than
+  // invented.
+  const listDrafts = /\b(?:read|show|list|see|what are|open)\b[\s\S]*?\bdrafts?\b/i.test(lower) && !/\bdrafts?\s*\d+/i.test(lower);
+  if (listDrafts) {
+    const kept = drafts.list();
+    if (!kept.length) {
+      return 'I have drafted nothing yet, sir. Say “draft an email to the plumber about the leak” and I will write one on this computer — no AI, no cost.';
+    }
+    const shown = kept.slice(-10).map((d) => `  ${d.id}. ${d.kind}${d.to ? ` to ${d.to}` : ''}${d.subject ? ` — ${d.subject}` : ''}`).join('\n');
+    return `You have ${kept.length} draft${kept.length === 1 ? '' : 's'} in runtime/drafts, sir. The last ${Math.min(10, kept.length)}:\n${shown}\nSay “read draft <number>” for the whole thing, or open the file — they are plain text.`;
+  }
+  const readDraft = lower.match(/\b(?:read|show|open|see)\s+(?:me\s+)?(?:the\s+)?drafts?\s*(?:number\s*)?(\d+)\b/);
+  if (readDraft) {
+    const want = Number(readDraft[1]);
+    const found = drafts.list().find((d) => d.id === want);
+    if (!found) return `There is no draft numbered ${want}, sir. Say “read my drafts” to see what is there.`;
+    return `Draft ${found.id}, sir — saved as ${found.file}:\n\n${found.text}`;
+  }
+  const deleteDraft = lower.match(/\b(?:delete|remove|throw away|bin)\s+(?:the\s+)?drafts?\s*(?:number\s*)?(\d+)\b/);
+  if (deleteDraft) {
+    const gone = drafts.forget(Number(deleteDraft[1]));
+    return gone ? `Draft ${gone.id} is gone, sir — the file went with it.` : `There is no draft numbered ${deleteDraft[1]}, sir.`;
+  }
+  if (/\bsend\s+(?:it|the (?:email|letter|draft|note)|my (?:email|letter|draft|note))\b/i.test(lower)) {
+    const kept = drafts.list();
+    const last = kept.length ? kept[kept.length - 1] : null;
+    return `Sending is not wired into this build yet, sir — nothing here can press send on a mail program or a web page. What I can do is write it: ` +
+      (last ? `draft ${last.id} is ready in ${last.file}; read it, copy it into your mail program, and send it from there.` : 'say “draft an email to … about …” and it will be waiting as a file.');
+  }
+  const draftReq = parseDraftRequest(trimmed);
+  if (draftReq) {
+    const owner = resolveNames().user;
+    const text = composeDraft(draftReq, owner);
+    const kept = drafts.keep(draftReq, text, owner);
+    const where = text.includes('[') ? ' The parts in square brackets are the details only you can fill in.' : '';
+    return `Written here on this computer, sir — no AI, no cost. Draft ${kept.id}, saved as ${kept.file}.${where}\n\n${text}`;
+  }
+
+  // ── The camera and the rooms' tools, by voice (no AI, no buttons) ────────
+  if (/\b(?:camera|eyes)\s+(?:on|up|please on)\b/i.test(lower) && !/\b(?:off|down)\b/i.test(lower)) {
+    broadcast({ type: 'ui_control', action: 'camera-on' });
+    return 'Camera on, sir — your picture is behind the glass, in this window and in every room. Say “camera off” to put it away.';
+  }
+  if (/\b(?:camera|eyes)\s+(?:off|down|away)\b/i.test(lower) || /\bturn (?:the )?(?:camera|eyes) off\b/i.test(lower)) {
+    broadcast({ type: 'ui_control', action: 'camera-off' });
+    return 'Camera off, sir — the dark grey room is back.';
+  }
+  if (/\b(?:show|open|bring up|hide|close)\s+(?:the\s+)?tools\b/i.test(lower)) {
+    const open = !/\b(?:hide|close)\b/i.test(lower);
+    broadcast({ type: 'rooms_control', action: 'tools', open });
+    return open ? 'The tools for this room are out, sir — the room itself stays clear.' : 'Tools away, sir.';
+  }
+
+  // ── Does this need the AI at all? ────────────────────────────────────────
+  // The owner's rule: the AI is for knowledge, research and conversation. A
+  // command that asks the COMPUTER to do something it has no local tool for is
+  // answered honestly — with the option to spend a Gemini call — instead of
+  // quietly turning every "open/draft/send/make" into one.
+  const forcing = /\b(use (?:the )?ai|ask gemini|use gemini|search (?:the )?(?:web|internet)|do some research)\b/i.test(lower);
+  if (looksLikeComputerTask(lower) && !looksLikeKnowledgeQuestion(lower) && !forcing) {
+    return `That one is a job for this computer rather than a question, sir, and this build has no local tool for “${trimmed.slice(0, 60)}” — so the only way I could answer is a Gemini call (one from the day's budget). ` +
+      `Here is what I do locally, with no AI and no cost: the drafting desk ("draft an email to … about …", "read my drafts"), my notes and your reminders, the local knowledge base ("learn: …", "what have you learned"), the time and date, diagnostics, My Hands and the rooms, the camera ("camera on"), the tools of a room, opening and closing the windows, and mute. ` +
+      `Say “${trimmed.slice(0, 40)} — use the AI” and I will spend the call; otherwise tell me what you want done and I will keep it on this machine.`;
+  }
+  if (forcing) console.log('[JARVIS] the owner asked for the AI explicitly — spending one call');
+
+  // ── Local voice control of the interface: no AI, instant ─────────────────
+  const muteAsk = /\b(?:mute (?:yourself|the mic|the microphone|listening)|stop listening|stop listening to me)\b/i.test(lower);
+  if (muteAsk) {
+    broadcast({ type: 'ui_control', action: 'mute' });
+    return 'Muted, sir — I have stopped listening. Say “unmute”, or press 🎙, when you want me back.';
+  }
+  if (/\b(?:unmute|start listening(?: again)?|listen (?:to me )?again)\b/i.test(lower)) {
+    broadcast({ type: 'ui_control', action: 'unmute' });
+    return 'Listening again, sir.';
+  }
+  if (/\b(?:stop talking|be quiet|silence|shut up|quiet please)\b/i.test(lower)) {
+    broadcast({ type: 'ui_control', action: 'silence' });
+    return 'Going quiet, sir.';
+  }
+  const windowOpen = lower.match(/^\s*(?:jarvis,?\s+)?(?:open|show|bring up|bring me)\s+(?:the\s+|my\s+)?(files?|file browser|tree|folders?|settings|chat|dialogue|telemetry|diagnostics)\b/);
+  if (windowOpen) {
+    const which = windowOpen[1];
+    const target = /(file|tree|folder)/.test(which) ? 'win-tree' : /setting/.test(which) ? 'win-settings' : /(telemetry|diagnostic)/.test(which) ? 'win-telemetry' : 'win-chat';
+    broadcast({ type: 'ui_control', action: 'open-window', window: target });
+    return `${/win-tree/.test(target) ? 'The file browser' : /win-settings/.test(target) ? 'Settings' : /win-telemetry/.test(target) ? 'Telemetry' : 'The dialogue'} is up, sir.`;
+  }
+  const windowClose = lower.match(/^\s*(?:jarvis,?\s+)?(?:close|hide)\s+(?:the\s+|my\s+)?(files?|file browser|tree|folders?|settings|chat|dialogue|telemetry|diagnostics)\b/);
+  if (windowClose) {
+    const which = windowClose[1];
+    const target = /(file|tree|folder)/.test(which) ? 'win-tree' : /setting/.test(which) ? 'win-settings' : /(telemetry|diagnostic)/.test(which) ? 'win-telemetry' : 'win-chat';
+    broadcast({ type: 'ui_control', action: 'close-window', window: target });
+    return 'Done, sir.';
+  }
+
   const ai = brainCaller();
   if (ai) {
     try {
@@ -387,7 +669,7 @@ async function processCommand(userCommand: string): Promise<string> {
         role: m.speaker === 'jarvis' ? ('model' as const) : ('user' as const),
         parts: [{ text: m.text.slice(0, 2000) }],
       }));
-      const run = await runBrain<string>(ai, {
+      const run = await runBrainStream(ai, {
         kind: 'text',
         contents: [
           ...turns,
@@ -396,12 +678,16 @@ async function processCommand(userCommand: string): Promise<string> {
             parts: [{ text: `${jarvisSystemPrompt}${memoryBlock()}\n\nUser command: "${trimmed}"` }],
           },
         ],
-        extract: (raw) => (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null),
+        onDelta,
       });
       const configured = resolveTextModel();
       if (run.model !== configured.model) {
         console.log(`[JARVIS] ${configured.model} is unavailable — ${run.model} (${run.modelSource}) answered instead.`);
       }
+      // Keep the answer (when it is safe to keep) so the same question costs
+      // nothing next time — the same rule the desktop app follows, same file.
+      const kept = knowledge.learn(trimmed, run.value);
+      if (kept) console.log(`[JARVIS] kept the answer as entry ${kept.id} — asking again costs nothing`);
       return run.value;
     } catch (err) {
       // Honest failure, naming the real cause: a 404 means the model name was
@@ -435,6 +721,38 @@ async function processCommand(userCommand: string): Promise<string> {
   }
 
   return `My reasoning is offline, sir — no Gemini key is set, so I can only run the built-in local commands. ${keyHelp}`;
+}
+
+/**
+ * Does this read as "do something on the computer" rather than "tell me / talk
+ * to me"? Used only to avoid spending an AI call on a command nothing local can
+ * carry out — the reply then says so and offers the call rather than making it
+ * silently.
+ */
+function looksLikeComputerTask(lower: string): boolean {
+  return /^\s*(?:please\s+)?(?:jarvis,?\s+)?(?:open|close|start|stop|launch|run|quit|kill|install|uninstall|delete|remove|move|rename|copy|create (?:a )?(?:file|folder|note)|draft|write (?:an? )?(?:email|letter|report|document)|send (?:an? )?email|compose|schedule|book|order|buy|print|scan|turn (?:on|off)|set (?:the )?(?:volume|brightness|timer|alarm)|shut ?down|restart|reboot|screenshot|type|click|scroll|drag|download|upload|convert|resize|compress|edit (?:the )?(?:image|photo|video))\b/i.test(lower);
+}
+
+/** Does it read like a question (or a conversation) rather than a command? */
+function looksLikeKnowledgeQuestion(lower: string): boolean {
+  if (/\?\s*$/.test(lower.trim())) return true;
+  return /^\s*(?:please\s+)?(?:jarvis,?\s+)?(?:what|who|when|where|why|how|which|whose|is |are |was |were |do |does |did |can |could |should |would |will |tell me|explain|describe|compare|summar(?:y|ise|ize)|find out|look up|research|help me (?:understand|decide|think)|what do you think|your (?:opinion|view)|discuss|argue)\b/i.test(lower);
+}
+
+// Reminders kept on this computer (the desktop app has its own file; this is the
+// dashboard's, so neither can corrupt the other).
+const DASHBOARD_REMINDERS_FILE = path.join(MEMORY_DIR, 'dashboard_reminders.json');
+function readReminders(): Array<{ text: string; at: string }> {
+  const raw = readJsonSafe(DASHBOARD_REMINDERS_FILE);
+  return Array.isArray(raw) ? (raw as Array<{ text: string; at: string }>) : [];
+}
+function writeReminders(list: Array<{ text: string; at: string }>): void {
+  try {
+    fs.mkdirSync(MEMORY_DIR, { recursive: true });
+    fs.writeFileSync(DASHBOARD_REMINDERS_FILE, JSON.stringify(list, null, 2));
+  } catch (err) {
+    console.warn('Could not write reminders:', err);
+  }
 }
 
 // Real telemetry for the Diagnostics button — honest readings, no theatre.
@@ -501,9 +819,10 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Send current status
   ws.send(JSON.stringify({ type: 'status', state: jarvisState }));
 
-  // Send history (up to 50 items)
+  // Send history (up to 50 items). Marked as a replay so that a page which has
+  // just opened never reads the old conversation out loud.
   for (const item of messageHistory.slice(-50)) {
-    ws.send(JSON.stringify(item));
+    ws.send(JSON.stringify({ ...item, replay: true }));
   }
 
   ws.on('message', async (data: Buffer | string) => {
@@ -516,7 +835,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
           if (dec) cmd = dec;
         }
         if (cmd) {
-          handleIncomingUserCommand(cmd);
+          const requestId = typeof parsed.requestId === 'string' && parsed.requestId ? parsed.requestId : undefined;
+          handleIncomingUserCommand(cmd, requestId);
         }
       }
     } catch (e) {
@@ -659,12 +979,13 @@ app.use(express.json({ limit: '25mb' })); // room pictures travel to the AI tool
 app.use(express.urlencoded({ extended: true }));
 
 // Handle User Command execution
-async function handleIncomingUserCommand(text: string): Promise<string> {
+async function handleIncomingUserCommand(text: string, requestId?: string): Promise<string> {
   const userMsg: LogMessage = {
     type: 'log',
     speaker: 'user',
     text,
     timestamp: Date.now(),
+    ...(requestId ? { id: requestId } : {}),
   };
   messageHistory.push(userMsg);
   broadcast(userMsg);
@@ -674,10 +995,33 @@ async function handleIncomingUserCommand(text: string): Promise<string> {
     broadcast({ type: 'status', state: 'active' });
   }
 
-  const replyText = await processCommand(text);
+  // The answer is broadcast while it is being written: every client watching sees
+  // the same words appear at the same time, and hears them read out as they land.
+  // The final 'log' below carries the whole reply and closes the live bubble.
+  const streamId = requestId || crypto.randomUUID();
+  let lastSent = 0;
+  let announced = false;
+  const onDelta = (textSoFar: string) => {
+    if (textSoFar.length === lastSent) return;
+    lastSent = textSoFar.length;
+    announced = true;
+    broadcast({ type: 'stream', id: streamId, speaker: 'jarvis', text: textSoFar, done: false, timestamp: Date.now() });
+  };
+
+  let replyText: string;
+  try {
+    replyText = await processCommand(text, onDelta);
+  } catch (err) {
+    // Nothing may be left unanswered — a thrown error still becomes words.
+    replyText = `I hit an error I did not expect, sir: ${err instanceof Error ? err.message : String(err)}. The server log has the full trace.`;
+    console.error('Command failed:', err);
+  }
+  if (announced) broadcast({ type: 'stream', id: streamId, speaker: 'jarvis', text: replyText, done: true, timestamp: Date.now() });
+
   const jarvisMsg: LogMessage = {
     type: 'log',
     speaker: 'jarvis',
+    id: streamId,
     text: replyText,
     timestamp: Date.now(),
   };
@@ -700,7 +1044,14 @@ app.get('/static/crypto.js', (_req: Request, res: Response) => {
   }
 });
 
-app.use('/static', express.static(STATIC_DIR));
+app.use('/static', express.static(STATIC_DIR, {
+  // In this build the page, the stylesheet and the scripts are edited often, so
+  // nothing is cached: a browser holding an old copy is the one thing that looks
+  // exactly like "the app is not running".
+  etag: false,
+  lastModified: false,
+  setHeaders: (res) => res.setHeader('Cache-Control', 'no-store, must-revalidate'),
+}));
 app.use('/hand-board', express.static(HAND_BOARD_DIR));
 app.use('/myhands', express.static(HAND_BOARD_DIR));
 
@@ -755,6 +1106,7 @@ app.get('/', (req: Request, res: Response) => {
   html = html.replace(/__ASSISTANT_NAME__/g, escapeHtml(names.assistant));
   html = html.replace(/__USER_NAME__/g, escapeHtml(names.user));
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.send(html);
 });
 
@@ -852,8 +1204,9 @@ app.post('/api/command', requireAuth, async (req: Request, res: Response) => {
   // The reply is sent back in the response AND broadcast on the websocket. The page
   // uses this copy only when its replies socket is down, so a blocked websocket (or a
   // proxy that drops upgrades) can never leave a spoken command unanswered.
-  const reply = await handleIncomingUserCommand(commandText);
-  res.json({ ok: true, reply });
+  const requestId = typeof req.body?.requestId === 'string' && req.body.requestId ? req.body.requestId : undefined;
+  const reply = await handleIncomingUserCommand(commandText, requestId);
+  res.json({ ok: true, reply, id: requestId });
 });
 
 // POST /api/voice/transcribe -> the dashboard's own ears.
@@ -885,6 +1238,127 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
     res.json({ ok: true, text: result.text });
   } else {
     res.json({ ok: false, code: result.code, message: result.message });
+  }
+});
+
+// ── JARVIS's own voice, generated by the server ─────────────────────────────
+// The page normally speaks with the browser's built-in voice, which is free and
+// instant — but some machines have no voice at all (a bare Linux desktop, a
+// webview, a locked-down phone, a preview frame that refuses), and on those the
+// owner hears nothing however loudly the app says the speakers are on. For them
+// the words are turned into real audio on the server by Gemini's voice model and
+// played by the page as an ordinary sound file — no dependence on what the
+// computer happens to have installed.
+const DEFAULT_VOICE_MODEL = 'gemini-2.5-flash-preview-tts';
+const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
+
+function resolveVoiceModel(): { model: string; source: string } {
+  const model = (process.env.SUPPER_VOICE_MODEL || process.env.GEMINI_TTS_MODEL || '').trim();
+  return {
+    model: model || DEFAULT_VOICE_MODEL,
+    source: model ? 'SUPPER_VOICE_MODEL' : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
+  };
+}
+function resolveVoiceName(): string {
+  return (process.env.SUPPER_VOICE_NAME || '').trim() || DEFAULT_VOICE_NAME;
+}
+
+/**
+ * One sentence in, one WAV out. The TTS model answers with raw PCM inside an
+ * inline part; its mime type carries the sample rate, which is honoured rather
+ * than assumed. Every failure is named for what it is — a withdrawn voice model,
+ * a used-up quota, a refused key — instead of leaving the owner with silence.
+ */
+/**
+ * Sentences already spoken, kept in memory so a repeated line costs nothing —
+ * "Listening, sir", "Muted, sir" and the rest are said many times a day, and the
+ * owner's rule is to use the AI as little as possible. Bounded, newest first.
+ */
+const voiceCache = new Map<string, { wav: Buffer; model: string }>();
+const VOICE_CACHE_MAX = 80;
+
+async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: string; ms: number; cached: boolean }> {
+  const { client } = buildGeminiClient();
+  if (!client) {
+    throw Object.assign(new Error('no Gemini key is set, so the server cannot speak — add it in Settings → "The Brain"'), { code: 'no-key' });
+  }
+  const spoken = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
+  if (!spoken) throw Object.assign(new Error('there was nothing to say'), { code: 'empty' });
+  const { model } = resolveVoiceModel();
+  // A sentence already said is replayed from memory — checked BEFORE the budget,
+  // because remembering costs nothing and must not spend a unit.
+  const cacheKey = `${model}|${resolveVoiceName()}|${spoken}`;
+  const cached = voiceCache.get(cacheKey);
+  if (cached) return { wav: cached.wav, model: cached.model, ms: 0, cached: true };
+
+  const voiceBudget = trySpendVoiceBudget();
+  if (!voiceBudget.allowed) {
+    const snap = voiceQuotaSnapshot();
+    throw Object.assign(new Error(
+      `the voice's own daily budget is used up (${snap.used} of ${snap.limit} spoken sentences; the count is runtime/voice_quota.json and it resets at local midnight). ` +
+      `Text answers are unaffected — this is the voice's own counter. Raise SUPPER_GEMINI_VOICE_BUDGET for more, or switch the voice engine to this computer's voice (that one is free).`,
+    ), { code: 'voice-budget' });
+  }
+  const started = Date.now();
+  let raw: GeminiRaw;
+  try {
+    raw = await client.models.generateContent({
+      model,
+      contents: [{ role: 'user', parts: [{ text: spoken }] }],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: resolveVoiceName() } } },
+      },
+    } as never) as unknown as GeminiRaw;
+  } catch (err) {
+    const classified = classifyGeminiError(err);
+    if (classified.code === 'rate-limited') markBudgetExhausted();
+    let message = explainBrainFailure({
+      code: classified.code, model, modelSource: resolveVoiceModel().source, key: resolveGeminiKey(), raw: classified.raw, attempts: [],
+    });
+    if (classified.code === 'model-unavailable') {
+      // The brain's message names the brain's settings; the mouth has its own.
+      message += ` The voice model is its own setting: SUPPER_VOICE_MODEL (the app's default is ${DEFAULT_VOICE_MODEL}).`;
+    }
+    if (classified.code === 'rate-limited') {
+      message += ' The browser\'s own voice (Settings → Voice → "This computer\'s voice") costs nothing and still works meanwhile.';
+    }
+    throw Object.assign(new Error(message), { code: classified.code });
+  }
+
+  const parts = raw.candidates?.[0]?.content?.parts || [];
+  const audio = parts.find((p) => p.inlineData && p.inlineData.data);
+  if (!audio || !audio.inlineData) {
+    const said = parts.find((p) => typeof p.text === 'string');
+    throw Object.assign(new Error(
+      said && said.text
+        ? `the voice model answered with words instead of sound ("${String(said.text).slice(0, 90)}") — set SUPPER_VOICE_MODEL to a voice model your key may use`
+        : `${model} sent nothing back that can be played. Set SUPPER_VOICE_MODEL to a voice model your key may use.`,
+    ), { code: 'failed' });
+  }
+  const rate = Number((/rate=(\d+)/.exec(audio.inlineData.mimeType || '') || [])[1]) || 24000;
+  const wav = pcmToWav(Buffer.from(audio.inlineData.data, 'base64'), rate);
+  voiceCache.set(cacheKey, { wav, model });
+  while (voiceCache.size > VOICE_CACHE_MAX) voiceCache.delete(voiceCache.keys().next().value as string);
+  return { wav, model, ms: Date.now() - started, cached: false };
+}
+
+// POST /api/voice/speak -> the server says one sentence out loud, as a WAV file.
+// Body: { text }. Answer: { ok, audio (base64 WAV), mime, model, ms }.
+app.post('/api/voice/speak', requireAuth, async (req: Request, res: Response) => {
+  const text = typeof req.body?.text === 'string' ? req.body.text : '';
+  if (!text.trim()) {
+    res.status(400).json({ ok: false, code: 'empty', message: 'There was nothing to say, sir.' });
+    return;
+  }
+  try {
+    const result = await synthesizeVoice(text);
+    console.log(`[voice] ${result.cached ? 'replayed a remembered sentence' : `spoke ${result.wav.length} bytes with ${result.model} in ${result.ms} ms`}`);
+    res.json({ ok: true, audio: result.wav.toString('base64'), mime: 'audio/wav', model: result.model, ms: result.ms, cached: result.cached });
+  } catch (err) {
+    const code = (err as { code?: string }).code || 'failed';
+    console.warn(`[voice] the server voice failed (${code}): ${(err as Error).message}`);
+    res.json({ ok: false, code, message: (err as Error).message });
   }
 });
 
@@ -1067,8 +1541,9 @@ app.get('/api/file-content', (req: Request, res: Response) => {
 // Studio and Files. Their sources are served as-is; three.js comes from the
 // vendored copy, so nothing is fetched from the internet.
 app.use('/vendor', express.static(path.join(process.cwd(), 'web', 'vendor')));
-app.use('/rooms-src', express.static(path.join(process.cwd(), 'web')));
+app.use('/rooms-src', express.static(path.join(process.cwd(), 'web'), { etag: false, setHeaders: (res) => res.setHeader('Cache-Control', 'no-store') }));
 app.get('/rooms.html', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, must-revalidate');
   res.sendFile(path.join(STATIC_DIR, 'rooms.html'));
 });
 
@@ -1192,7 +1667,14 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       { name: `Gemini Neural Core (${resolveTextModel().model})`, status: 'ready', icon: '🧠' },
       { name: 'Autonomous Self-Repair Sandbox', status: 'ready', icon: '🔧' },
       { name: 'Dual-Channel Telemetry Relay', status: 'connected', icon: '📡' },
+      { name: `Local knowledge base (${knowledge.count()} answers, shared with the desktop app)`, status: 'ready', icon: '📚' },
+      { name: `Local drafting desk (${drafts.list().length} draft(s) written here, no AI)`, status: 'ready', icon: '✍️' },
     ],
+    // The two budgets, both visible in Settings → Voice: the brain's and the
+    // voice's own. Speaking can never starve the answers.
+    knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
+    drafts: { count: drafts.list().length, dir: 'runtime/drafts' },
+    voice: voiceQuotaSnapshot(),
   });
 });
 
@@ -1206,6 +1688,9 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     source: status.key.source,                             // 'config/api_keys.json' | '.env' | 'environment' | null
     sourceDetail: status.key.detail,
     model: status.model.text,                              // the model in use for chat, voice and the brain check
+    knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
+    drafts: { count: drafts.list().length, dir: 'runtime/drafts' },
+    voice: voiceQuotaSnapshot(),
     modelSource: status.model.textSource,
     imageModel: status.model.image,
     imageModelSource: status.model.imageSource,

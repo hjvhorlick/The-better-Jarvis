@@ -52,6 +52,14 @@ export const API_CONFIG_PATH = path.join(REPO_ROOT, 'config', 'api_keys.json');
 export const ENV_FILE = path.join(REPO_ROOT, '.env');
 export const RUNTIME_DIR = path.join(REPO_ROOT, 'runtime');
 export const QUOTA_FILE = path.join(RUNTIME_DIR, 'quota.json');
+/**
+ * The voice gets its own counter and its own limit. Speaking is not thinking:
+ * a reply is one text call, but reading it out loud is a call per sentence, and
+ * the owner wants the server voice on ALL the time. Sharing one budget would
+ * mean twenty spoken sentences a day and no answers left — so the two are
+ * counted apart, and both are visible in Settings.
+ */
+export const VOICE_QUOTA_FILE = path.join(RUNTIME_DIR, 'voice_quota.json');
 export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json');
 
 /**
@@ -61,6 +69,7 @@ export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json')
  */
 export const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
 export const DEFAULT_DAILY_BUDGET = 20;           // backend/config.py
+export const DEFAULT_VOICE_BUDGET = 400;          // spoken sentences a day
 
 // The key may already be in the shell. Note that before dotenv runs, so the
 // dashboard can say honestly whether the key came from the shell or from ./.env.
@@ -325,9 +334,10 @@ export function resolveDailyBudget(): BudgetInfo {
 }
 
 // A file that exists but cannot be read fails closed until the next local day
-// (backend/quota.py holds the same rule).
-let unreadableDay = '';
-let saveFailed = false;
+// (backend/quota.py holds the same rule). Each counter keeps its own state, so a
+// damaged voice counter can never switch the brain off (or the other way round).
+const unreadableDay: Record<string, string> = {};
+const saveFailed: Record<string, boolean> = {};
 
 function localDay(): string {
   const d = new Date();
@@ -337,30 +347,30 @@ function localDay(): string {
 
 interface Counter { day: string; used: number; unreadable: boolean; }
 
-function readCounter(): Counter {
+function readCounter(file: string = QUOTA_FILE): Counter {
   const day = localDay();
-  if (unreadableDay === day) return { day, used: 0, unreadable: true };
-  if (!fs.existsSync(QUOTA_FILE)) return { day, used: 0, unreadable: false };
+  if (unreadableDay[file] === day) return { day, used: 0, unreadable: true };
+  if (!fs.existsSync(file)) return { day, used: 0, unreadable: false };
   try {
-    const data = JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf-8')) as { day?: unknown; used?: unknown };
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as { day?: unknown; used?: unknown };
     const used = Number(data?.used);
     if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
     return { day, used: data?.day === day ? Math.floor(used) : 0, unreadable: false };
   } catch {
-    unreadableDay = day;                    // fail closed: a damaged counter can never allow calls
+    unreadableDay[file] = day;              // fail closed: a damaged counter can never allow calls
     return { day, used: 0, unreadable: true };
   }
 }
 
-function writeCounter(day: string, used: number): void {
-  const tmp = `${QUOTA_FILE}.tmp`;
+function writeCounter(day: string, used: number, file: string = QUOTA_FILE): void {
+  const tmp = `${file}.tmp`;
   try {
-    fs.mkdirSync(path.dirname(QUOTA_FILE), { recursive: true });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(tmp, JSON.stringify({ day, used }), { mode: 0o600 });
-    fs.renameSync(tmp, QUOTA_FILE);
-    saveFailed = false;
+    fs.renameSync(tmp, file);
+    saveFailed[file] = false;
   } catch {
-    saveFailed = true;                      // counting continues in memory; diagnostics shows it
+    saveFailed[file] = true;                // counting continues in memory; diagnostics shows it
   }
 }
 
@@ -374,11 +384,50 @@ export function quotaSnapshot(): QuotaSnapshot {
     remaining: counter.unreadable ? 0 : Math.max(0, budget.limit - counter.used),
     enabled: budget.limit > 0,
     unreadable: counter.unreadable,
-    saved: !saveFailed,
+    saved: !saveFailed[QUOTA_FILE],
     resets: 'local midnight',
     source: budget.source,
     note: "This app's own count in runtime/quota.json, shared with the engine room. Google's real limit differs by model; check AI Studio.",
   };
+}
+
+// ── The voice's own budget ──────────────────────────────────────────────────
+export function resolveVoiceBudget(): BudgetInfo {
+  const raw = (process.env.SUPPER_GEMINI_VOICE_BUDGET || '').trim();
+  if (!raw) return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET} spoken sentences a day)` };
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < 0) {
+    return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET}) — SUPPER_GEMINI_VOICE_BUDGET could not be read` };
+  }
+  return { limit: value, source: 'SUPPER_GEMINI_VOICE_BUDGET' };
+}
+
+export function voiceQuotaSnapshot(): QuotaSnapshot {
+  const budget = resolveVoiceBudget();
+  const counter = readCounter(VOICE_QUOTA_FILE);
+  return {
+    day: counter.day,
+    used: counter.used,
+    limit: budget.limit,
+    remaining: counter.unreadable ? 0 : Math.max(0, budget.limit - counter.used),
+    enabled: budget.limit > 0,
+    unreadable: counter.unreadable,
+    saved: !saveFailed[VOICE_QUOTA_FILE],
+    resets: 'local midnight',
+    source: budget.source,
+    note: "The voice's own count in runtime/voice_quota.json — kept apart from the brain's budget so speaking can never starve the thinking.",
+  };
+}
+
+/** One unit for one spoken sentence generated on the server. */
+export function trySpendVoiceBudget(): { allowed: boolean; snapshot: QuotaSnapshot } {
+  const budget = resolveVoiceBudget();
+  const counter = readCounter(VOICE_QUOTA_FILE);
+  if (counter.unreadable || budget.limit === 0 || counter.used >= budget.limit) {
+    return { allowed: false, snapshot: voiceQuotaSnapshot() };
+  }
+  writeCounter(counter.day, counter.used + 1, VOICE_QUOTA_FILE);
+  return { allowed: true, snapshot: voiceQuotaSnapshot() };
 }
 
 /**
@@ -415,7 +464,54 @@ export interface GeminiRaw {
 
 export interface BrainCaller {
   generate(model: string, contents: unknown[], config?: Record<string, unknown>): Promise<GeminiRaw>;
+  /**
+   * The same call, answered in pieces. Every yielded string is the next slice of
+   * the reply, already decoded, so the page can show — and speak — the first
+   * sentence while the rest is still being written. Optional: a caller without
+   * it simply uses generate() and the reply arrives in one piece.
+   */
+  generateStream?(model: string, contents: unknown[], config?: Record<string, unknown>): AsyncIterable<string>;
   listModels(): Promise<string[]>;
+}
+
+/**
+ * ── SPEED: the settings that make a reply arrive in a second, not ten ────────
+ *
+ * Gemini 2.5 Flash (the app's moving alias resolves to it) *thinks* before it
+ * answers unless it is told not to. That thinking is invisible in the reply and
+ * costs several seconds of waiting on every single command — the owner hears
+ * silence, then a paragraph. For a voice assistant the answer is worth more than
+ * the deliberation, so thinking is switched off (thinkingBudget: 0 → "no
+ * thinking"; -1 is Google's default dynamic budget) and the answer length is
+ * capped, because a capped answer is written sooner and spoken sooner.
+ *
+ * The budget is only sent for the models that document it. A model that refuses
+ * it (a 400 naming thinkingConfig) is retried once with plain settings — see
+ * isConfigRejection() — so this can never turn a working model into a broken one.
+ */
+export const SPEED_MAX_OUTPUT_TOKENS = 900;
+
+/** Models that are known NOT to take a thinking budget — never sent to these. */
+const NO_THINKING_CONFIG = /(?:^|[^a-z0-9])(?:1\.5|2\.0)(?:[^a-z0-9]|$)|embedding|aqa|gemma|learnlm/;
+
+export function speedConfig(model: string): Record<string, unknown> {
+  const id = String(model || '').toLowerCase();
+  const cfg: Record<string, unknown> = {
+    maxOutputTokens: SPEED_MAX_OUTPUT_TOKENS,
+    temperature: 0.7,
+  };
+  // Thinking is switched off wherever the model can take that setting — the
+  // question "does this one think?" is answered by the model itself (a refusal is
+  // retried with plain settings), so only the models known to reject it are spared.
+  if (!NO_THINKING_CONFIG.test(id)) {
+    cfg.thinkingConfig = { thinkingBudget: 0 };
+  }
+  return cfg;
+}
+
+/** True when a failure is the model refusing a generation setting, not the model. */
+export function isConfigRejection(raw: string): boolean {
+  return /thinkingconfig|thinking_config|thinkingbudget|thinking budget|invalid[_ ]argument|invalid json payload|unknown name|unsupported field|cannot be set/i.test(String(raw || ''));
 }
 
 export type BrainFailureCode =
@@ -533,6 +629,8 @@ export interface BrainRunOptions<T> {
   spend?: () => { allowed: boolean; snapshot: QuotaSnapshot };
   /** Set false in tests that must not touch the network for discovery. */
   allowDiscovery?: boolean;
+  /** Set false to send only the caller's own settings — never the speed defaults. */
+  speed?: boolean;
 }
 
 export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOptions<T>): Promise<BrainRun<T>> {
@@ -578,9 +676,28 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       throw new BrainError(explainBrainFailure({ code: 'budget', model: next.model, modelSource: next.source, key, attempts }), 'budget', attempts, next.model, next.source);
     }
 
-    try {
-      const raw = await caller.generate(next.model, opts.contents, opts.config);
-      const value = opts.extract(raw);
+    // The speed settings ride along with every text call: thinking off where the
+    // model takes that setting, and a capped answer. See speedConfig().
+    const usedSpeed = opts.speed !== false && opts.kind === 'text';
+    const callConfig = usedSpeed ? { ...speedConfig(next.model), ...(opts.config || {}) } : opts.config;
+    const attempt = async (cfg: Record<string, unknown> | undefined): Promise<{ raw?: GeminiRaw; error?: ClassifiedError }> => {
+      try {
+        return { raw: await caller.generate(next.model, opts.contents, cfg) };
+      } catch (err) {
+        return { error: classifyGeminiError(err) };
+      }
+    };
+
+    let outcome = await attempt(callConfig);
+    if (outcome.error && usedSpeed && isConfigRejection(outcome.error.raw)) {
+      // A setting was refused, not the model: ask once more with plain settings
+      // so a model that does not take thinkingConfig still answers.
+      console.warn(`[config] ${opts.kind} call to ${next.model} refused the speed settings (${trimRaw(outcome.error.raw)}) — retrying with the model's own defaults.`);
+      outcome = await attempt(opts.config);
+    }
+
+    if (outcome.raw) {
+      const value = opts.extract(outcome.raw);
       if (value === null || value === undefined) {
         attempts.push({ model: next.model, source: next.source, ok: false, error: 'empty reply' });
         lastReport = { code: 'empty', raw: 'empty reply' };
@@ -589,8 +706,10 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       if (readRememberedModel(opts.kind) !== next.model) rememberModel(opts.kind, next.model);
       attempts.push({ model: next.model, source: next.source, ok: true });
       return { value, model: next.model, modelSource: next.source, attempts };
-    } catch (err) {
-      const classified = classifyGeminiError(err);
+    }
+
+    {
+      const classified = outcome.error as ClassifiedError;
       lastReport = classified;
       attempts.push({ model: next.model, source: next.source, ok: false, status: classified.status, error: trimRaw(classified.raw) });
       console.warn(`[config] ${opts.kind} call to ${next.model} failed (${classified.code}${classified.status ? ` ${classified.status}` : ''}): ${trimRaw(classified.raw)}`);
@@ -606,6 +725,175 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       // A withdrawn name (404) or an unexplained failure: forget it and try the next candidate.
       forgetModel(opts.kind, next.model);
     }
+  }
+
+  if (!attempts.length) {
+    const setting = opts.kind === 'image' ? 'SUPPER_IMAGE_MODEL' : 'SUPPER_TEXT_MODEL';
+    throw new BrainError(
+      `I could not find a model to use, sir: nothing is configured and your key's own model list offered nothing suitable for ${opts.kind === 'image' ? 'pictures' : 'text'}. ` +
+      `Set ${setting} to a model your key may use (the key itself is fine — it came from ${key.detail}).`,
+      'model-unavailable', attempts, '', '',
+    );
+  }
+  const code: BrainFailureCode = lastReport.code === 'failed' ? 'failed' : lastReport.code;
+  throw new BrainError(
+    explainBrainFailure({ code, model: lastModel, modelSource: lastSource, key, raw: lastReport.raw, attempts }),
+    code, attempts, lastModel, lastSource,
+  );
+}
+
+// ── Streaming: the same walk over the models, but answered in pieces ────────
+// The page shows — and speaks — the first sentence while the rest is still being
+// written, which is what makes a reply feel instant. The fallback rules are the
+// ones runBrain() uses: a model that fails before its first word is replaced by
+// the next candidate; a model that fails mid-answer keeps the words it managed
+// to say rather than throwing them away.
+export interface BrainStreamRun {
+  value: string;
+  model: string;
+  modelSource: string;
+  attempts: AttemptReport[];
+  /** True when the reply arrived in pieces (the answer can be spoken as written). */
+  streamed: boolean;
+}
+
+export interface BrainStreamOptions {
+  kind: 'text' | 'image';
+  contents: unknown[];
+  config?: Record<string, unknown>;
+  /** Called with the whole answer so far, every time more of it exists. */
+  onDelta?: (textSoFar: string) => void;
+  candidates?: ModelCandidate[];
+  spend?: () => { allowed: boolean; snapshot: QuotaSnapshot };
+  allowDiscovery?: boolean;
+  speed?: boolean;
+}
+
+export async function runBrainStream(caller: BrainCaller | null, opts: BrainStreamOptions): Promise<BrainStreamRun> {
+  const key = resolveGeminiKey();
+  if (!caller || !key.key) {
+    throw new BrainError(explainBrainFailure({ code: 'no-key', model: '', modelSource: '', key, attempts: [] }), 'no-key', [], '', '');
+  }
+
+  const allowDiscovery = opts.allowDiscovery !== false;
+  const extractText = (raw: GeminiRaw): string | null =>
+    (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null);
+
+  let candidates: ModelCandidate[] = (opts.candidates || modelCandidates(opts.kind)).slice();
+  const attempted = new Set<string>();
+  const attempts: AttemptReport[] = [];
+  const spend = opts.spend || trySpendGeminiBudget;
+  let discoveryDone = !allowDiscovery;
+  let lastModel = candidates[0]?.model || '';
+  let lastSource = candidates[0]?.source || '';
+  let lastReport: ClassifiedError = { code: 'failed', raw: 'no model was tried' };
+
+  for (;;) {
+    const next = candidates.find((c) => c.model && !attempted.has(c.model));
+    if (!next) {
+      if (!discoveryDone) {
+        discoveryDone = true;
+        try {
+          const found = await discoverModels(caller, opts.kind);
+          const fresh = found.filter((c) => !attempted.has(c.model));
+          if (fresh.length) { candidates = candidates.concat(fresh); continue; }
+        } catch (err) {
+          console.warn('[config] model discovery failed (that is allowed — it is only a last resort):', err instanceof Error ? err.message : err);
+        }
+      }
+      break;
+    }
+
+    attempted.add(next.model);
+    lastModel = next.model;
+    lastSource = next.source;
+
+    const budget = spend();
+    if (!budget.allowed) {
+      throw new BrainError(explainBrainFailure({ code: 'budget', model: next.model, modelSource: next.source, key, attempts }), 'budget', attempts, next.model, next.source);
+    }
+
+    const usedSpeed = opts.speed !== false && opts.kind === 'text';
+    const callConfig = usedSpeed ? { ...speedConfig(next.model), ...(opts.config || {}) } : opts.config;
+
+    let text = '';
+    let failure: ClassifiedError | null = null;
+    let streamed = false;
+
+    const consume = async (stream: AsyncIterable<string>) => {
+      for await (const piece of stream) {
+        if (typeof piece !== 'string' || !piece) continue;
+        if (!streamed) streamed = true;
+        text += piece;
+        if (opts.onDelta) opts.onDelta(text);
+      }
+    };
+
+    if (typeof caller.generateStream === 'function') {
+      try {
+        await consume(caller.generateStream(next.model, opts.contents, callConfig));
+      } catch (err) {
+        failure = classifyGeminiError(err);
+        if (usedSpeed && !text && isConfigRejection(failure.raw)) {
+          console.warn(`[config] streaming call to ${next.model} refused the speed settings (${trimRaw(failure.raw)}) — retrying with the model's own defaults.`);
+          failure = null;
+          try { await consume(caller.generateStream(next.model, opts.contents, opts.config)); }
+          catch (err2) { failure = classifyGeminiError(err2); }
+        }
+      }
+    }
+
+    // Some endpoints answer a streaming request with nothing at all (an old
+    // proxy, or a server that only speaks generateContent). Ask once the ordinary
+    // way rather than pretending the model is broken.
+    if (!text && !failure) {
+      try {
+        const raw = await caller.generate(next.model, opts.contents, callConfig);
+        const value = extractText(raw);
+        if (value) { text = value; if (opts.onDelta) opts.onDelta(text); }
+        else lastReport = { code: 'empty', raw: 'empty reply' };
+      } catch (err) {
+        const classified = classifyGeminiError(err);
+        if (usedSpeed && isConfigRejection(classified.raw)) {
+          try {
+            const raw = await caller.generate(next.model, opts.contents, opts.config);
+            const value = extractText(raw);
+            if (value) { text = value; if (opts.onDelta) opts.onDelta(text); }
+            else lastReport = { code: 'empty', raw: 'empty reply' };
+          } catch (err2) { failure = classifyGeminiError(err2); }
+        } else {
+          failure = classified;
+        }
+      }
+    }
+
+    if (text) {
+      if (failure) {
+        // The words that arrived are real; keep them and say so in the log.
+        console.warn(`[config] the stream from ${next.model} broke after ${text.length} characters (${failure.code}): ${trimRaw(failure.raw)}`);
+      }
+      if (readRememberedModel(opts.kind) !== next.model) rememberModel(opts.kind, next.model);
+      attempts.push({ model: next.model, source: next.source, ok: true, error: failure ? `cut short: ${trimRaw(failure.raw)}` : undefined });
+      return { value: text, model: next.model, modelSource: next.source, attempts, streamed };
+    }
+
+    if (!failure) {
+      attempts.push({ model: next.model, source: next.source, ok: false, error: 'empty reply' });
+      lastReport = { code: 'empty', raw: 'empty reply' };
+      continue;
+    }
+
+    lastReport = failure;
+    attempts.push({ model: next.model, source: next.source, ok: false, status: failure.status, error: trimRaw(failure.raw) });
+    console.warn(`[config] ${opts.kind} call to ${next.model} failed (${failure.code}${failure.status ? ` ${failure.status}` : ''}): ${trimRaw(failure.raw)}`);
+    if (failure.code === 'rate-limited') {
+      markBudgetExhausted();
+      throw new BrainError(explainBrainFailure({ code: 'rate-limited', model: next.model, modelSource: next.source, key, raw: failure.raw, attempts }), 'rate-limited', attempts, next.model, next.source);
+    }
+    if (failure.code === 'key-rejected' || failure.code === 'connection') {
+      throw new BrainError(explainBrainFailure({ code: failure.code, model: next.model, modelSource: next.source, key, raw: failure.raw, attempts }), failure.code, attempts, next.model, next.source);
+    }
+    forgetModel(opts.kind, next.model);
   }
 
   if (!attempts.length) {

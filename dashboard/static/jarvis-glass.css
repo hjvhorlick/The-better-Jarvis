@@ -1,0 +1,293 @@
+/* JARVIS — clear glass with thin yellow lines.
+ * ============================================================================
+ * ONE stylesheet, used by BOTH surfaces:
+ *
+ *   the dashboard   dashboard/static/app.html      ->  /static/jarvis-glass.css
+ *   the rooms       dashboard/static/rooms.html    ->  /static/jarvis-glass.css
+ *
+ * The glass is CLEAR, not tinted: what is behind a pane — a room, the desktop,
+ * or the owner's own camera — is what you see, with only a whisper of frost on
+ * it. It is the thin YELLOW LINE around a pane that draws its edge, the bloom
+ * that lifts it off the dark background, and the long shadow that gives it
+ * depth. Every word is bright yellow too, with a dark halo so it stays readable
+ * even over a sunlit camera picture.
+ *
+ * The sand-blast is there when the owner wants it (the sliders): a little frost
+ * clears the picture up, a lot of sand makes the pane milky and private.
+ *
+ * The sliders in Settings push numbers into these variables:
+ *
+ *   --jg-win-alpha / --jg-win-frost / --jg-win-sand       the glass windows
+ *   --jg-panel-alpha / --jg-panel-frost / --jg-panel-sand the HUD and the rails
+ *   --jg-room-alpha / --jg-room-frost / --jg-room-sand    the rooms (the frame)
+ *   --jg-line                                             the thin yellow line
+ *   --jg-glow / --jg-glow-size                            the bloom
+ *
+ * Nothing here fetches anything: the font is in the repo, so JARVIS looks the
+ * same with the internet off.
+ */
+
+/* ── The type: Nunito, a rounded face with open counters ─────────────────────
+   Vendored (dashboard/static/fonts, SIL Open Font License, see
+   NUNITO-OFL.txt). Rounded, and legible at the small sizes a panel uses. */
+@font-face {
+  font-family: "JARVIS Rounded";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/nunito-latin-400-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JARVIS Rounded";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/nunito-latin-600-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JARVIS Rounded";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/nunito-latin-700-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JARVIS Rounded";
+  font-style: normal;
+  font-weight: 800;
+  font-display: swap;
+  src: url("fonts/nunito-latin-800-normal.woff2") format("woff2");
+}
+
+:root {
+  /* The type stack. The vendored face first, then whatever rounded faces the
+     computer already has, then the plain system face as the last resort. */
+  --jg-font: "JARVIS Rounded", ui-rounded, "SF Pro Rounded", "Segoe UI Variable Display",
+             "Varela Round", "Quicksand", "Trebuchet MS", system-ui, -apple-system, sans-serif;
+
+  /* The room behind the glass: dark grey, never black. */
+  --jg-grey: #191a1e;
+  --jg-grey-deep: #101114;
+  --jg-grey-light: #24262b;
+
+  /* The yellow: the line, the text, the glow. One colour, used everywhere. */
+  --jg-gold: #ffd60a;           /* the accent — buttons fill with this */
+  --jg-gold-bright: #ffec70;    /* button words */
+  --jg-gold-pale: #fffbd6;      /* the brightest words */
+  --jg-gold-dim: #d4b422;
+  --jg-gold-faint: #8a7a25;
+
+  --jg-text: #ffe45c;           /* every word, bright yellow */
+  --jg-text-soft: #e8d178;      /* the quieter words */
+  --jg-text-faint: #b8a75e;     /* labels and counts */
+
+  /* The thin line around every frame, and the bloom that lifts it off the
+     background. Both are set from the Settings sliders. */
+  --jg-line-width: 1px;
+  --jg-line: rgba(255, 214, 10, 0.62);
+  --jg-line-soft: rgba(255, 214, 10, 0.26);
+  --jg-glow: rgba(255, 214, 10, 0.22);
+  --jg-glow-size: 20px;
+
+  /* GLASS, per kind of surface: how transparent, how frosty (sand-blast), and
+     how much grit the sand leaves on the pane. The defaults are CLEAR: you see
+     through the pane, and only the yellow line says where it ends. */
+  --jg-win-alpha: 0.18;
+  --jg-win-frost: 3px;
+  --jg-win-sand: 0.08;
+  --jg-panel-alpha: 0.34;
+  --jg-panel-frost: 6px;
+  --jg-panel-sand: 0.06;
+  --jg-room-alpha: 0.14;
+  --jg-room-frost: 4px;
+  --jg-room-sand: 0.06;
+
+  /* Sharp corners: glass is cut, not moulded. */
+  --jg-radius: 3px;
+
+  /* The grit itself, painted as a tiny tile of noise. */
+  --jg-grit: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='g'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='120' height='120' filter='url(%23g)'/></svg>");
+}
+
+/* ── The pane ────────────────────────────────────────────────────────────────
+   Put .jg-glass on anything that should be a pane of clear glass. The three
+   numbers it reads (--jg-alpha, --jg-frost, --jg-sand) default to the window
+   values, and are what the sliders move. */
+.jg-glass {
+  position: relative;
+  --jg-alpha: var(--jg-win-alpha);
+  --jg-frost: var(--jg-win-frost);
+  --jg-sand: var(--jg-win-sand);
+
+  /* Clear glass: a whisper of grey so white words still read, never a tint. */
+  background-color: rgba(18, 20, 24, var(--jg-alpha));
+  /* A white specular sheen across the top edge (light hitting the sheet), and a
+     neutral milky veil that only appears as the sand-blast slider goes up. */
+  background-image:
+    linear-gradient(157deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0) 42%),
+    linear-gradient(rgba(224, 228, 236, var(--jg-sand-veil, 0.02)), rgba(224, 228, 236, var(--jg-sand-veil, 0.02)));
+  backdrop-filter: blur(var(--jg-frost)) saturate(104%) brightness(0.98);
+  -webkit-backdrop-filter: blur(var(--jg-frost)) saturate(104%) brightness(0.98);
+  border: var(--jg-line-width) solid var(--jg-line);
+  border-radius: var(--jg-radius);
+  color: var(--jg-text);
+  /* A dark halo on the words, so bright yellow stays readable over a bright
+     picture behind clear glass. */
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75), 0 0 10px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    inset 0 0 0 1px rgba(255, 255, 255, 0.04),
+    inset 0 -14px 26px -20px rgba(0, 0, 0, 0.6),
+    0 0 var(--jg-glow-size) var(--jg-glow),
+    0 24px 48px -20px rgba(0, 0, 0, 0.9);
+}
+
+/* The grit of the sand-blast: a faint grain over the pane. */
+.jg-glass::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background-image: var(--jg-grit);
+  background-size: 120px 120px;
+  opacity: calc(var(--jg-sand) * 0.30);
+  mix-blend-mode: overlay;
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* The sliders raise the veil as well as the grain, so "more sand" really does
+   mean "less see-through" — the pane stops showing what is behind it. */
+.jg-glass {
+  --jg-sand-veil: calc(var(--jg-sand) * 0.20);
+}
+
+.jg-glass--window { --jg-alpha: var(--jg-win-alpha); --jg-frost: var(--jg-win-frost); --jg-sand: var(--jg-win-sand); }
+.jg-glass--panel  { --jg-alpha: var(--jg-panel-alpha); --jg-frost: var(--jg-panel-frost); --jg-sand: var(--jg-panel-sand); }
+.jg-glass--room   { --jg-alpha: var(--jg-room-alpha); --jg-frost: var(--jg-room-frost); --jg-sand: var(--jg-room-sand); }
+
+/* A pane that is only a line: the thin yellow frame with nothing in it. */
+.jg-line {
+  border: var(--jg-line-width) solid var(--jg-line);
+  border-radius: var(--jg-radius);
+  box-shadow: 0 0 var(--jg-glow-size) var(--jg-glow);
+}
+
+/* ── The camera, behind the glass ────────────────────────────────────────────
+   When the owner turns the camera on, his picture becomes the thing the glass
+   is in front of: it shows through every pane as a sand-blasted image. */
+.jg-cam,
+.jg-cam-scrim {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.jg-cam {
+  object-fit: cover;
+  transform: scaleX(-1);          /* mirrored, so it matches his hand */
+  display: none;
+}
+
+.jg-cam-scrim {
+  /* The dark grey room, softening as the camera fades in so the yellow words
+     and the thin lines stay readable over a picture. */
+  background: radial-gradient(circle at 50% 0%, rgba(36, 38, 43, 0.85) 0%, rgba(16, 17, 20, 0.96) 70%);
+  transition: opacity 0.5s ease;
+}
+
+body.jg-cam-on .jg-cam { display: block; }
+/* The picture is the room now; the scrim only takes the glare off it. */
+body.jg-cam-on .jg-cam-scrim { opacity: 0.32; }
+
+/* ── Controls, in yellow ─────────────────────────────────────────────────────
+   One button shape and one slider shape for the whole app, so a control looks
+   the same in a window, in the HUD and in a room. */
+.jg-btn,
+.jg-glass button,
+.jg-glass input[type="button"],
+.jg-glass input[type="submit"] {
+  font-family: var(--jg-font);
+  font-weight: 700;
+  color: var(--jg-gold-bright);
+  background: rgba(255, 214, 10, 0.10);
+  border: var(--jg-line-width) solid var(--jg-line);
+  border-radius: var(--jg-radius);
+  text-shadow: 0 0 10px rgba(255, 214, 10, 0.35);
+}
+
+.jg-glass button:hover:not(:disabled),
+.jg-btn:hover:not(:disabled) {
+  background: rgba(255, 214, 10, 0.22);
+  box-shadow: 0 0 14px rgba(255, 214, 10, 0.30);
+}
+
+/* The slider: a thin yellow rail with a yellow bead. */
+.jg-range,
+.jg-glass input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.jg-range::-webkit-slider-runnable-track,
+.jg-glass input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: rgba(255, 214, 10, 0.30);
+  border-radius: 2px;
+}
+
+.jg-range::-moz-range-track,
+.jg-glass input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: rgba(255, 214, 10, 0.30);
+  border-radius: 2px;
+}
+
+.jg-range::-webkit-slider-thumb,
+.jg-glass input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: var(--jg-gold);
+  border: 1px solid rgba(255, 246, 212, 0.9);
+  box-shadow: 0 0 12px rgba(255, 214, 10, 0.55);
+}
+
+.jg-range::-moz-range-thumb,
+.jg-glass input[type="range"]::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--jg-gold);
+  border: 1px solid rgba(255, 246, 212, 0.9);
+  box-shadow: 0 0 12px rgba(255, 214, 10, 0.55);
+}
+
+/* Text selection, so yellow stays yellow. */
+.jg-glass ::selection,
+body ::selection {
+  background: rgba(255, 214, 10, 0.28);
+  color: var(--jg-gold-pale);
+}
+
+/* Scrollbars, thin and yellow. */
+.jg-glass *::-webkit-scrollbar,
+body::-webkit-scrollbar { width: 9px; height: 9px; }
+.jg-glass *::-webkit-scrollbar-track,
+body::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.25); }
+.jg-glass *::-webkit-scrollbar-thumb,
+body::-webkit-scrollbar-thumb {
+  background: rgba(255, 214, 10, 0.30);
+  border-radius: 5px;
+}
+.jg-glass *::-webkit-scrollbar-thumb:hover,
+body::-webkit-scrollbar-thumb:hover { background: rgba(255, 214, 10, 0.55); }

@@ -46,6 +46,37 @@ rather than giving a wrong stored answer.
 - A damaged file is kept aside as `knowledge.json.bad-<time>`, and the store starts again. Nothing is lost.
 - Expired and forgotten entries go to the archive list in the same file.
 
+## The dashboard (the glass build) uses the same store
+
+The main build (`server.ts` + `dashboard/static/app.html`) reads and writes
+`runtime/knowledge.json` in the engine room's own format, with the same matching
+rules (meaningful words, plural stemming, three-quarters overlap), the same
+wording ("[starter answer written by the assistant: please check]",
+"(saved from an earlier Gemini answer, <date>)") and the same safety rules for
+keeping an answer. It is one base, not two:
+
+- an answer taught in the desktop app answers a question typed into the
+  dashboard, and the other way round (`tests/config_harness.mjs` proves both
+  directions by having the Python module and the dashboard read each other's work);
+- each half re-reads the file when it changes on disk, so neither has to be
+  restarted for the other's entries to appear;
+- writes are atomic and merged by entry, so both can use the store at once.
+
+The dashboard's commands are the same ones:
+
+- `learn: <question> = <answer>` (also `learn that <question> means <answer>`)
+- `what have you learned`
+- `forget <number>`
+- any stored question, asked in your own words — answered with no Gemini call.
+
+**Local first.** In the dashboard, everything is checked on this computer before
+the AI is considered: the knowledge base, your notes (`remember …`), your
+reminders (`remind me to …`, `what are my reminders`), the time and date,
+diagnostics, My Hands, the rooms, opening and closing the windows, mute. A
+command that asks the computer to do something the build has no local tool for
+(drafting an email, for instance) is answered honestly — with the offer to spend
+one Gemini call (say "… — use the AI") — rather than quietly spending it.
+
 ## What is not done yet
 
 - The starter set is small (32 answers). It grows as you teach it, and as Gemini answers are kept.

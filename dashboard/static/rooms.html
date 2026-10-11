@@ -6,6 +6,9 @@
   <title>JARVIS — Rooms</title>
   <!-- Relative URLs (the room modules, styles) resolve under the engine sources. -->
   <base href="/rooms-src/">
+  <!-- ONE look: the same clear-glass tokens, the same thin yellow lines, the
+       same rounded face (Nunito, vendored in the repo) as the dashboard. -->
+  <link rel="stylesheet" href="/static/jarvis-glass.css">
   <!-- three.js is vendored with the project; the import map lets the 3D room and
        its loaders find it without a build step and without the internet. -->
   <script type="importmap">
@@ -21,73 +24,97 @@
     /* This page shows ONLY the sliding rooms: it fills the frame it is embedded in. */
     html, body { height: 100%; }
     body { display: flex; flex-direction: column; overflow: hidden; }
-    .rooms-top { display: flex; align-items: center; gap: 8px; padding: 6px 10px; flex: 0 0 auto; }
+    .rooms-top { display: flex; align-items: center; gap: 8px; padding: 8px 10px 6px; flex: 0 0 auto; }
     .env-rail { flex: 1 1 auto; min-height: 0; }
 
-    /* ── Fit for hands and voice ─────────────────────────────────────────
-       The rooms are driven by a hand in the air and by talking to Jarvis,
-       so: big targets, and no technical dials. */
+    /* ── Simplicity, in the rooms as much as on the main screen ────────────
+       A room is a place to work, not a control panel: the bar holds the rooms
+       themselves, the two arrows, and ONE switch — Tools. The room's own tools
+       appear when Tools is pressed (or when you say "tools"), and everything
+       else is driven by voice and hand. The camera switch lives on the main
+       screen only (and by voice: "camera on"), so there is exactly one. */
+    .rooms-top .env-switcher { flex: 1 1 auto; flex-wrap: wrap; }
+    .rooms-switch {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 7px 14px; font-size: 13.5px; font-weight: 700;
+      letter-spacing: 0.03em; cursor: pointer;
+    }
+    .rooms-switch[aria-pressed="true"] {
+      background: rgba(255, 214, 10, 0.30); color: #14151a;
+      border-color: var(--jg-gold-bright);
+    }
 
-    /* Technical clutter, hidden: the fps readout, the Studio's aspect-ratio
-       and picture-model pickers, the 3D room's wireframe switch and
-       see-through slider. Their defaults carry on underneath. */
+    /* Technical clutter, hidden: the fps readout, the Studio's aspect-ratio and
+       picture-model pickers, the 3D room's wireframe switch and see-through
+       slider. Their defaults carry on underneath. */
     #env-fps { display: none !important; }
     label[for="studio-aspect"], #studio-aspect,
     label[for="studio-model"], #studio-model { display: none !important; }
     #tool-design-wireframe, #tool-design-opacity { display: none !important; }
 
     /* The Flat room's tool drawer: the real design tools live in this
-       sub-section, grouped, and only the groups that matter for what you
-       brought in are shown. */
+       sub-section, and they are out of the way until Tools is pressed. */
     .flat-drawer {
       display: flex; flex-wrap: wrap; gap: 8px;
       padding: 8px 12px; flex: 0 0 auto;
-      background: rgba(13, 18, 33, 0.85);
-      border-bottom: 1px solid rgba(140, 160, 255, 0.18);
+      background: rgba(18, 20, 24, var(--jg-panel-alpha));
+      border: var(--jg-line-width) solid var(--jg-line);
+      border-radius: var(--jg-radius);
+      box-shadow: 0 0 var(--jg-glow-size) var(--jg-glow);
     }
     .flat-group {
       display: flex; align-items: center; gap: 6px;
-      padding: 5px 9px; border-radius: 12px;
+      padding: 5px 9px; border-radius: var(--jg-radius);
       background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.06);
+      border: var(--jg-line-width) solid var(--jg-line-soft);
     }
     .flat-group-title {
-      font: 700 9.5px/1 system-ui; letter-spacing: 0.12em;
-      text-transform: uppercase; color: #8ea0c9; margin-right: 2px;
+      font: 700 10px/1 var(--jg-font); letter-spacing: 0.12em;
+      text-transform: uppercase; color: var(--jg-gold); margin-right: 2px;
     }
 
     /* The chooser: the AI made two takes, the owner picks one. */
     .flat-choices {
       position: absolute; inset: 0; z-index: 40;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 16px; background: rgba(4, 8, 18, 0.86);
+      gap: 16px; background: rgba(12, 13, 16, 0.86);
+      border: var(--jg-line-width) solid var(--jg-line);
     }
-    .flat-choices-title { margin: 0; font: 600 16px/1.4 system-ui; color: #cfe3ff; letter-spacing: 0.04em; }
+    .flat-choices-title { margin: 0; font: 700 16px/1.4 var(--jg-font); color: var(--jg-gold-bright); letter-spacing: 0.04em; }
     .flat-choices-row { display: flex; gap: 20px; align-items: center; justify-content: center; max-width: 92%; }
     .flat-choices-row img {
-      max-width: 42vw; max-height: 60vh; border-radius: 14px; cursor: pointer;
-      border: 2px solid rgba(140, 160, 255, 0.35);
+      max-width: 42vw; max-height: 60vh; border-radius: var(--jg-radius); cursor: pointer;
+      border: var(--jg-line-width) solid var(--jg-line);
+      box-shadow: 0 0 var(--jg-glow-size) var(--jg-glow), 0 24px 50px -20px rgba(0, 0, 0, 0.9);
       transition: transform 0.15s ease, border-color 0.15s ease;
     }
-    .flat-choices-row img:hover { transform: scale(1.03); border-color: #7dd3fc; }
+    .flat-choices-row img:hover { transform: scale(1.03); border-color: var(--jg-gold-bright); }
     .flat-choices button {
-      padding: 10px 18px; border-radius: 12px; cursor: pointer;
-      background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.16);
-      color: #9fb2d8; font: 600 13px/1 system-ui;
+      padding: 10px 18px; border-radius: var(--jg-radius); cursor: pointer;
+      background: rgba(255, 255, 255, 0.05); border: var(--jg-line-width) solid var(--jg-line);
+      color: var(--jg-gold-bright); font: 700 13px/1 var(--jg-font);
     }
-    .flat-choices button:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .flat-choices button:hover { background: rgba(255, 214, 10, 0.18); }
 
-    /* Big, fingerable targets everywhere. */
-    .env-switch { font-size: 15px; padding: 10px 18px; border-radius: 12px; }
-    .env-tool { font-size: 14px; padding: 9px 14px; border-radius: 11px; }
-    .env-arrow { font-size: 24px; padding: 8px 20px; border-radius: 12px; }
+    /* Big, fingerable targets everywhere, now with a yellow line. */
+    .env-switch { font-size: 14px; padding: 9px 16px; border-radius: var(--jg-radius); }
+    .env-tool { font-size: 13.5px; padding: 8px 13px; border-radius: var(--jg-radius); }
+    .env-arrow { font-size: 22px; padding: 6px 18px; border-radius: var(--jg-radius); }
     .env-tool-control input[type="range"] { min-height: 30px; }
     .env-tool-control input[type="color"] { width: 42px; height: 34px; }
   </style>
 </head>
 <body>
+  <!-- The picture behind the glass: the dashboard's live camera, handed over
+       (see /rooms-src/camera.js). When it is off, the dark grey room shows. -->
+  <video id="env-camera" class="jg-cam" autoplay playsinline muted></video>
+  <img id="env-camera-mirror" class="jg-cam" alt="" hidden>
+  <div id="env-camera-scrim"></div>
+
   <div class="rooms-top">
-    <nav id="env-switcher" aria-label="Rooms"></nav>
+    <nav id="env-switcher" class="env-switcher" aria-label="Rooms"></nav>
+    <button type="button" id="env-tools-toggle" class="rooms-switch" aria-pressed="false"
+            title="Show this room's tools — the room itself stays clear">🧰 Tools</button>
   </div>
 
   <!-- The windowing environment: one rail, sliding left and right. -->
@@ -119,5 +146,6 @@
   </script>
   <script src="shell.js"></script>
   <script src="environments/register.js"></script>
+  <script src="camera.js"></script>
 </body>
 </html>
