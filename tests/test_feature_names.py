@@ -25,8 +25,8 @@ EXEMPT = {"plugins/barehands.py"}          # the third-party plugin itself
 # separate project we are told not to rename, not the app calling itself that.
 EXEMPT_LINES = {
     "server.ts": {
-        24: "path to the vendored hand-board folder",
-        307: "the board's own config file name",
+        40: "path to the vendored hand-board folder",
+        721: "the board's own config file name",
     },
     "ui.py": {
         3892: "imports the vendored hand-board plugin module",

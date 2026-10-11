@@ -6,12 +6,27 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
-import dotenv from 'dotenv';
 import { GoogleGenAI } from '@google/genai';
+// The dashboard's ONE settings resolver. It loads ./.env itself (that is where
+// dotenv used to be called from here) and then resolves the key, the model, the
+// names and the daily budget exactly the way the engine room does.
+import {
+  BrainError,
+  brainCheck,
+  configStatus,
+  resolveBaseUrl,
+  resolveGeminiKey,
+  resolveNames,
+  resolveTextModel,
+  runBrain,
+  saveGeminiKey,
+  type BrainCaller,
+  type GeminiRaw,
+} from './config.js';
 
-dotenv.config();
-
-const PORT = 3000;
+// The port is fixed at 3000 in normal use; the harness sets
+// SUPPER_DASHBOARD_PORT so its own server can never collide with a live one.
+const PORT = Number.parseInt(process.env.SUPPER_DASHBOARD_PORT || '', 10) || 3000;
 const HOST = '0.0.0.0';
 const DEFAULT_PIN = 'JARVIS';
 const AES_SALT = 'JARVIS-DASHBOARD-v1';
@@ -29,11 +44,13 @@ if (!fs.existsSync(UPLOADS_DIR)) {
   fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 }
 
-// System prompt for JARVIS
-let jarvisSystemPrompt = `You are JARVIS, Tony Stark's sophisticated, highly capable, and witty AI assistant, adapted as a personal executive assistant.
+// System prompt — the assistant's own name comes from config/api_keys.json
+// (assistant_name), so a renamed assistant is never hardcoded in here.
+const NAMES = resolveNames();
+let jarvisSystemPrompt = `You are ${NAMES.assistant}, Tony Stark's sophisticated, highly capable, and witty AI assistant, adapted as a personal executive assistant.
 CRITICAL CONDUCT:
 1. Speak in English only. Keep responses crisp, efficient, articulate, and direct (1-3 sentences unless detailed technical analysis is requested).
-2. Professional demeanor: Courteous, slightly witty, composed, resourceful. Address the user respectfully (e.g., 'sir' or by context).
+2. Professional demeanor: Courteous, slightly witty, composed, resourceful. Address the user respectfully${NAMES.user ? ` (call him '${NAMES.user}')` : " (e.g., 'sir' or by context)"}.
 3. Be proactive and helpful with system queries, planning, research, commands, and file operations.
 4. If asked about status or capabilities, summarize smoothly.`;
 
@@ -79,11 +96,12 @@ interface LogMessage {
   image?: string; // a picture Jarvis made, shown in the dialogue
 }
 
+const greetingName = NAMES.user ? `, ${NAMES.user}` : ', sir';
 const messageHistory: LogMessage[] = [
   {
     type: 'log',
     speaker: 'jarvis',
-    text: 'Good day, sir. Systems operational. All primary modules online and standing by for your command.',
+    text: `Good day${greetingName}. Systems operational. All primary modules online and standing by for your command.`,
     timestamp: Date.now(),
   },
 ];
@@ -173,74 +191,92 @@ function decryptMessage(b64Data: string, pin: string): string | null {
   }
 }
 
-// Helper: Gemini AI Client (Lazy initialization)
+// ── The Gemini client, built from the app's own settings ────────────────────
+// One resolver (./config.ts) decides the key and the model for every call path
+// on this server. The key is read fresh each time the client is rebuilt, so a
+// key saved in Settings → "The Brain" takes effect at once — no restart, and no
+// second configuration to drift away from the app's.
 let aiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI | null {
-  if (!aiClient && process.env.GEMINI_API_KEY) {
-    aiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+let aiClientFingerprint = '';
+
+function buildGeminiClient(): { client: GoogleGenAI | null; key: ReturnType<typeof resolveGeminiKey> } {
+  const key = resolveGeminiKey();
+  if (!key.key) return { client: null, key };
+
+  const fingerprint = `${key.source ?? 'environment'}::${key.key}`;
+  if (!aiClient || aiClientFingerprint !== fingerprint) {
+    const baseUrl = resolveBaseUrl();
+    aiClient = new GoogleGenAI(baseUrl ? { apiKey: key.key, httpOptions: { baseUrl } } : { apiKey: key.key });
+    aiClientFingerprint = fingerprint;
+    // Never the key itself — only the last four characters and where it came from.
+    console.log(`[JARVIS] Gemini key in use: ending in …${key.tail} — ${key.detail}`);
+    console.log(`[JARVIS] text model in use: ${resolveTextModel().model} (from ${resolveTextModel().source})`);
   }
-  return aiClient;
+  return { client: aiClient, key };
 }
 
-// The owner types his key into Settings and it takes effect at once — no restart.
-// The key is written to ./.env, which is git-ignored, so it never reaches a commit.
-const ENV_FILE = path.join(process.cwd(), '.env');
-function setGeminiKey(key: string): void {
-  const cleaned = key.trim();
-  process.env.GEMINI_API_KEY = cleaned;
-  aiClient = null; // drop the cached client; the next call rebuilds it with the new key
-
-  let lines: string[] = [];
-  try {
-    if (fs.existsSync(ENV_FILE)) {
-      lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
-    }
-  } catch (err) {
-    console.error('Could not read .env:', err);
-    throw err;
-  }
-
-  let replaced = false;
-  const out = lines.map((line) => {
-    if (/^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(line)) {
-      replaced = true;
-      return `GEMINI_API_KEY=${cleaned}`;
-    }
-    return line;
-  });
-  if (!replaced) {
-    while (out.length && out[out.length - 1].trim() === '') out.pop(); // keep the file tidy
-    out.push(`GEMINI_API_KEY=${cleaned}`, '');
-  }
-
-  try {
-    fs.writeFileSync(ENV_FILE, out.join('\n'), { mode: 0o600 });
-  } catch (err) {
-    console.error('Could not write .env:', err);
-    throw err;
-  }
+/**
+ * The one way this server talks to Gemini. runBrain() walks the configured
+ * model, then the model that last worked, and only then — as a last resort —
+ * the models the owner's own key offers (ai.models.list()), spending one unit
+ * of the app's daily budget per call.
+ */
+function brainCaller(): BrainCaller | null {
+  const { client } = buildGeminiClient();
+  if (!client) return null;
+  return {
+    async generate(model: string, contents: unknown[], config?: Record<string, unknown>): Promise<GeminiRaw> {
+      const request = config ? { model, contents, config } : { model, contents };
+      const response = await client.models.generateContent(request as never);
+      return response as unknown as GeminiRaw;
+    },
+    async listModels(): Promise<string[]> {
+      const ids: string[] = [];
+      const pager = await client.models.list({ config: { pageSize: 200 } });
+      for await (const model of pager as unknown as AsyncIterable<{ name?: string; supportedActions?: string[] }>) {
+        if (!model || typeof model.name !== 'string' || !model.name) continue;
+        const actions = model.supportedActions;
+        if (Array.isArray(actions) && actions.length && !actions.includes('generateContent')) continue;
+        ids.push(model.name.replace(/^models\//, ''));
+      }
+      return ids;
+    },
+  };
 }
 
 // Jarvis's own picture tool. Both the rooms and Jarvis himself use this one
-// path, so what the owner can do, Jarvis can do from a chat line too.
+// path, so what the owner can do, Jarvis can do from a chat line too. The
+// picture model is resolved from the app's settings — never hardcoded here.
 async function makeAiImage(promptText: string, imageBase64?: string): Promise<{ data: string; mime: string }> {
-  const ai = getGeminiClient();
-  if (!ai) throw new Error('no GEMINI_API_KEY is on this machine — the picture tool is offline. The hand tools still work.');
   const parts: Array<Record<string, unknown>> = [{ text: promptText }];
   if (imageBase64) parts.push({ inlineData: { mimeType: 'image/png', data: imageBase64 } });
-  const result = await ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: [{ role: 'user', parts }],
-  });
-  const outParts =
-    (result as { candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string }; text?: string }> } }> })
-      .candidates?.[0]?.content?.parts || [];
-  const img = outParts.find((p) => p.inlineData && p.inlineData.data);
-  if (!img || !img.inlineData || !img.inlineData.data) {
-    const text = outParts.find((p) => typeof p.text === 'string');
-    throw new Error(text ? `the model answered with words, not a picture: ${String(text.text).slice(0, 160)}` : 'the model returned no image.');
+
+  let answeredWithWords: string | null = null;
+  try {
+    const run = await runBrain<{ data: string; mime: string }>(brainCaller(), {
+      kind: 'image',
+      contents: [{ role: 'user', parts }],
+      extract: (raw) => {
+        const outParts = raw.candidates?.[0]?.content?.parts || [];
+        const img = outParts.find((part) => part.inlineData && part.inlineData.data);
+        if (img && img.inlineData && img.inlineData.data) {
+          return { data: img.inlineData.data, mime: img.inlineData.mimeType || 'image/png' };
+        }
+        const words = outParts.find((part) => typeof part.text === 'string');
+        if (words && words.text) answeredWithWords = String(words.text).slice(0, 160);
+        return null;                       // no picture: try the next candidate model
+      },
+    });
+    if (run.modelSource.includes('discovered')) {
+      console.log(`[JARVIS] pictures are being drawn by ${run.model} (${run.modelSource}).`);
+    }
+    return run.value;
+  } catch (err) {
+    if (answeredWithWords) {
+      throw new Error(`the model answered with words, not a picture: ${answeredWithWords}. Set SUPPER_IMAGE_MODEL to a picture model your key may use.`);
+    }
+    throw err;
   }
-  return { data: img.inlineData.data, mime: img.inlineData.mimeType || 'image/png' };
 }
 
 // Process user command through JARVIS reasoning
@@ -343,7 +379,7 @@ async function processCommand(userCommand: string): Promise<string> {
     return realStatusReport();
   }
 
-  const ai = getGeminiClient();
+  const ai = brainCaller();
   if (ai) {
     try {
       // The last few turns give Gemini real conversation context instead of a blank slate.
@@ -351,8 +387,8 @@ async function processCommand(userCommand: string): Promise<string> {
         role: m.speaker === 'jarvis' ? ('model' as const) : ('user' as const),
         parts: [{ text: m.text.slice(0, 2000) }],
       }));
-      const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+      const run = await runBrain<string>(ai, {
+        kind: 'text',
         contents: [
           ...turns,
           {
@@ -360,47 +396,69 @@ async function processCommand(userCommand: string): Promise<string> {
             parts: [{ text: `${jarvisSystemPrompt}${memoryBlock()}\n\nUser command: "${trimmed}"` }],
           },
         ],
+        extract: (raw) => (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null),
       });
-      const reply = response.text?.trim();
-      if (reply) return reply;
-      return 'I reached Gemini, sir, but it sent back an empty reply. Try asking again — if it repeats, the model name or quota may be the cause.';
+      const configured = resolveTextModel();
+      if (run.model !== configured.model) {
+        console.log(`[JARVIS] ${configured.model} is unavailable — ${run.model} (${run.modelSource}) answered instead.`);
+      }
+      return run.value;
     } catch (err) {
-      // Honest failure: the key is there, the call failed. Say exactly that and why.
+      // Honest failure, naming the real cause: a 404 means the model name was
+      // withdrawn (the key is fine), a missing key names every file checked,
+      // and only a genuine connection error blames the connection.
+      if (err instanceof BrainError) {
+        console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
+        return err.message;
+      }
       console.error('Gemini error:', err);
       const message = err instanceof Error ? err.message : String(err);
-      return `I have my key, sir, but the call to Gemini failed: ${message}. Check the internet connection and that the key is valid.`;
+      return `I reached for Gemini, sir, but the call failed in a way I cannot classify: ${message}. The key is set and the model is ${resolveTextModel().model}; the server log has the full error.`;
     }
   }
 
   // No key: local, built-in answers only — nothing pretends to be AI, and the
-  // last line tells the owner exactly how to bring the real reasoning online.
+  // last line tells the owner exactly where a key is looked for.
+  const keyHelp = `I looked for one in the environment (GEMINI_API_KEY, including ./.env) and in config/api_keys.json (gemini_api_key). ` +
+    `Settings → "The Brain" writes it to config/api_keys.json, where the desktop app and every action read it.`;
   if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('identity')) {
-    return 'I am JARVIS, your automated personal assistant. My reasoning core is offline at the moment — no Gemini API key is set — so I am running on my built-in local replies.';
+    return `I am ${NAMES.assistant}, your automated personal assistant. My reasoning core is offline at the moment — no Gemini key is set — so I am running on my built-in local replies. ${keyHelp}`;
   }
   if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-    return 'Good day, sir. One honest note: my reasoning is offline (no Gemini API key), so I can only give built-in local replies. Open Settings (the gear button) and paste your key under "The Brain" to bring me fully online.';
+    return `Good day${NAMES.user ? `, ${NAMES.user}` : ', sir'}. One honest note: my reasoning is offline (no Gemini key), so I can only give built-in local replies. ${keyHelp}`;
   }
   if (lower.includes('time') || lower.includes('date')) {
     return `Current server timestamp is ${new Date().toLocaleString()}.`;
   }
   if (lower.includes('wake') || lower.includes('online')) {
-    return 'The server is awake, sir, but my reasoning is offline — no Gemini API key is set. Open Settings (the gear button) and paste your key under "The Brain" to bring the AI online.';
+    return `The server is awake, sir, but my reasoning is offline — no Gemini key is set. ${keyHelp}`;
   }
 
-  return 'My reasoning is offline, sir — no Gemini API key is set, so I can only run the built-in local commands. Open Settings (the gear button) and paste your key under "The Brain" to bring the AI online.';
+  return `My reasoning is offline, sir — no Gemini key is set, so I can only run the built-in local commands. ${keyHelp}`;
 }
 
 // Real telemetry for the Diagnostics button — honest readings, no theatre.
 function realStatusReport(): string {
   const mem = process.memoryUsage();
   const up = Math.round(process.uptime());
-  const hasKey = Boolean(process.env.GEMINI_API_KEY);
+  const key = resolveGeminiKey();
+  const model = resolveTextModel();
+  const status = configStatus();
+  const quota = status.quota;
+  const picture = status.model;
   const notes = listNotes().length;
+  const budgetLine = quota.unreadable
+    ? 'NO CALLS — runtime/quota.json exists but could not be read, so the budget fails closed until local midnight'
+    : `${quota.used} of ${quota.limit} calls used today (${quota.source}); resets at local midnight`;
   return [
     'Real telemetry, sir — measured, not scripted:',
     `• Server uptime ${Math.floor(up / 60)} min ${up % 60} s · memory ${Math.round(mem.rss / 1048576)} MB`,
     `• Connected interfaces: ${wss.clients.size}`,
-    `• Gemini neural core: ${hasKey ? 'linked (gemini-2.5-flash)' : 'NO API KEY — my reasoning is offline and only built-in local replies work. Open Settings (the gear button) → "The Brain" and paste your key; it takes effect at once, no restart.'}`,
+    `• Gemini neural core: ${key.key ? `linked — key ending in …${key.tail} from ${key.source}` : 'NO KEY — my reasoning is offline and only built-in local replies work'}`,
+    `• Key looked for in: the environment (GEMINI_API_KEY, including ./.env), then config/api_keys.json (gemini_api_key)`,
+    `• Text model: ${model.model} (from ${model.source})`,
+    `• Picture model: ${picture.image ? `${picture.image} (${picture.imageSource})` : 'not set — I ask your key which picture model it may use, and remember the one that works'}`,
+    `• Daily Gemini budget: ${budgetLine}`,
     `• Conversation log: ${messageHistory.length} entries, kept across restarts in memory/dashboard_history.json`,
     `• Stored notes: ${notes} (say "remember ..." to add one)`,
     '• Voice: speech out 🔊 and speech in 🎤 run in your browser; 🎙 toggles the "Hey Jarvis" wake word.',
@@ -497,25 +555,17 @@ interface VoiceResult {
   text?: string;
   message?: string;
   /** Machine-readable reason, so the page can print the right advice. */
-  code?: 'too-short' | 'no-key' | 'empty' | 'failed';
+  code?: 'too-short' | 'no-key' | 'empty' | 'failed' | 'budget';
 }
 
 async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceResult> {
   if (pcm.length < sampleRate * 2 * 0.4) {
     return { type: 'error', code: 'too-short', message: 'I heard almost nothing, sir. Click the mic, speak, then click it again.' };
   }
-  const ai = getGeminiClient();
-  if (!ai) {
-    return {
-      type: 'error',
-      code: 'no-key',
-      message: 'Server-side transcription needs a Gemini key. Open Settings \u2192 "The Brain" and paste your key (the same key powers chat replies), or use Chrome/Edge, whose own speech recogniser needs no key.',
-    };
-  }
   try {
     const wav = pcmToWav(pcm, sampleRate);
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+    const run = await runBrain<string>(brainCaller(), {
+      kind: 'text',
       contents: [
         {
           role: 'user',
@@ -525,14 +575,19 @@ async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceRe
           ],
         },
       ],
+      extract: (raw) => (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null),
     });
-    const text = response.text?.trim();
-    if (!text) return { type: 'error', code: 'empty', message: 'I could not make out any words in that, sir.' };
-    console.log(`[voice] transcribed ${(pcm.length / 2 / sampleRate).toFixed(1)}s: "${text.slice(0, 120)}"`);
-    return { type: 'transcript', text };
+    console.log(`[voice] transcribed ${(pcm.length / 2 / sampleRate).toFixed(1)}s with ${run.model}: "${run.value.slice(0, 120)}"`);
+    return { type: 'transcript', text: run.value };
   } catch (err) {
+    if (err instanceof BrainError) {
+      console.warn(`[voice] transcription failed (${err.code}): ${err.message}`);
+      const code: VoiceResult['code'] =
+        err.code === 'no-key' ? 'no-key' : err.code === 'budget' || err.code === 'rate-limited' ? 'budget' : err.code === 'empty' ? 'empty' : 'failed';
+      return { type: 'error', code, message: err.message };
+    }
     console.error('Voice transcription error:', err);
-    return { type: 'error', code: 'failed', message: 'Voice transcription failed on the server. Check the server logs.' };
+    return { type: 'error', code: 'failed', message: `Voice transcription failed on the server in a way I cannot classify: ${(err as Error).message}. The server log has the full error.` };
   }
 }
 
@@ -672,7 +727,7 @@ app.get('/config', (_req: Request, res: Response) => {
     } catch {}
   }
   res.json({
-    name: 'JARVIS',
+    name: NAMES.assistant,
     port: PORT,
     orbs: [
       { title: 'Notes', path: 'sample-notes', kind: 'notes' },
@@ -693,6 +748,12 @@ app.get('/', (req: Request, res: Response) => {
   const [ipPart, portPart] = host.split(':');
   html = html.replace(/__IP__/g, ipPart || 'localhost');
   html = html.replace(/__PORT__/g, portPart || '3000');
+  // The names come from config/api_keys.json (assistant_name / user_name), so a
+  // renamed assistant is not hardcoded in the page either.
+  const names = resolveNames();
+  const escapeHtml = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  html = html.replace(/__ASSISTANT_NAME__/g, escapeHtml(names.assistant));
+  html = html.replace(/__USER_NAME__/g, escapeHtml(names.user));
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(html);
 });
@@ -835,7 +896,7 @@ app.post('/api/wake', requireAuth, (_req: Request, res: Response) => {
   const wakeMsg: LogMessage = {
     type: 'log',
     speaker: 'jarvis',
-    text: 'At your service, sir. All telemetry channels are open.',
+    text: `At your service${NAMES.user ? `, ${NAMES.user}` : ', sir'}. All telemetry channels are open.`,
     timestamp: Date.now(),
   };
   messageHistory.push(wakeMsg);
@@ -1107,7 +1168,8 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
     res.json({ image: img.data, mime: img.mime });
   } catch (err) {
     const message = (err as Error).message;
-    res.status(message.includes('GEMINI_API_KEY') ? 503 : 502).json({ error: `Image AI failed: ${message}` });
+    const noKey = err instanceof BrainError && (err.code === 'no-key' || err.code === 'budget');
+    res.status(noKey ? 503 : 502).json({ error: `Image AI failed: ${message}` });
   }
 });
 
@@ -1127,20 +1189,37 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       { name: 'My Hands Spatial Controller', status: 'ready', icon: '✋' },
       { name: 'PC File System Tree & Inspector', status: 'ready', icon: '📂' },
       { name: 'Physical Glass Acrylic Surfaces', status: 'active', icon: '🪟' },
-      { name: 'Gemini 2.5 Neural Core', status: 'ready', icon: '🧠' },
+      { name: `Gemini Neural Core (${resolveTextModel().model})`, status: 'ready', icon: '🧠' },
       { name: 'Autonomous Self-Repair Sandbox', status: 'ready', icon: '🔧' },
       { name: 'Dual-Channel Telemetry Relay', status: 'connected', icon: '📡' },
     ],
   });
 });
 
-// GET /api/settings/gemini-key -> is a key present, and its last 4 characters
+// GET /api/settings/gemini-key -> where the key comes from and the model in use.
+// The key itself is never returned, only its last four characters and its source.
 app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) => {
-  const key = process.env.GEMINI_API_KEY || '';
-  res.json({ present: Boolean(key), tail: key ? key.slice(-4) : null });
+  const status = configStatus();
+  res.json({
+    present: status.key.present,
+    tail: status.key.tail,
+    source: status.key.source,                             // 'config/api_keys.json' | '.env' | 'environment' | null
+    sourceDetail: status.key.detail,
+    model: status.model.text,                              // the model in use for chat, voice and the brain check
+    modelSource: status.model.textSource,
+    imageModel: status.model.image,
+    imageModelSource: status.model.imageSource,
+    assistantName: status.names.assistant,
+    userName: status.names.user,
+    namesSource: status.names.source,
+    quota: status.quota,
+  });
 });
 
-// POST /api/settings/gemini-key -> save the owner's key and use it at once
+// POST /api/settings/gemini-key -> save the owner's key where the app reads it
+// (config/api_keys.json, the same file the desktop app and every action use),
+// live at once. ./.env is updated too when it holds the key, so nothing shadows
+// what was just saved.
 app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) => {
   const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
   if (key.length < 10) {
@@ -1148,13 +1227,27 @@ app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) 
     return;
   }
   try {
-    setGeminiKey(key);
+    const saved = saveGeminiKey(key);
+    console.log(`[JARVIS] Gemini key updated from Settings (ends in …${key.slice(-4)}) — saved to ${saved.savedTo.join(', ')}; in force from ${saved.source ?? 'nowhere yet'}.`);
+    res.json({ ok: true, tail: key.slice(-4), source: saved.source, savedTo: saved.savedTo, detail: saved.detail });
   } catch (err) {
-    res.status(500).json({ error: `Could not write the key to .env: ${err instanceof Error ? err.message : String(err)}` });
-    return;
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[JARVIS] could not save the Gemini key: ${message}`);
+    res.status(500).json({ error: message });
   }
-  console.log(`[JARVIS] Gemini key updated from Settings (ends in …${key.slice(-4)}) — now live, no restart needed.`);
-  res.json({ ok: true, tail: key.slice(-4) });
+});
+
+// GET /api/brain-check -> a REAL call to Gemini, so "the brain works" is a
+// measurement and not a hope. It prints the model actually used, where the key
+// came from, how long it took and what is left of the day's budget.
+app.get('/api/brain-check', requireAuth, async (_req: Request, res: Response) => {
+  const result = await brainCheck(brainCaller());
+  if (result.ok) {
+    console.log(`[JARVIS] brain check OK — ${result.model} (${result.modelSource}) in ${result.latencyMs} ms`);
+  } else {
+    console.warn(`[JARVIS] brain check FAILED (${result.code}): ${result.error}`);
+  }
+  res.status(result.ok ? 200 : 503).json(result);
 });
 
 // Fallback route handler

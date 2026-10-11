@@ -14,6 +14,7 @@
  *      ON/OFF buttons in Settings control mic + speakers
  *
  * Run:  node tests/mic_harness.mjs
+ *       (jsdom is not a project dependency: npm i --no-save jsdom@24 first)
  */
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
