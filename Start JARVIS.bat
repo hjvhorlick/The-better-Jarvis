@@ -1,13 +1,28 @@
 @echo off
-rem Double-click to set up (first time only) and start JARVIS on Windows.
+rem Double-click to start JARVIS on Windows.
+rem JARVIS is the Node build (server.ts + the glass dashboard) on port 3000.
 cd /d "%~dp0"
-set PY=
-for %%V in (3.11 3.12 3.10) do if not defined PY (py -%%V -c "import sys" >nul 2>nul && set PY=py -%%V)
-if not defined PY (where python >nul 2>nul && set PY=python)
-if not defined PY (
-  echo JARVIS needs Python 3.10, 3.11 or 3.12. Install it from python.org and tick "Add python.exe to PATH".
+
+where node >nul 2>nul
+if errorlevel 1 (
+  echo JARVIS needs Node.js. Install the LTS version from nodejs.org
   pause
   exit /b 1
 )
-%PY% tools\start_jarvis.py %*
+
+if not exist "node_modules" (
+  echo First run: installing JARVIS's packages with npm install...
+  call npm install
+  if errorlevel 1 (
+    echo npm install failed. Check that you are online, then run this file again.
+    pause
+    exit /b 1
+  )
+)
+
+rem Open the dashboard once the server has had a moment to come up.
+start "" powershell -NoProfile -WindowStyle Hidden -Command "Start-Sleep -Seconds 3; Start-Process 'http://localhost:3000'"
+
+echo Starting JARVIS on http://localhost:3000 ...
+call npm run dev
 if errorlevel 1 pause

@@ -16,5 +16,8 @@ runtime/
 # Local voice models (large, downloaded by the owner; see docs/LOCAL_VOICE.md)
 models/
 
+# The owner's real secrets — the Gemini key lives here. NEVER commit this.
+.env
+
 # Test scratch (generated; never commit)
 .pytest_cache/

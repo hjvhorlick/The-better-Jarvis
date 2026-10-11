@@ -7,11 +7,22 @@ else is "the app".
 
 ## Run (the main build)
 
+The easiest way is the launcher for your system — it checks Node, installs the
+packages the first time, opens the browser and starts the server:
+
+- **Windows:** double-click `Start JARVIS.bat`
+- **macOS:** double-click `Start JARVIS.command`
+- **Linux:** run `./start_jarvis.sh`
+
+Or by hand:
+
     npm install     # once
     npm start       # then open http://localhost:3000
 
-Add your Gemini key to `.env` (copy `.env.example`) for real AI replies and the voice
-transcription fallback.
+**Your Gemini key goes in Settings → "The Brain".** Open the gear button in the
+dashboard, paste the key, press Save. It is stored only in the local, git-ignored
+`.env` file on your machine and takes effect immediately — no restart. You can
+also copy `.env.example` to `.env` by hand if you prefer.
 
 ## What the main build does
 

@@ -18,6 +18,19 @@
   </script>
 </head>
 <body>
+  <!-- QUARANTINE (2026-10-11): this page is the retired Python-era interface.
+       THE ONE BUILD is the Node dashboard (server.ts + dashboard/static/app.html)
+       on port 3000. This banner is fixed and cannot be dismissed, so nobody
+       mistakes this page for JARVIS again. -->
+  <div id="old-interface-banner" role="alert"
+       style="position:fixed; top:0; left:0; right:0; z-index:2147483647; background:#b00020; color:#fff;
+              font:600 15px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif; text-align:center;
+              padding:12px 16px; box-shadow:0 2px 12px rgba(0,0,0,0.55);">
+    ⚠️ OLD INTERFACE — this is not JARVIS. The real JARVIS starts with "Start JARVIS.bat" (or npm run dev)
+    and lives at <a href="http://localhost:3000" style="color:#fff; text-decoration:underline;">http://localhost:3000</a>.
+  </div>
+  <div style="height:64px;" aria-hidden="true"></div>
+
   <!-- The top line: every function that is not tied to one environment has its
        button here, so the workspace underneath stays clear. -->
   <header class="topbar">
