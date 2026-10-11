@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>JARVIS — Autonomous Workspace & Spatial Interface</title>
+  <title>__ASSISTANT_NAME__ — Autonomous Workspace & Spatial Interface</title>
   <script src="/static/crypto.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -1071,7 +1071,7 @@
           <div class="reactor-disc">
             <div class="reactor-core"></div>
           </div>
-          <div class="reactor-state-tag" id="reactor-status">JARVIS ACTIVE</div>
+          <div class="reactor-state-tag" id="reactor-status">__ASSISTANT_NAME__ ACTIVE</div>
         </div>
 
         <div class="metric-grid">
@@ -1203,12 +1203,14 @@
         </div>
       </div>
       <div class="window-body settings-body">
-        <!-- THE BRAIN: the owner's Gemini key. Saved into ./.env (git-ignored) and
-             live at once — the server drops its cached client, so no restart. -->
+        <!-- THE BRAIN: the owner's Gemini key. Saved into config/api_keys.json —
+             the file the desktop app and every action read (./.env is updated too
+             when it holds the key, and both are git-ignored) — and live at once:
+             the server re-reads the settings, so no restart. -->
         <div>
           <div class="settings-section-title">The Brain — Gemini API key</div>
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-            <span class="settings-desc">Paste your Gemini API key. It is stored only in the local .env file on this machine and is used immediately — no restart.</span>
+            <span class="settings-desc">Paste your Gemini API key. It is saved to config/api_keys.json (the file the desktop app and every action read; ./.env is updated as well when it holds the key) and is used immediately — no restart. Below: where the key in use comes from, and the model in use.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="AIza… (your Gemini API key)"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:8px 10px; font-size:12px;">
@@ -1335,6 +1337,10 @@
             </div>
             <span class="settings-desc">Both stay ON by default: the microphone keeps listening for "Hey Jarvis", the speakers speak every reply. Browsers only open a microphone after a click, so the very first click anywhere on the page arms it — after that it stays on. The plain 🎤 button in the top row is still there for one command without the wake word.</span>
           </div>
+
+          <div class="settings-row" style="margin-top: 8px;">
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-brain-config-1 — the model and the key's source appear here as soon as the page is open.</span>
+          </div>
         </div>
 
         <div>
@@ -1414,8 +1420,16 @@
   <!-- SCRIPT LOGIC -->
   <script>
     // ── Authentication & Security ──────────────────────────────────────────
+    // The page build marker: shown in Settings → Voice, so a stale page is obvious.
+    // Bump this on every change to this file.
+    const JARVIS_BUILD = '2026-10-11-brain-config-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
+    // The names come from the app's own settings (config/api_keys.json →
+    // assistant_name / user_name). The server fills the tokens in when it serves
+    // this page, and refreshGeminiKeyStatus() keeps them current afterwards.
+    let _assistantName = '__ASSISTANT_NAME__';
+    let _userName = '__USER_NAME__';
 
     function _authHeader() { return { 'Authorization': `Bearer ${_authToken}` }; }
     function _authFetch(url, opts = {}) {
@@ -1448,8 +1462,26 @@
     const _encReady = _initCrypto(_sessionKey);
 
     // ── THE BRAIN: the Gemini key, typed into Settings ─────────────────────
-    // The key travels straight to the server, which stores it in the local
-    // git-ignored .env and starts using it for the very next reply.
+    // The key travels straight to the server, which resolves settings exactly
+    // the way the desktop app does (./config.ts) and saves to the file the app
+    // reads: config/api_keys.json.
+    function keySourceLine(info) {
+      if (info.source === 'config/api_keys.json') return 'config/api_keys.json';
+      if (info.source === '.env') return './.env (GEMINI_API_KEY)';
+      if (info.source === 'environment') return 'the environment (GEMINI_API_KEY, outside ./.env)';
+      return 'nowhere yet';
+    }
+
+    function refreshBuildLine(info) {
+      const el = document.getElementById('jarvis-build-line');
+      if (!el) return;
+      const model = info && info.model ? `${info.model}${info.modelSource ? ` (from ${info.modelSource})` : ''}` : 'not measured yet';
+      const key = info && info.present ? keySourceLine(info) : 'no key set';
+      const quota = info && info.quota ? `${info.quota.used}/${info.quota.limit} Gemini calls used today` : 'budget not measured';
+      const owner = _userName ? `, for ${_userName}` : '';
+      el.textContent = `Build ${JARVIS_BUILD} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}`;
+    }
+
     async function refreshGeminiKeyStatus() {
       const el = document.getElementById('gemini-key-status');
       if (!el) return;
@@ -1459,16 +1491,23 @@
         const res = await _authFetch('/api/settings/gemini-key');
         if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
         const info = await res.json();
+        if (info.assistantName) {
+          _assistantName = info.assistantName;
+          _userName = info.userName || '';
+          document.title = `${_assistantName} — Autonomous Workspace & Spatial Interface`;
+        }
         if (info.present) {
-          el.textContent = `● key ending in …${info.tail} is active — real AI replies and voice transcription work`;
+          el.textContent = `● key ending in …${info.tail} is active — source: ${keySourceLine(info)}; model in use: ${info.model} (from ${info.modelSource})`;
           el.style.color = 'var(--emerald)';
         } else {
-          el.textContent = '○ no key set — my reasoning is offline; paste a key and press Save';
+          el.textContent = `○ no key set — checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key). Paste a key and press Save.`;
           el.style.color = '#ffb86b';
         }
+        refreshBuildLine(info);
       } catch (err) {
         el.textContent = `Could not ask the server: ${err.message} — is it running on port 3000?`;
         el.style.color = '#ff6b6b';
+        refreshBuildLine(null);
       }
     }
 
@@ -1496,7 +1535,8 @@
           return;
         }
         if (input) input.value = '';
-        toast(`Gemini key saved (ends in …${info.tail}) — the brain is live now`);
+        const where = Array.isArray(info.savedTo) && info.savedTo.length ? info.savedTo.join(' and ') : 'the app\'s settings';
+        toast(`Gemini key saved to ${where} (ends in …${info.tail}) — the brain is live now`);
       } catch (err) {
         el.textContent = `Save failed: ${err.message} — is the server running on port 3000?`;
         el.style.color = '#ff6b6b';
@@ -1557,11 +1597,11 @@
             }
           }
           if (m.type === 'status') {
-            reactorTag.textContent = m.state === 'active' ? 'JARVIS ACTIVE' : 'JARVIS SLEEPING';
+            reactorTag.textContent = m.state === 'active' ? `${_assistantName} ACTIVE` : `${_assistantName} SLEEPING`;
           }
           if (m.type === 'wake') {
             toast('Systems awake and responsive');
-            reactorTag.textContent = 'JARVIS ACTIVE';
+            reactorTag.textContent = `${_assistantName} ACTIVE`;
           }
           if (m.type === 'myhands_control') {
             if (m.active && !handTrackingActive) {
@@ -1585,7 +1625,7 @@
     function appendChat(speaker, text, image) {
       const b = document.createElement('div');
       b.className = `chat-bubble speaker-${speaker}`;
-      const name = speaker === 'jarvis' ? 'JARVIS' : (speaker === 'user' ? 'You' : 'System');
+      const name = speaker === 'jarvis' ? _assistantName : (speaker === 'user' ? 'You' : 'System');
 
       // Check if text has code blocks
       let formatted = esc(text);
@@ -1702,13 +1742,31 @@
       try {
         const res = await _authFetch('/api/settings/gemini-key');
         const info = await res.json();
+        const source = info.source === 'config/api_keys.json' ? 'config/api_keys.json (gemini_api_key)'
+          : info.source === '.env' ? './.env (GEMINI_API_KEY)'
+          : info.source === 'environment' ? 'the environment (GEMINI_API_KEY)'
+          : 'nowhere';
         if (info.present) {
-          lines.push(`Brain (Gemini key): set, ending in …${info.tail} — real AI replies and voice transcription are live`);
+          lines.push(`Brain key: set, ending in …${info.tail} — from ${source}; model in use: ${info.model} (from ${info.modelSource})`);
         } else {
-          lines.push('Brain (Gemini key): NO KEY — my reasoning is offline; open Settings (the gear button) and paste the key under "The Brain"');
+          lines.push('Brain key: NO KEY — my reasoning is offline. I checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key); open Settings (the gear button) and paste the key under "The Brain"');
         }
       } catch (err) {
-        lines.push(`Brain (Gemini key): could not ask the server (${err.message}) — treat the brain as offline until the server answers`);
+        lines.push(`Brain key: could not ask the server (${err.message}) — treat the brain as offline until the server answers`);
+      }
+      // The proof, not a status light: one real call, and the line names the model
+      // that answered. A 404 here means the model name was withdrawn (the key is
+      // fine) — the line says so, instead of blaming the connection or the key.
+      try {
+        const res = await _authFetch('/api/brain-check');
+        const info = await res.json().catch(() => ({}));
+        if (info.ok) {
+          lines.push(`Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
+        } else {
+          lines.push(`Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
+        }
+      } catch (err) {
+        lines.push(`Brain call: could not reach the server (${err.message}) — the brain is unmeasured until it answers`);
       }
       if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
         lines.push('Replies channel (websocket): OPEN — JARVIS can push replies into this window');
@@ -1782,7 +1840,26 @@
 
     function requestSystemDiagnostics() {
       sendSuggestion('Report core telemetry and system health');
+      measureBrain();
     }
+
+    // The Diagnostics button and "voice test" both MEASURE the brain: one real
+    // call, and the line names the model that answered. That call costs one unit
+    // of the day's budget, which is why it happens on a button press, not on a poll.
+    async function measureBrain() {
+      try {
+        const res = await _authFetch('/api/brain-check');
+        const info = await res.json().catch(() => ({}));
+        if (info.ok) {
+          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
+        } else {
+          appendChat('system', `Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
+        }
+      } catch (err) {
+        appendChat('system', `Brain call: could not reach the server (${err.message}) — the brain is unmeasured until it answers.`);
+      }
+    }
+    window.measureBrain = measureBrain;
 
     document.getElementById('chat-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
@@ -2153,7 +2230,8 @@
         win.style.display = 'flex';
         bringToFront(win);
         FoleyAudio.grab();
-        // Settings must show the truth about the brain key every time it opens.
+        // Settings must show the truth about the brain key and the build every
+        // time it opens.
         if (winId === 'win-settings') refreshGeminiKeyStatus();
       } else {
         win.style.display = 'none';
@@ -3503,6 +3581,9 @@
       if (err.code === 'offline') {
         return 'The page could not reach its own server — check that JARVIS is still running on port 3000 and reload.';
       }
+      if (err.code === 'budget') {
+        return 'The day\'s Gemini budget is used up (the count is runtime/quota.json and resets at local midnight), so the server cannot transcribe now — the browser\'s own recogniser still works, or raise SUPPER_GEMINI_DAILY_BUDGET.';
+      }
       if (err.code === 'too-short' || err.code === 'empty') {
         return 'Speak a little closer and a little longer, then try again.';
       }
@@ -3863,6 +3944,7 @@
       speechSynthesis.speak(u);
     }
     if (window.speechSynthesis) speechSynthesis.getVoices();   // warm the voice list (async in Chrome)
+    refreshBuildLine(null);   // the build marker + the settings in force, before the pane is opened
     renderSpeakBtn();
     window.toggleSpeak = toggleSpeak;
 
