@@ -8,6 +8,7 @@ config/certs/
 memory/long_term.json
 memory/dashboard_history.json
 memory/dashboard_memory.json
+memory/dashboard_reminders.json
 uploads/
 node_modules/
 barehands/state/

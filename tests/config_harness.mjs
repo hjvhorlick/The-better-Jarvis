@@ -19,7 +19,10 @@
  *   5. the app's daily budget (runtime/quota.json, SUPPER_GEMINI_DAILY_BUDGET) is
  *      honoured, including the fail-closed rule for a damaged counter;
  *   6. Settings → "The Brain" and the voice check report the key's source and the
- *      model in use (the page itself, loaded in jsdom).
+ *      model in use (the page itself, loaded in jsdom);
+ *   7. the clear glass is one stylesheet for both surfaces, the rounded face is
+ *      vendored, the rooms carry the camera behind their glass, and the local
+ *      drafting desk writes an email or a letter without ever calling Gemini.
  *
  * Run:  node tests/config_harness.mjs
  *       (jsdom is not a project dependency — for the page checks, install it in a
@@ -30,7 +33,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import WebSocket from 'ws';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -72,11 +76,38 @@ function startStub(models) {
       const m = url.pathname.match(/\/models\/([^:]+):(\w+)/);
       if (!m) { res.writeHead(404).end('{}'); return; }
       const [, model, method] = m;
+      // A streaming call answers in server-sent events, exactly as Google does:
+      // one JSON chunk per event, each holding the next slice of the answer.
+      if (method === 'streamGenerateContent') {
+        const script0 = models[model] || {};
+        if (script0.retire) { res.writeHead(404).end(JSON.stringify({ error: { code: 404, status: 'NOT_FOUND', message: `This model models/${model} is no longer available to new users.` } })); return; }
+        if (script0.boom) { res.writeHead(500).end(JSON.stringify({ error: { code: 500, status: 'INTERNAL', message: `the model ${model} fell over` } })); return; }
+        if (script0.rateLimited) { res.writeHead(429).end(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } })); return; }
+        if (script0.noStream) { res.writeHead(400).end(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'streaming is not supported here' } })); return; }
+        calls.push({ kind: 'stream', model, key: req.headers['x-goog-api-key'] || url.searchParams.get('key') || '', body: bodyText ? JSON.parse(bodyText) : {},
+          thinkingBudget: (() => { try { return JSON.parse(bodyText)?.generationConfig?.thinkingConfig?.thinkingBudget; } catch { return undefined; } })() });
+        if (script0.rejectsThinking) {
+          const asked = (() => { try { return JSON.parse(bodyText || '{}')?.generationConfig?.thinkingConfig; } catch { return undefined; } })();
+          if (asked) { res.writeHead(400).end(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Unknown name "thinkingConfig": Cannot find field.' } })); return; }
+        }
+        const sentence = String(script0.streamText || `answered by ${model}`);
+        const pieces = script0.words
+          ? sentence.split(' ').reduce((acc, w) => (acc.length && acc[acc.length - 1].length < 12 ? acc.slice(0, -1).concat(acc[acc.length - 1] + ' ' + w) : acc.concat(w)), [])
+          : [sentence];
+        res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' });
+        pieces.forEach((piece, i) => {
+          const payload = { candidates: [{ content: { parts: [{ text: (i ? ' ' : '') + piece }] } }] };
+          res.write(piece ? `data: ${JSON.stringify(payload)}\n\n` : '');
+        });
+        res.end();
+        return;
+      }
       const body = bodyText ? JSON.parse(bodyText) : {};
       const parts = body?.contents?.[0]?.parts || [];
       const audio = parts.some((p) => p?.inlineData?.mimeType?.startsWith('audio/'));
       const picture = parts.some((p) => p?.inlineData?.mimeType?.startsWith('image/'));
-      calls.push({ kind: 'generate', model, method, key, audio, picture, body });
+      const spoken = parts.some((p) => p?.inlineData?.mimeType?.startsWith('audio/'));
+      calls.push({ kind: 'generate', model, method, key, audio, picture, spoken, body });
       const script = models[model] || {};
       const send = (status, payload) => {
         res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -96,12 +127,17 @@ function startStub(models) {
         send(200, { candidates: [{ content: { parts: [{ text: 'I can only talk, not draw.' }] } }] });
         return;
       }
+      if (script.voice) {
+        const pcm = Buffer.alloc(2400);                    // 0.1 s of silence at 24 kHz
+        send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcm.toString('base64') } }] } }] });
+        return;
+      }
       if (script.picture) {
         const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
         send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: png } }] } }] });
         return;
       }
-      send(200, { candidates: [{ content: { parts: [{ text: `answered by ${model}` }] } }] });
+      send(200, { candidates: [{ content: { parts: [{ text: script.streamText || `answered by ${model}` }] } }] });
     });
   });
   return new Promise((resolve) => {
@@ -123,7 +159,7 @@ async function startDashboard({ models, env = {}, name = 'harness', files = {}, 
     }, null, 2));
   }
   for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(cwd, name), text);
-  for (const link of ['dashboard', 'barehands', 'core']) {
+  for (const link of ['dashboard', 'barehands', 'core', 'knowledge', 'web']) {
     try { fs.symlinkSync(path.join(REPO, link), path.join(cwd, link), 'dir'); } catch { /* optional */ }
   }
 
@@ -210,7 +246,7 @@ function freePort() {
 
     const chat = await post(srv, '/api/command', { text: 'tell me about the reactor' });
     ok('chat replies work with the file key', chat.body.reply === `answered by ${settings.body.model}`, String(chat.body.reply).slice(0, 80));
-    const chatCall = srv.stub.calls.filter((c) => c.kind === 'generate' && !c.audio).pop();
+    const chatCall = srv.stub.calls.filter((c) => (c.kind === 'stream' || c.kind === 'generate') && !c.audio).pop();
     ok('…and the call carried the file\'s key', chatCall && chatCall.key === 'harness-key-0123456789abcdef', chatCall ? `key=${chatCall.key.slice(0, 12)}…` : 'no call');
 
     const pcm = Buffer.alloc(48000 * 2);       // 1 s of silence, mono PCM16
@@ -390,7 +426,7 @@ function freePort() {
       await sleep(400);
 
       const buildLine = window.document.getElementById('jarvis-build-line');
-      ok('Settings → Voice shows the build marker', /Build 2026-10-11-brain-config-1/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
+      ok('Settings → Voice shows the build marker', /Build 2026-10-11-simple-hud-2/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
       ok('…with the assistant\'s configured name', /Tessa/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
 
       await window.refreshGeminiKeyStatus();
@@ -408,13 +444,370 @@ function freePort() {
       ok('…and the key\'s source in the senses check', /config\/api_keys\.json/.test(bubbles), (bubbles.match(/Brain key:.*/) || [''])[0].slice(0, 120));
       ok('…and a failed brain names the model, not the connection', /withdrawn|key is fine|FAILED/.test(bubbles), 'checked');
 
-      // The Diagnostics button measures the brain too.
+      // Diagnostics still measures the brain (the button is gone from the main
+      // screen — the function stays for the voice command and this check).
       window.requestSystemDiagnostics();
       await sleep(400);
       const after = [...window.document.querySelectorAll('.chat-bubble.speaker-system')].map((b) => b.textContent).join('\n');
-      ok('the Diagnostics button measures the brain with a real call', /Brain call: OK/.test(after), (after.match(/Brain call:.*/) || [''])[0].slice(0, 110));
+      ok('diagnostics still measures the brain with a real call', /Brain call: OK/.test(after), (after.match(/Brain call:.*/) || [''])[0].slice(0, 110));
     } finally { await srv.stop(); }
   }
+}
+
+/* ── 8. SPEED: the answer is written as it is spoken, without the thinking wait ─
+ * Two things decide whether a spoken assistant feels instant: whether Gemini is
+ * made to think before every sentence (many seconds of silence per command), and
+ * whether the first words reach the page before the whole answer exists. Both are
+ * measured here against the real server: the stub records what settings travelled,
+ * and a websocket client watches the answer arrive in pieces.                    */
+{
+  const MODELS = { 'harness-fast-model': { streamText: 'The time is ten past nine', words: true } };
+  const srv = await startDashboard({ models: MODELS, env: { SUPPER_TEXT_MODEL: 'harness-fast-model' }, name: 'speed' });
+  try {
+    const ws = new WebSocket(`ws://127.0.0.1:${srv.port}/ws?token=${TOKEN}`);
+    const frames = [];
+    ws.on('message', (raw) => { try { frames.push(JSON.parse(raw.toString())); } catch { /* ignore */ } });
+    await new Promise((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject); setTimeout(() => reject(new Error('the websocket never opened')), 5000); });
+
+    const requestId = 'speed-harness-1';
+    const reply = await post(srv, '/api/command', { text: 'explain the difference between a latch and a flip-flop', requestId });
+
+    const waits = Date.now() + 4000;
+    while (Date.now() < waits) {
+      if (frames.some((f) => f.type === 'log' && f.id === requestId && f.speaker === 'jarvis')) break;
+      await sleep(50);
+    }
+    ws.close();
+
+    const deltas = frames.filter((f) => f.type === 'stream' && f.id === requestId);
+    const final = frames.find((f) => f.type === 'log' && f.id === requestId && f.speaker === 'jarvis');
+    const userEcho = frames.find((f) => f.type === 'log' && f.id === requestId && f.speaker === 'user');
+
+    ok('speed: the answer is announced in pieces, not in one lump', deltas.length >= 2, `${deltas.length} deltas`);
+    ok('speed: the pieces grow, so the page can print the first words at once',
+       deltas.length > 1 && deltas[0].text.length < deltas[deltas.length - 1].text.length,
+       JSON.stringify(deltas.map((d) => d.text.length)));
+    ok('speed: the first piece already holds real words', !!deltas[0] && deltas[0].text.trim().length > 2, deltas[0] && deltas[0].text);
+    ok('speed: the stream is closed with done:true', deltas.some((d) => d.done === true), JSON.stringify(deltas.at(-1)));
+    ok('speed: the finished reply arrives after the pieces', !!final && final.text.trim().length > 0, final && final.text);
+    ok('speed: the finished reply carries the same id as the pieces', final && deltas.length > 0 && final.id === deltas[0].id, final && final.id);
+    ok('speed: the spoken command is echoed back with its id', !!userEcho, JSON.stringify(userEcho || {}).slice(0, 120));
+    ok('speed: the HTTP reply names the same id (one reply, two paths)',
+       reply.body.id === requestId && String(reply.body.reply).trim().length > 0, JSON.stringify({ id: reply.body.id, reply: reply.body.reply }).slice(0, 120));
+
+    const streamCall = srv.stub.calls.filter((c) => c.kind === 'stream').pop();
+    ok('speed: thinking is switched off (thinkingBudget 0)', streamCall && streamCall.thinkingBudget === 0,
+       streamCall ? `thinkingBudget=${streamCall.thinkingBudget}` : 'no streaming call');
+    ok('speed: the answer length is capped so it is written sooner',
+       streamCall && streamCall.body && streamCall.body.generationConfig && streamCall.body.generationConfig.maxOutputTokens > 0,
+       streamCall ? JSON.stringify(streamCall.body.generationConfig).slice(0, 100) : 'no call');
+
+    // A model that refuses the thinking setting must still answer — with the
+    // speed settings retried away, rather than the model written off.
+    const picky = await startDashboard({ models: { 'harness-picky': { rejectsThinking: true, streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'harness-picky' }, name: 'picky' });
+    try {
+      const reply3 = await post(picky, '/api/command', { text: 'explain what a flyback diode does' });
+      ok('speed: a model that refuses thinkingConfig still answers', /Noted, sir\./.test(String(reply3.body.reply)), String(reply3.body.reply).slice(0, 80));
+      const refused = picky.stub.calls.filter((c) => c.kind === 'stream');
+      ok('speed: …after one refusal, retried without the setting', refused.length >= 2, `${refused.length} attempts`);
+    } finally { await picky.stop(); }
+
+    // A model that refuses to stream must still answer, in one piece.
+    const noStream = await startDashboard({ models: { 'harness-no-stream': { noStream: true } }, env: { SUPPER_TEXT_MODEL: 'harness-no-stream' }, name: 'no-stream' });
+    try {
+      const reply2 = await post(noStream, '/api/command', { text: 'explain semiconductor doping briefly' });
+      ok('speed: a model that refuses streaming still answers', /answered by harness-no-stream/.test(String(reply2.body.reply)), String(reply2.body.reply).slice(0, 80));
+    } finally { await noStream.stop(); }
+  } finally { await srv.stop(); }
+}
+
+/* ── 9. THE SERVER VOICE: real audio for machines with no voice of their own ──
+ * The page normally speaks with the browser's own voice. On a computer with none
+ * (or where the browser refuses to make a sound inside a preview frame), the
+ * server generates the sentence with Gemini's voice model and the page plays it
+ * as an ordinary audio file. This checks the endpoint really returns a playable
+ * WAV, and that every way it can fail is named rather than silent.               */
+{
+  const MODELS = { 'harness-voice-model': { voice: true }, 'harness-text-model': {} };
+  const srv = await startDashboard({ models: MODELS, env: { SUPPER_VOICE_MODEL: 'harness-voice-model', SUPPER_VOICE_NAME: 'Charon' }, name: 'voice' });
+  try {
+    const said = await post(srv, '/api/voice/speak', { text: 'Good day, sir. All systems are online.' });
+    ok('server voice: the endpoint answers with audio', said.body.ok === true && typeof said.body.audio === 'string' && said.body.audio.length > 100,
+       JSON.stringify({ ok: said.body.ok, bytes: said.body.audio ? said.body.audio.length : 0, model: said.body.model }));
+    const wav = Buffer.from(String(said.body.audio || ''), 'base64');
+    ok('server voice: the audio is a real WAV file', wav.subarray(0, 4).toString() === 'RIFF' && wav.subarray(8, 12).toString() === 'WAVE',
+       `${wav.subarray(0, 4).toString()}…${wav.length} bytes`);
+    ok('server voice: the sample rate the model reported is honoured', wav.readUInt32LE(24) === 24000, `rate=${wav.readUInt32LE(24)}`);
+    ok('server voice: the voice and model were sent to Gemini',
+       srv.stub.calls.some((c) => c.model === 'harness-voice-model' && JSON.stringify(c.body).includes('Charon')),
+       JSON.stringify(srv.stub.calls.map((c) => c.model)));
+    ok('server voice: the call asked for audio back',
+       srv.stub.calls.some((c) => JSON.stringify(c.body).includes('AUDIO')), 'responseModalities AUDIO');
+    ok('server voice: empty text is refused politely',
+       (await post(srv, '/api/voice/speak', { text: '   ' })).body.code === 'empty',
+       JSON.stringify((await post(srv, '/api/voice/speak', { text: '' })).body).slice(0, 90));
+  } finally { await srv.stop(); }
+
+  // A key that may not use the voice model: the failure names the setting to fix.
+  const wrong = await startDashboard({ models: { 'harness-retired-voice': { retire: true } }, env: { SUPPER_VOICE_MODEL: 'harness-retired-voice' }, name: 'voice-wrong' });
+  try {
+    const bad = await post(wrong, '/api/voice/speak', { text: 'Can you hear me now?' });
+    ok('server voice: a withdrawn voice model is explained', bad.body.ok === false && /model name was withdrawn/i.test(String(bad.body.message)),
+       String(bad.body.message).slice(0, 110));
+    ok('server voice: …and it points at SUPPER_VOICE_MODEL, not the brain\'s setting', /SUPPER_VOICE_MODEL/.test(String(bad.body.message)), String(bad.body.message).slice(-90));
+  } finally { await wrong.stop(); }
+
+  // No key at all: the owner is told where the key goes, not left with silence.
+  const keyless = await startDashboard({ models: { 'harness-voice-model': { voice: true } }, writeConfigFile: false, env: { SUPPER_VOICE_MODEL: 'harness-voice-model' }, name: 'voice-keyless' });
+  try {
+    const noKey = await post(keyless, '/api/voice/speak', { text: 'Anyone there?' });
+    ok('server voice: no key says where the key goes', noKey.body.ok === false && noKey.body.code === 'no-key' && /Settings/.test(String(noKey.body.message)),
+       String(noKey.body.message).slice(0, 110));
+  } finally { await keyless.stop(); }
+}
+
+/* ── 10. THE LOCAL KNOWLEDGE BASE — the same one the previous JARVIS used ────
+ * The owner's rule: the AI is used as little as possible. A question the store
+ * can answer must not reach Gemini, and an answer Gemini gives must be kept so
+ * the same question is never paid for twice. The store is the SAME file the
+ * Python desktop app uses (runtime/knowledge.json), in the same format — and
+ * that is proved here by asking the Python module to read what the dashboard
+ * wrote, and the other way round.                                        */
+{
+  const MODELS = { 'harness-text-model': {}, '' : {} };
+  // A throwaway working directory with the real starter file symlinked in.
+  const srv = await startDashboard({ models: MODELS, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'knowledge' });
+  try {
+    // 1. the starter answers travel with the project — no AI, no budget unit
+    const starter = await post(srv, '/api/command', { text: 'how do I undo my last git commit' });
+    ok('knowledge: a starter answer is given locally', /git reset --soft HEAD~1/.test(String(starter.body.reply)), String(starter.body.reply).slice(0, 90));
+    ok('knowledge: …marked as an unchecked starter answer', /starter answer written by the assistant/.test(String(starter.body.reply)), String(starter.body.reply).slice(-70));
+    ok('knowledge: …and Gemini was never called', !srv.stub.calls.some((c) => c.kind === 'generate' || c.kind === 'stream'), `calls=${srv.stub.calls.length}`);
+
+    // 2. teaching an answer, and getting it back — still no AI
+    const taught = await post(srv, '/api/command', { text: 'learn: what is the office wifi password = the one on the fridge, sir' });
+    ok('knowledge: an answer can be taught', /Learned, sir/.test(String(taught.body.reply)), String(taught.body.reply).slice(0, 90));
+    const askedBack = await post(srv, '/api/command', { text: 'what is the office wifi password' });
+    ok('knowledge: the taught answer comes back at once', /fridge/.test(String(askedBack.body.reply)), String(askedBack.body.reply).slice(0, 80));
+    ok('knowledge: …with no Gemini call for it', !srv.stub.calls.some((c) => c.kind === 'generate' || c.kind === 'stream'));
+
+    const listed = await post(srv, '/api/command', { text: 'what have you learned' });
+    ok('knowledge: the list names the store and the desktop app', /runtime\/knowledge\.json/.test(String(listed.body.reply)) && /desktop app/.test(String(listed.body.reply)), String(listed.body.reply).slice(0, 120));
+
+    // 3. an unknown question goes to Gemini ONCE, and the answer is kept
+    const unknown = await post(srv, '/api/command', { text: 'explain what a quantum lever is' });
+    ok('knowledge: an unknown question reaches Gemini', /answered by harness-text-model/.test(String(unknown.body.reply)), String(unknown.body.reply).slice(0, 80));
+    const afterFirst = srv.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length;
+    const again = await post(srv, '/api/command', { text: 'explain what a quantum lever is' });
+    ok('knowledge: asking the same question again costs nothing',
+       /answered by harness-text-model/.test(String(again.body.reply)) && /saved from an earlier Gemini answer/.test(String(again.body.reply)),
+       String(again.body.reply).slice(-70));
+    ok('knowledge: …and no second call was made', srv.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length === afterFirst,
+       `${afterFirst} calls`);
+
+    // 4. the owner's own rules: time-sensitive and personal answers are never kept
+    await post(srv, '/api/command', { text: 'what is the weather in Benoni' });
+    await post(srv, '/api/command', { text: 'show me my calendar for tomorrow' });
+    const store = JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'knowledge.json'), 'utf-8'));
+    const kept = store.entries.map((e) => e.question);
+    ok('knowledge: time-sensitive questions are never kept', !kept.some((q) => /weather/.test(q)), JSON.stringify(kept.slice(-4)));
+    ok('knowledge: questions about the owner are never kept', !kept.some((q) => /my calendar/i.test(q)), JSON.stringify(kept.slice(-4)));
+
+    // 5. THE SHARED BASE: the Python desktop app reads what the dashboard wrote.
+    const pyRead = spawnSync('python3', ['-c',
+      `import json,sys; sys.path.insert(0, ${JSON.stringify(REPO)});\n` +
+      `from backend.knowledge import KnowledgeStore\n` +
+      `st = KnowledgeStore(path=${JSON.stringify(path.join(srv.cwd, 'runtime', 'knowledge.json'))})\n` +
+      `hit = st.lookup('what is the office wifi password')\n` +
+      `print(json.dumps({'found': bool(hit), 'answer': hit['answer'] if hit else '', 'kind': hit['kind'] if hit else '', 'count': len(st.list_entries())}))`,
+    ], { encoding: 'utf-8' });
+    let py = {};
+    try { py = JSON.parse(String(pyRead.stdout).trim().split('\n').pop()); } catch { /* reported below */ }
+    ok('shared base: the Python app reads the dashboard\'s taught answer',
+       py.found === true && /fridge/.test(String(py.answer)), JSON.stringify(py).slice(0, 140));
+    ok('shared base: …and sees the whole store (starters included)', Number(py.count) > 30, `entries=${py.count}`);
+
+    // 6. and the other way round: the dashboard reads what Python wrote.
+    const pyWrite = spawnSync('python3', ['-c',
+      `import sys; sys.path.insert(0, ${JSON.stringify(REPO)});\n` +
+      `from backend.knowledge import KnowledgeStore\n` +
+      `st = KnowledgeStore(path=${JSON.stringify(path.join(srv.cwd, 'runtime', 'knowledge.json'))})\n` +
+      `st.teach('what colour is the front door', 'Green, sir — the one with the brass handle')\n` +
+      `print('written')`,
+    ], { encoding: 'utf-8' });
+    ok('shared base: the Python app can teach an answer', /written/.test(String(pyWrite.stdout)), String(pyWrite.stderr).slice(0, 90) || String(pyWrite.stdout).trim());
+    const readBack = await post(srv, '/api/command', { text: 'what colour is the front door' });
+    ok('shared base: the dashboard reads the answer the desktop app taught', /brass handle/.test(String(readBack.body.reply)), String(readBack.body.reply).slice(0, 90));
+
+    // 7. the local-first guard: a computer task with no local tool never silently spends a call
+    const before = srv.stub.calls.length;
+    const task = await post(srv, '/api/command', { text: 'install a printer driver and set the default paper size' });
+    ok('local first: a computer task is answered honestly, not with an AI call', /no local tool/.test(String(task.body.reply)), String(task.body.reply).slice(0, 110));
+    ok('local first: …and it offers the choice instead of spending the call', /use the AI/.test(String(task.body.reply)) && srv.stub.calls.length === before,
+       `calls ${before} -> ${srv.stub.calls.length}`);
+    const forced = await post(srv, '/api/command', { text: 'install a printer driver and set the default paper size — use the AI' });
+    ok('local first: saying "use the AI" spends exactly one call', /answered by harness-text-model/.test(String(forced.body.reply)) && srv.stub.calls.length === before + 1,
+       `calls ${before} -> ${srv.stub.calls.length}`);
+
+    // 8. reminders live on this computer
+    const setOne = await post(srv, '/api/command', { text: 'remind me to call the office at four' });
+    ok('local: a reminder is kept on this computer', /Kept on this computer/.test(String(setOne.body.reply)), String(setOne.body.reply).slice(0, 80));
+    const readIt = await post(srv, '/api/command', { text: 'what are my reminders' });
+    ok('local: …and read back without any AI', /call the office at four/.test(String(readIt.body.reply)), String(readIt.body.reply).slice(0, 90));
+
+    // 9. the personality file is used IN FULL — the owner's conduct rules are at its end
+    const log = srv.log();
+    ok('personality: the personality file is loaded in full', /personality: core\/prompt\.txt \(in full\)/.test(log), (log.match(/personality:.*/) || [''])[0].slice(0, 120));
+    ok('personality: repeated blocks are collapsed, not the rules dropped', /kept after removing repeated blocks/.test(log), (log.match(/kept after removing repeated blocks.*/) || [''])[0].slice(0, 80));
+    ok('knowledge: the startup line reports the store', /local knowledge: \d+ answers ready/.test(log), (log.match(/local knowledge:.*/) || [''])[0].slice(0, 110));
+  } finally { await srv.stop(); }
+}
+
+/* ── 11. THE VOICE'S OWN BUDGET: speaking never starves the answers ───────── */
+{
+  const MODELS = { 'harness-voice-model': { voice: true }, 'harness-text-model': {} };
+  const srv = await startDashboard({
+    models: MODELS,
+    env: { SUPPER_VOICE_MODEL: 'harness-voice-model', SUPPER_GEMINI_VOICE_BUDGET: '2', SUPPER_GEMINI_DAILY_BUDGET: '3', SUPPER_TEXT_MODEL: 'harness-text-model' },
+    name: 'voice-budget',
+  });
+  try {
+    const one = await post(srv, '/api/voice/speak', { text: 'One, sir.' });
+    ok('voice budget: a sentence is spoken', one.body.ok === true, String(one.body.message || ''));
+    const snap1 = await get(srv, '/api/system-status');
+    ok('voice budget: the voice counts in its own file', snap1.body.voice && snap1.body.voice.used === 1 && snap1.body.voice.limit === 2,
+       JSON.stringify(snap1.body.voice && { used: snap1.body.voice.used, limit: snap1.body.voice.limit }));
+    const repeat = await post(srv, '/api/voice/speak', { text: 'One, sir.' });
+    ok('voice budget: the same sentence again is free (cached)', repeat.body.ok === true && repeat.body.cached === true, JSON.stringify({ ok: repeat.body.ok, cached: repeat.body.cached }));
+    const snap2 = await get(srv, '/api/system-status');
+    ok('voice budget: …and it did not spend a unit', snap2.body.voice.used === 1, `used=${snap2.body.voice.used}`);
+    await post(srv, '/api/voice/speak', { text: 'Two, sir.' });
+    const spent = await post(srv, '/api/voice/speak', { text: 'Three, sir.' });
+    ok('voice budget: when the voice budget is used up it says so', spent.body.ok === false && spent.body.code === 'voice-budget', JSON.stringify(spent.body).slice(0, 120));
+    const answers = await post(srv, '/api/command', { text: 'tell me something new entirely' });
+    ok('voice budget: the answers still work after the voice budget is gone', /answered by/.test(String(answers.body.reply)), String(answers.body.reply).slice(0, 70));
+  } finally { await srv.stop(); }
+}
+
+
+/* ── 12. THE LOOK AND THE LOCAL DRAFTING DESK ───────────────────────────────
+ * Two things the owner asked for, proved against the real server: (a) the gold
+ * glass is ONE stylesheet, served to both surfaces, with the rounded face
+ * vendored in the repo so it needs no internet, the camera layer in every room,
+ * and the sliders that move the glass; and (b) an email or a letter is written
+ * HERE — the drafting desk must never spend a Gemini call.                    */
+{
+  const MODELS = { 'harness-text-model': {} };
+  const srv = await startDashboard({ models: MODELS, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'gold-glass' });
+  try {
+    // (a) the shared look
+    const cssRes = await fetch(srv.url('/static/jarvis-glass.css'));
+    const css = await cssRes.text();
+    ok('clear glass: the shared stylesheet is served', cssRes.status === 200, `status=${cssRes.status}`);
+    ok('…and it carries the vendored rounded face', /JARVIS Rounded/.test(css) && /nunito-latin-400-normal\.woff2/.test(css), 'font-face');
+    ok('…and the sand-blasted pane, the gold line and the bloom', /--jg-grit/.test(css) && /backdrop-filter: blur\(var\(--jg-frost\)\)/.test(css) && /--jg-glow-size/.test(css), 'tokens');
+
+    const fontRes = await fetch(srv.url('/static/fonts/nunito-latin-400-normal.woff2'));
+    const fontBuf = Buffer.from(await fontRes.arrayBuffer());
+    ok('…and the font itself is in the repo (no internet needed)', fontRes.status === 200 && fontBuf.slice(0, 4).toString('latin1') === 'wOF2',
+       `status=${fontRes.status} bytes=${fontBuf.length}`);
+
+    const page = await (await fetch(srv.url('/'))).text();
+    ok('the dashboard links the shared stylesheet', page.includes('/static/jarvis-glass.css'), 'link');
+
+    // The owner asked for the buttons that only repeat what the voice already
+    // does to be gone from the main screen: mic, voice, wake, diagnostics, and
+    // the two suggestion chips. This is the guard against them creeping back.
+    // Only the markup matters here: the speaker button in the message row STAYS
+    // (the owner turns the voice on and off with it), and dead CSS names are not
+    // a button on screen.
+    const leftovers = ['id="hud-mic-btn"', 'id="mic-btn"', 'id="wake-btn"', 'id="btn-wake"', 'class="sugg-chip"', 'telemetry-actions']
+      .filter((needle) => page.includes(needle));
+    ok('simple HUD: the mic, wake, diagnostics and suggestion buttons are gone from the main screen',
+       leftovers.length === 0, leftovers.length ? `still there: ${leftovers.join(', ')}` : 'top row: My Hands, Camera, Rooms, Settings');
+    ok('…but the top row still carries what is used daily',
+       /id="btn-toggle-hands"/.test(page) && /id="btn-toggle-cam"/.test(page) && /toggleRooms\(\)/.test(page) && /id="btn-toggle-settings"/.test(page),
+       'My Hands, Camera, Rooms, Settings');
+    ok('…and the two actions the buttons carried are still there by voice',
+       /function doWake\(\)/.test(page) && /function requestSystemDiagnostics\(\)/.test(page), 'doWake + diagnostics kept');
+
+    // Importing lives in the Files window, not in the typing row.
+    ok('files: the typing row has no attach button left',
+       !/for="file-upload-input"/.test(page) && !/id="file-upload-input"/.test(page), 'no 📎');
+    ok('files: the Files window imports files and documents',
+       /id="tree-import-input"/.test(page) && /tree-import-btn/.test(page) && /function importFiles\(/.test(page), '⬆ Import');
+    ok('…and files can be dropped onto that window instead',
+       /function wireFileImporting\(/.test(page) && /dataTransfer\.files/.test(page) && /dragover/.test(page), 'drag & drop');
+    ok('…and an import says where the file landed',
+       /function showImported\(/.test(page) && /uploads\//.test(page), 'name + size + path');
+    const sliders = ['rng-win-alpha', 'rng-win-sand', 'rng-panel-alpha', 'rng-panel-sand', 'rng-room-alpha', 'rng-room-sand', 'rng-gl-line', 'rng-gl-bloom'];
+    const missing = sliders.filter((id) => !page.includes(`id="${id}"`));
+    ok('…and every surface has its own transparency and sand-blast slider', missing.length === 0, missing.length ? `missing ${missing.join(', ')}` : 'windows, HUD, rooms + line + bloom');
+    ok('…and the sliders drive the glass engine', page.includes("updateGlass('win','alpha'") && /function applyGlassSettings\(\)/.test(page), 'updateGlass');
+    ok('…and one thin gold line / bloom pair is shared by all of them', /--jg-line/.test(page) && /--jg-glow-size/.test(page), 'shared tokens');
+
+    const rooms = await (await fetch(srv.url('/rooms.html'))).text();
+    ok('the rooms link the same stylesheet', rooms.includes('/static/jarvis-glass.css'), 'link');
+    ok('…and the rooms carry the camera layer behind the glass', /id="env-camera"/.test(rooms) && /id="env-camera-scrim"/.test(rooms), 'env-camera');
+    ok('…and the camera is shared from the dashboard, not captured twice', /src="camera\.js"/.test(rooms), 'camera.js');
+    ok('…and the rooms keep ONE switch — Tools; the camera switch is only on the main screen',
+       /id="env-tools-toggle"/.test(rooms) && !/env-cam-toggle/.test(rooms), 'rooms bar');
+    const cameraJs = await (await fetch(srv.url('/rooms-src/camera.js'))).text();
+    ok('…and the hand-over asks the dashboard for the picture, then falls back only if refused',
+       /jarvis-rooms-hello/.test(cameraJs) && /useShared/.test(cameraJs) && /getUserMedia/.test(cameraJs) && /api\/myhands\/preview/.test(cameraJs), 'three tiers');
+    ok('…and the tools stay out of the way until they are asked for', /body:not\(\.show-tools\) \.env-tools/.test(await (await fetch(srv.url('/rooms-src/styles.css'))).text()), 'simplicity');
+
+    // (b) the drafting desk: written here, never by the AI
+    const before = srv.stub.calls.length;
+    const draft = await post(srv, '/api/command', { text: 'draft an email to the plumber about the leaking pipe in the kitchen' });
+    const reply = String(draft.body.reply);
+    ok('drafting: an email is written locally, with no AI call', srv.stub.calls.length === before && /no AI, no cost/.test(reply), `calls=${srv.stub.calls.length - before}`);
+    ok('…and it uses the owner\'s own words', /leaking pipe in the kitchen/.test(reply), reply.split('\n').slice(0, 4).join(' | ').slice(0, 120));
+    ok('…and says which details only the owner can fill in', /square brackets/.test(reply), 'brackets');
+    ok('…and the subject line comes from those words', /Subject: The leaking pipe in the kitchen/.test(reply), (reply.match(/Subject:.*/) || [''])[0]);
+    ok('…and the topic is said once, not twice', (reply.match(/leaking pipe/g) || []).length === 2, `mentions=${(reply.match(/leaking pipe/g) || []).length}`);
+    ok('…and an unnamed trade gets a proper greeting, not "Dear the plumber"', /Hello,|Dear Sir or Madam,/.test(reply) && !/Dear the plumber/.test(reply), (reply.match(/^(?:Hello|Dear).*/m) || [''])[0]);
+
+    const dir = path.join(srv.cwd, 'runtime', 'drafts');
+    const files = fs.readdirSync(dir).filter((f) => f.endsWith('.txt'));
+    ok('…and it is kept as a plain file on this computer', files.length === 1, files[0] || 'nothing written');
+    const written = fs.readFileSync(path.join(dir, files[0]), 'utf8');
+    ok('…and the file says the AI was not used', /no AI was used to write this/.test(written), written.split('\n')[0].slice(0, 60));
+    ok('…and it is signed with the owner\'s configured name', /Mr Owner/.test(written), 'user_name from config/api_keys.json');
+
+    const second = await post(srv, '/api/command', { text: 'write a short friendly note to Sarah thanking her for the help' });
+    ok('drafting: a short friendly note keeps its shape', /Hi Sarah,/.test(String(second.body.reply)) && /Warm regards,/.test(String(second.body.reply)),
+       String(second.body.reply).split('\n').slice(0, 3).join(' | ').slice(0, 110));
+    ok('…and the doing-word becomes a sentence, not a name', /I am writing to thank you for the help\./.test(String(second.body.reply)),
+       (String(second.body.reply).match(/I am writing.*/) || [''])[0].slice(0, 90));
+    ok('…and the subject is tidied from the same words', /Re: Thanks for the help/.test(String(second.body.reply)),
+       (String(second.body.reply).match(/Re:.*/) || [''])[0]);
+    ok('…and it is brief when brief was asked for', !/It is about/.test(String(second.body.reply)), 'no middle paragraph');
+
+    const list = await post(srv, '/api/command', { text: 'read my drafts' });
+    ok('drafting: the drafts are listed by number', /You have 2 drafts/.test(String(list.body.reply)) && /1\. email to the plumber/.test(String(list.body.reply)), String(list.body.reply).split('\n')[1] || '');
+    const read = await post(srv, '/api/command', { text: 'read draft 1' });
+    ok('drafting: a draft can be read back in full', /Hello,/.test(String(read.body.reply)) && /leaking pipe/.test(String(read.body.reply)), String(read.body.reply).split('\n')[1] || '');
+    const gone = await post(srv, '/api/command', { text: 'delete draft 1' });
+    ok('drafting: a draft can be thrown away, file and all',
+       /Draft 1 is gone/.test(String(gone.body.reply)) && !fs.readdirSync(dir).some((f) => f.startsWith('0001')), String(gone.body.reply).slice(0, 60));
+    ok('…and the desk still answers for what is left', fs.readdirSync(dir).some((f) => f.includes('note')), fs.readdirSync(dir).join(','));
+
+    ok('drafting: the status reports the desk', (await get(srv, '/api/system-status')).body.drafts && (await get(srv, '/api/system-status')).body.drafts.count === 1, 'drafts.count');
+    ok('…and the honest guard now points at it', /drafting desk/.test(String((await post(srv, '/api/command', { text: 'book a flight to Durban for Friday' })).body.reply)), 'no local tool message');
+
+    // (c) the camera and the tools, by voice, for nothing
+    const beforeVoice = srv.stub.calls.length;
+    const camOn = await post(srv, '/api/command', { text: 'camera on' });
+    ok('camera: voice turns it on, in every room, with no AI', /Camera on, sir/.test(String(camOn.body.reply)) && /every room/.test(String(camOn.body.reply)), String(camOn.body.reply).slice(0, 80));
+    const camOff = await post(srv, '/api/command', { text: 'camera off' });
+    ok('…and off again', /Camera off, sir/.test(String(camOff.body.reply)), String(camOff.body.reply).slice(0, 60));
+    const tools = await post(srv, '/api/command', { text: 'show the tools' });
+    ok('rooms: the tools come out by voice, the room stays clear', /tools for this room are out/.test(String(tools.body.reply)), String(tools.body.reply).slice(0, 80));
+    const toolsAway = await post(srv, '/api/command', { text: 'hide the tools' });
+    ok('…and go away again', /Tools away, sir/.test(String(toolsAway.body.reply)), String(toolsAway.body.reply).slice(0, 60));
+    ok('…and none of those four cost a call', srv.stub.calls.length === beforeVoice, `calls=${srv.stub.calls.length - beforeVoice}`);
+  } finally { await srv.stop(); }
 }
 
 /* ── summary ─────────────────────────────────────────────────────────────── */

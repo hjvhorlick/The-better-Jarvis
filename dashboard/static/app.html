@@ -5,27 +5,39 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>__ASSISTANT_NAME__ — Autonomous Workspace & Spatial Interface</title>
   <script src="/static/crypto.js"></script>
+  <!-- ONE look everywhere: the same clear-glass tokens, the rounded face and the
+       pane/control shapes are shared with the rooms (rooms.html links the
+       same file), so a window here and a panel there are the same clear glass
+       with the same thin yellow line. -->
+  <link rel="stylesheet" href="/static/jarvis-glass.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg-base: #0b0f17;
-      --glass-bg: rgba(18, 24, 38, 0.76);
-      --glass-border: rgba(255, 255, 255, 0.12);
-      --glass-specular: rgba(255, 255, 255, 0.18);
-      --glass-blur: 24px;
-      --glass-shadow: 0 20px 48px -10px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      /* The room behind the glass: dark grey, unless the camera is on — then his
+         own picture is what the glass is in front of. */
+      --bg-base: #14151a;
+      --glass-bg: rgba(18, 20, 24, var(--jg-win-alpha, 0.18));
+      --glass-border: var(--jg-line, rgba(255, 214, 10, 0.62));
+      --glass-specular: rgba(255, 255, 255, 0.20);
+      --glass-blur: var(--jg-win-frost, 3px);
+      --glass-shadow: 0 0 var(--jg-glow-size, 20px) var(--jg-glow, rgba(255, 214, 10, 0.22)),
+                      0 22px 44px -18px rgba(0, 0, 0, 0.85);
 
-      /* Dull Glass Acrylic Mode (applied when the My Hands camera feed is active) */
-      --dull-glass-bg: rgba(14, 19, 30, 0.58);
-      --dull-glass-border: rgba(255, 255, 255, 0.14);
-      --dull-glass-blur: 28px;
-      --dull-glass-shadow: 0 24px 50px -10px rgba(0, 0, 0, 0.55), 0 1px 0 rgba(255, 255, 255, 0.1) inset;
+      /* The same glass while My Hands is engaged: a hair more transparent, so the
+         hand behind the pane is easy to follow. */
+      --dull-glass-bg: rgba(18, 20, 24, var(--jg-win-alpha, 0.18));
+      --dull-glass-border: var(--jg-line, rgba(255, 214, 10, 0.62));
+      --dull-glass-blur: var(--jg-win-frost, 3px);
+      --dull-glass-shadow: 0 0 var(--jg-glow-size, 20px) var(--jg-glow, rgba(255, 214, 10, 0.22)),
+                           0 24px 50px -16px rgba(0, 0, 0, 0.8);
 
-      --accent: #6366f1;
-      --accent-glow: rgba(99, 102, 241, 0.35);
-      --accent-dim: rgba(99, 102, 241, 0.16);
+      --accent: #ffd60a;
+      --accent-glow: rgba(255, 214, 10, 0.38);
+      --accent-dim: rgba(255, 214, 10, 0.16);
 
+      /* Status meaning, kept readable: green means good, amber means look, red
+         means a problem. Everything else — every word — is gold. */
       --emerald: #10b981;
       --emerald-glow: rgba(16, 185, 129, 0.3);
       --emerald-dim: rgba(16, 185, 129, 0.14);
@@ -33,31 +45,42 @@
       --amber: #f59e0b;
       --rose: #f43f5e;
 
-      --text-main: #f1f5f9;
-      --text-sub: #cbd5e1;
-      --text-muted: #64748b;
+      --text-main: var(--jg-text, #ffe066);
+      --text-sub: var(--jg-text-soft, #e7cf7d);
+      --text-muted: var(--jg-text-faint, #a99a63);
 
       --header-h: 56px;
-      --radius-panel: 16px;
-      --radius-control: 10px;
+      /* Sharp corners: the frames are cut glass, not rounded tiles. */
+      --radius-panel: var(--jg-radius, 3px);
+      --radius-control: var(--jg-radius, 3px);
     }
 
-    /* Accent color variants */
-    body[data-theme="emerald"] {
-      --accent: #10b981;
-      --accent-glow: rgba(16, 185, 129, 0.35);
-      --accent-dim: rgba(16, 185, 129, 0.16);
+    /* The three golds the owner can pick between: bright gold (default), amber
+       gold and pale gold. Nothing else in the workspace changes colour. */
+    body[data-theme="amber"] {
+      --accent: #ffbe3d;
+      --accent-glow: rgba(255, 190, 61, 0.38);
+      --accent-dim: rgba(255, 190, 61, 0.18);
+      --jg-gold: #ffb300;
+      --jg-gold-bright: #ffd97a;
+      --jg-text: #ffd35c;
     }
-    body[data-theme="titanium"] {
-      --accent: #38bdf8;
-      --accent-glow: rgba(56, 189, 248, 0.35);
-      --accent-dim: rgba(56, 189, 248, 0.16);
+    body[data-theme="pale"] {
+      --accent: #fff0b3;
+      --accent-glow: rgba(255, 240, 179, 0.32);
+      --accent-dim: rgba(255, 240, 179, 0.15);
+      --jg-gold: #fff0b3;
+      --jg-gold-bright: #fff8dc;
+      --jg-text: #fff3c4;
     }
 
     html, body {
       width: 100%; height: 100%; overflow: hidden;
       background: var(--bg-base); color: var(--text-main);
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
+      /* A modern rounded face (Nunito, vendored in the repo — no internet
+         needed), because it stays legible in gold on dark glass. */
+      font-family: var(--jg-font);
+      letter-spacing: 0.01em;
       user-select: none;
     }
 
@@ -77,25 +100,30 @@
     /* Studio canvas background */
     #bg-studio {
       position: absolute; inset: 0; width: 100%; height: 100%;
+      /* Dark grey, and nothing else: the glass is clear, so the room behind it
+         must not tint what you are looking at. */
       background:
-        radial-gradient(circle at 18% 22%, rgba(99, 102, 241, 0.12) 0%, transparent 45%),
-        radial-gradient(circle at 82% 78%, rgba(16, 185, 129, 0.08) 0%, transparent 40%),
-        linear-gradient(180deg, #0e131f 0%, #070a10 100%);
+        radial-gradient(circle at 50% 0%, #26282e 0%, transparent 58%),
+        linear-gradient(180deg, #1c1d22 0%, #101114 100%);
       transition: opacity 0.5s ease;
     }
 
     /* Ambient dark scrim for readability over video */
     #bg-scrim {
       position: absolute; inset: 0; width: 100%; height: 100%;
-      background: rgba(5, 8, 14, 0.45); pointer-events: none;
+      background: rgba(16, 17, 20, 0.45); pointer-events: none;
+      transition: background 0.5s ease;
     }
+    /* With the camera on, the picture IS the room: the scrim only takes the
+       glare off it, so the glass in front stays readable. */
+    body.jg-cam-on #bg-scrim { background: rgba(16, 17, 20, 0.30); }
 
     /* ── TOP NAVIGATION HUD BAR ── */
     #hud-header {
       position: absolute; top: 0; left: 0; right: 0; height: var(--header-h);
       z-index: 100; display: flex; align-items: center; justify-content: space-between;
       padding: 0 20px;
-      background: rgba(14, 20, 32, 0.85);
+      background: rgba(18, 20, 24, 0.85);
       backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
       border-bottom: 1px solid var(--glass-border);
       box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
@@ -106,9 +134,9 @@
     }
     .brand-symbol {
       width: 34px; height: 34px; border-radius: 9px;
-      background: linear-gradient(135deg, var(--accent) 0%, #312e81 100%);
+      background: linear-gradient(135deg, var(--accent) 0%, #5a4712 100%);
       display: flex; align-items: center; justify-content: center;
-      font-weight: 900; font-size: 17px; color: #fff;
+      font-weight: 900; font-size: 17px; color: var(--jg-gold-pale);
       box-shadow: 0 0 16px var(--accent-glow);
     }
     .brand-text {
@@ -116,7 +144,7 @@
     }
     .brand-title {
       font-size: 15px; font-weight: 800; letter-spacing: 2px;
-      color: #fff;
+      color: var(--jg-gold-pale);
     }
     .brand-sub {
       font-size: 10px; font-weight: 600; color: var(--text-muted);
@@ -136,13 +164,13 @@
       cursor: pointer; transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .hud-toggle-btn:hover {
-      background: rgba(255, 255, 255, 0.09); color: #fff;
+      background: rgba(255, 255, 255, 0.09); color: var(--jg-gold-pale);
       border-color: rgba(255, 255, 255, 0.2);
     }
     .hud-toggle-btn.active {
       background: var(--accent-dim);
       border-color: var(--accent);
-      color: #fff;
+      color: var(--jg-gold-pale);
       box-shadow: 0 0 14px var(--accent-glow);
     }
 
@@ -184,7 +212,7 @@
       box-shadow: var(--dull-glass-shadow);
     }
     body.myhands-engaged #bg-scrim {
-      background: rgba(4, 7, 12, 0.28);
+      background: rgba(12, 13, 16, 0.28);
     }
     body.myhands-engaged #bg-studio {
       opacity: 0.15;
@@ -211,7 +239,7 @@
     }
     .glass-window.focused {
       border-color: rgba(255, 255, 255, 0.22);
-      box-shadow: 0 28px 65px -12px rgba(0, 0, 0, 0.75), 0 0 24px rgba(99, 102, 241, 0.22);
+      box-shadow: 0 28px 65px -12px rgba(0, 0, 0, 0.75), 0 0 24px rgba(255, 214, 10, 0.22);
     }
     .glass-window.grabbed {
       border-color: var(--accent);
@@ -261,7 +289,7 @@
       box-shadow: 0 0 12px var(--accent-glow);
     }
     .window-grab-bar:hover::after {
-      background: #fff; width: 56px;
+      background: var(--jg-gold-pale); width: 56px;
     }
     .window-grab-bar:active {
       cursor: grabbing;
@@ -304,7 +332,7 @@
       transition: all 0.15s ease;
     }
     .win-btn:hover {
-      background: rgba(255, 255, 255, 0.14); color: #fff;
+      background: rgba(255, 255, 255, 0.14); color: var(--jg-gold-pale);
     }
 
     /* Window Body Container */
@@ -328,15 +356,15 @@
     .reactor-disc {
       position: relative; width: 110px; height: 110px; border-radius: 50%;
       display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(circle, rgba(99, 102, 241, 0.25) 0%, rgba(14, 20, 32, 0.8) 70%);
-      border: 2px solid rgba(99, 102, 241, 0.4);
-      box-shadow: 0 0 30px var(--accent-glow), inset 0 0 20px rgba(99, 102, 241, 0.3);
+      background: radial-gradient(circle, rgba(255, 214, 10, 0.25) 0%, rgba(24, 25, 30, 0.8) 70%);
+      border: 2px solid rgba(255, 214, 10, 0.4);
+      box-shadow: 0 0 30px var(--accent-glow), inset 0 0 20px rgba(255, 214, 10, 0.3);
       animation: rotateRing 20s linear infinite;
     }
     @keyframes rotateRing { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     .reactor-core {
       position: absolute; width: 44px; height: 44px; border-radius: 50%;
-      background: #fff; box-shadow: 0 0 24px #fff, 0 0 50px var(--accent);
+      background: var(--jg-gold-pale); box-shadow: 0 0 24px rgba(255, 246, 200, 0.85), 0 0 50px var(--accent);
       animation: reactorBreathe 3s ease-in-out infinite;
     }
     @keyframes reactorBreathe {
@@ -367,9 +395,6 @@
       font-size: 10px; color: var(--emerald); margin-top: 2px;
     }
 
-    .telemetry-actions {
-      display: flex; gap: 8px;
-    }
     .action-btn {
       flex: 1; padding: 10px 12px; border-radius: 10px;
       font-size: 11px; font-weight: 700; letter-spacing: 1px;
@@ -377,14 +402,14 @@
       transition: all 0.15s ease;
     }
     .action-btn.primary {
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: #1b1a12;
     }
     .action-btn.primary:hover { opacity: 0.9; }
     .action-btn.secondary {
       background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
       color: var(--text-sub);
     }
-    .action-btn.secondary:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .action-btn.secondary:hover { background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); }
 
     /* ── PANEL 2: SPATIAL CHAT & DIRECTIVE STREAM ── */
     #win-chat {
@@ -409,17 +434,17 @@
 
     .chat-bubble.speaker-jarvis {
       align-self: flex-start;
-      background: rgba(99, 102, 241, 0.14);
-      border: 1px solid rgba(99, 102, 241, 0.26);
+      background: rgba(255, 214, 10, 0.14);
+      border: 1px solid rgba(255, 214, 10, 0.26);
       border-bottom-left-radius: 4px;
-      color: #f8fafc;
+      color: #fff0b3;
     }
     .chat-bubble.speaker-user {
       align-self: flex-end;
       background: rgba(255, 255, 255, 0.08);
       border: 1px solid rgba(255, 255, 255, 0.15);
       border-bottom-right-radius: 4px;
-      color: #f1f5f9;
+      color: #ffe066;
     }
     .chat-bubble.speaker-system {
       align-self: center; font-size: 11px; color: var(--text-muted);
@@ -429,7 +454,7 @@
       font-size: 10px; font-weight: 800; letter-spacing: 1.5px;
       text-transform: uppercase; margin-bottom: 4px; opacity: 0.6;
     }
-    .speaker-jarvis .bubble-header { color: #818cf8; }
+    .speaker-jarvis .bubble-header { color: #ffe08a; }
     .speaker-user .bubble-header { text-align: right; color: var(--text-sub); }
 
     /* Code snippet block within chat */
@@ -437,7 +462,7 @@
       margin-top: 8px; padding: 10px; border-radius: 8px;
       background: rgba(0, 0, 0, 0.4); border: 1px solid rgba(255, 255, 255, 0.1);
       font-family: 'SF Mono', Consolas, Monaco, monospace; font-size: 12px;
-      color: #38bdf8; overflow-x: auto; white-space: pre-wrap;
+      color: #ffd60a; overflow-x: auto; white-space: pre-wrap;
     }
 
     /* Quick suggestion chips */
@@ -454,20 +479,20 @@
       white-space: nowrap; cursor: pointer; transition: all 0.15s ease;
     }
     .sugg-chip:hover {
-      background: var(--accent-dim); border-color: var(--accent); color: #fff;
+      background: var(--accent-dim); border-color: var(--accent); color: var(--jg-gold-pale);
     }
 
     /* Input Footer */
     .chat-footer {
       padding: 12px 16px; border-top: 1px solid rgba(255, 255, 255, 0.08);
-      background: rgba(14, 20, 32, 0.7); display: flex; gap: 8px; align-items: center;
+      background: rgba(14, 15, 18, 0.5); display: flex; gap: 8px; align-items: center;
       flex-shrink: 0;
     }
     .chat-input {
       flex: 1; padding: 11px 14px;
       background: rgba(255, 255, 255, 0.06);
       border: 1px solid rgba(255, 255, 255, 0.14);
-      border-radius: var(--radius-control); color: #fff;
+      border-radius: var(--radius-control); color: var(--jg-gold-pale);
       font-size: 13.5px; outline: none; transition: border-color 0.2s, box-shadow 0.2s;
     }
     .chat-input:focus {
@@ -484,7 +509,7 @@
       transition: all 0.15s ease;
     }
     .chat-btn-send {
-      background: var(--accent); color: #fff;
+      background: var(--accent); color: #1b1a12;
     }
     .chat-btn-send:hover { opacity: 0.9; }
     .chat-btn-icon {
@@ -492,7 +517,7 @@
       color: var(--text-sub); font-size: 15px;
     }
     .chat-btn-icon:hover {
-      background: rgba(255, 255, 255, 0.12); color: #fff; border-color: rgba(255, 255, 255, 0.2);
+      background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); border-color: rgba(255, 255, 255, 0.2);
     }
     .chat-btn-icon.recording {
       background: rgba(244, 63, 94, 0.2); border-color: var(--rose); color: var(--rose);
@@ -541,14 +566,51 @@
     }
     .mic-strip-btn:hover { background: rgba(255, 255, 255, 0.22); }
 
+    /* ── THE EARS BAR: always there while the microphone is on ───────────────
+       It is the one place that says whether JARVIS is listening, and the one
+       button that silences him — no digging in Settings to be heard or to stop. */
+    .listen-bar {
+      display: none; align-items: center; gap: 8px; flex-shrink: 0;
+      padding: 6px 12px; font-size: 11px; font-weight: 600;
+      color: #a7f3d0; background: rgba(52, 211, 153, 0.10);
+      border-top: 1px solid rgba(52, 211, 153, 0.26);
+    }
+    .listen-bar.show { display: flex; }
+    .listen-dot {
+      flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%;
+      background: var(--emerald); box-shadow: 0 0 8px var(--emerald);
+      animation: listenPulse 1.6s infinite;
+    }
+    .listen-bar.hearing .listen-dot { background: #f43f5e; box-shadow: 0 0 10px #f43f5e; }
+    .listen-bar.speaking { color: #ffe9a3; background: rgba(255, 208, 74, 0.10); border-top-color: rgba(255, 208, 74, 0.28); }
+    .listen-bar.speaking .listen-dot { background: #ffd60a; box-shadow: 0 0 10px #ffd60a; }
+    .listen-bar.muted { color: #e7cf7d; background: rgba(217, 180, 90, 0.10); border-top-color: rgba(217, 180, 90, 0.25); }
+    .listen-bar.muted .listen-dot { background: #a99a63; box-shadow: none; animation: none; }
+    .listen-bar-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .listen-bar-btn {
+      flex-shrink: 0; padding: 3px 10px; border-radius: 99px; cursor: pointer;
+      background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.24);
+      color: inherit; font-size: 10.5px; font-weight: 700;
+    }
+    .listen-bar-btn:hover { background: rgba(255, 255, 255, 0.26); }
+    @keyframes listenPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+    /* The live bubble while an answer is being written/streamed in */
+    .chat-bubble.streaming .bubble-header::after {
+      content: ' ●'; color: var(--emerald); animation: micPulse 1s infinite;
+    }
+    .chat-btn-icon.muted {
+      background: rgba(217, 180, 90, 0.18); border-color: rgba(217, 180, 90, 0.5); color: #e7cf7d;
+    }
+
     /* Buttons inside a System bubble — "Open in New Tab", "Voice settings" */
     .bubble-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .bubble-action-btn {
       padding: 5px 11px; border-radius: 99px; cursor: pointer;
-      background: rgba(99, 102, 241, 0.22); border: 1px solid rgba(129, 140, 248, 0.5);
-      color: #e0e7ff; font-size: 11px; font-weight: 700;
+      background: rgba(255, 214, 10, 0.22); border: 1px solid rgba(255, 214, 10, 0.5);
+      color: #fff2c4; font-size: 11px; font-weight: 700;
     }
-    .bubble-action-btn:hover { background: rgba(99, 102, 241, 0.38); color: #fff; }
+    .bubble-action-btn:hover { background: rgba(255, 214, 10, 0.38); color: var(--jg-gold-pale); }
 
     /* Live report box in Settings → Voice */
     .voice-report {
@@ -572,7 +634,7 @@
     .tree-search {
       flex: 1; padding: 7px 11px; border-radius: 8px;
       background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
-      font-size: 12px; color: #fff; outline: none;
+      font-size: 12px; color: var(--jg-gold-pale); outline: none;
     }
     .tree-search:focus { border-color: var(--accent); }
     .tree-refresh-btn {
@@ -580,7 +642,32 @@
       background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
       color: var(--text-sub); font-size: 12px; cursor: pointer;
     }
-    .tree-refresh-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .tree-refresh-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); }
+
+    /* ── IMPORTING, in the Files window ─────────────────────────────────────
+       The one place files and documents are brought in: the Import button, or
+       dropping them onto the window. Both end in the same uploads folder. */
+    .tree-import-btn {
+      padding: 7px 12px; border-radius: 8px; cursor: pointer;
+      background: rgba(255, 214, 10, 0.12); border: var(--jg-line-width) solid var(--jg-line);
+      color: var(--jg-gold-bright); font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+    .tree-import-btn:hover { background: rgba(255, 214, 10, 0.24); }
+    .tree-drop-hint {
+      display: none; padding: 7px 14px; font-size: 12px; text-align: center;
+      color: var(--jg-gold-bright); background: rgba(255, 214, 10, 0.10);
+      border-bottom: var(--jg-line-width) dashed var(--jg-line);
+    }
+    .tree-drop-hint.show { display: block; }
+    .glass-window.drop-ready { border-color: var(--jg-gold-bright); box-shadow: 0 0 0 2px rgba(255, 214, 10, 0.35), 0 0 var(--jg-glow-size) var(--jg-glow); }
+    .imported-files {
+      max-height: 96px; overflow-y: auto; padding: 6px 12px;
+      border-bottom: var(--jg-line-width) solid var(--jg-line-soft);
+      background: rgba(255, 214, 10, 0.05);
+    }
+    .imported-row { display: flex; gap: 8px; align-items: baseline; font-size: 11px; padding: 2px 0; }
+    .imported-name { color: var(--jg-gold-bright); font-weight: 700; }
+    .imported-where { color: var(--jg-text-faint); }
 
     .tree-viewport {
       flex: 1; overflow-y: auto; padding: 10px 12px;
@@ -595,10 +682,10 @@
       cursor: pointer; transition: background 0.12s, color 0.12s;
     }
     .tree-node:hover {
-      background: rgba(255, 255, 255, 0.07); color: #fff;
+      background: rgba(255, 255, 255, 0.07); color: var(--jg-gold-pale);
     }
     .tree-node.active-file {
-      background: var(--accent-dim); color: #fff; font-weight: 600;
+      background: var(--accent-dim); color: var(--jg-gold-pale); font-weight: 600;
       border-left: 2px solid var(--accent);
     }
     .node-icon { font-size: 14px; opacity: 0.85; flex-shrink: 0; }
@@ -629,7 +716,7 @@
       background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.1);
       font-size: 11px; font-weight: 600; color: var(--text-sub); cursor: pointer;
     }
-    .insp-action-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .insp-action-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); }
 
     .inspector-code-wrap {
       flex: 1; overflow: auto; padding: 14px; background: rgba(0, 0, 0, 0.35);
@@ -638,7 +725,7 @@
     .inspector-code-wrap::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.15); border-radius: 4px; }
     .code-pre {
       font-family: 'SF Mono', Menlo, Consolas, Monaco, monospace;
-      font-size: 12px; line-height: 1.6; color: #e2e8f0;
+      font-size: 12px; line-height: 1.6; color: #ffe066;
       white-space: pre; tab-size: 2;
     }
 
@@ -677,7 +764,7 @@
     .switch-toggle.on { background: var(--accent); }
     .switch-knob {
       position: absolute; top: 2px; left: 2px; width: 20px; height: 20px;
-      border-radius: 50%; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+      border-radius: 50%; background: var(--jg-gold-pale); box-shadow: 0 2px 5px rgba(0,0,0,0.3);
       transition: transform 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .switch-toggle.on .switch-knob { transform: translateX(20px); }
@@ -692,7 +779,7 @@
       color: var(--text-sub); font-size: 12px; font-weight: 700;
       cursor: pointer; text-align: center; transition: all 0.15s ease;
     }
-    .preset-btn:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+    .preset-btn:hover { background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); }
 
     /* Sliders */
     .range-wrap {
@@ -718,29 +805,29 @@
     .hand-cursor.pinched {
       background: rgba(16, 185, 129, 0.9);
       box-shadow: 0 0 28px rgba(16, 185, 129, 0.95);
-      border-color: #fff; transform: translate(-50%, -50%) scale(0.85);
+      border-color: var(--jg-gold-pale); transform: translate(-50%, -50%) scale(0.85);
     }
     .hand-cursor.fist {
       background: rgba(239, 68, 68, 0.85);
-      border-color: #fff;
+      border-color: var(--jg-gold-pale);
       box-shadow: 0 0 32px rgba(239, 68, 68, 0.9);
       transform: translate(-50%, -50%) scale(1.15);
     }
     .hand-cursor.dwelling {
       border-color: var(--accent);
-      background: rgba(99, 102, 241, 0.35);
+      background: rgba(255, 214, 10, 0.35);
       box-shadow: 0 0 24px var(--accent-glow);
     }
     .hand-cursor.simulated {
       border-style: solid;
-      border-color: #38bdf8;
+      border-color: #ffd60a;
     }
     .cursor-tag {
       position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
-      background: rgba(10, 15, 26, 0.9);
+      background: rgba(14, 15, 18, 0.9);
       border: 1px solid var(--glass-border);
       border-radius: 99px; padding: 2px 8px;
-      font-size: 10px; font-weight: 700; color: #fff;
+      font-size: 10px; font-weight: 700; color: var(--jg-gold-pale);
       white-space: nowrap; pointer-events: none;
       letter-spacing: 0.5px;
     }
@@ -761,12 +848,12 @@
     .cam-helper-banner {
       position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
       width: min(780px, calc(100% - 32px));
-      background: rgba(15, 23, 42, 0.92);
-      border: 1px solid rgba(99, 102, 241, 0.4);
+      background: rgba(14, 15, 18, 0.92);
+      border: 1px solid rgba(255, 214, 10, 0.4);
       backdrop-filter: blur(24px) saturate(180%);
       -webkit-backdrop-filter: blur(24px) saturate(180%);
       border-radius: 16px; padding: 14px 20px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 24px rgba(99, 102, 241, 0.25);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 24px rgba(255, 214, 10, 0.25);
       display: none; align-items: center; justify-content: space-between; gap: 16px;
       z-index: 950; animation: bannerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
     }
@@ -781,7 +868,7 @@
       font-size: 26px; flex-shrink: 0;
     }
     .cam-helper-title {
-      font-size: 13px; font-weight: 700; color: #fff;
+      font-size: 13px; font-weight: 700; color: var(--jg-gold-pale);
     }
     .cam-helper-desc {
       font-size: 11px; color: var(--text-sub); margin-top: 2px;
@@ -797,14 +884,14 @@
       transition: all 0.15s ease;
     }
     .cam-banner-btn.primary {
-      background: var(--accent); border-color: var(--accent); color: #fff;
+      background: var(--accent); border-color: var(--accent); color: var(--jg-gold-pale);
       box-shadow: 0 0 14px var(--accent-glow);
     }
     .cam-banner-btn.primary:hover {
-      background: #4f46e5;
+      background: #c99a1e;
     }
     .cam-banner-btn.secondary {
-      background: rgba(255, 255, 255, 0.08); color: #fff;
+      background: rgba(255, 255, 255, 0.08); color: var(--jg-gold-pale);
     }
     .cam-banner-btn.secondary:hover {
       background: rgba(255, 255, 255, 0.16);
@@ -816,13 +903,13 @@
       font-size: 11px;
     }
     .cam-banner-close:hover {
-      background: rgba(255, 255, 255, 0.15); color: #fff;
+      background: rgba(255, 255, 255, 0.15); color: var(--jg-gold-pale);
     }
 
     /* ── SPATIAL STATUS TELEMETRY HUD (Bottom-Right) ── */
     #spatial-status-hud {
       position: absolute; bottom: 16px; right: 20px;
-      background: rgba(14, 20, 32, 0.85);
+      background: rgba(18, 20, 24, 0.85);
       border: 1px solid var(--glass-border);
       backdrop-filter: blur(14px);
       padding: 8px 16px; border-radius: 99px;
@@ -844,10 +931,10 @@
     /* ── TOAST NOTIFICATION ── */
     #hud-toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
-      background: rgba(14, 20, 32, 0.92);
+      background: rgba(18, 20, 24, 0.92);
       border: 1px solid var(--glass-border);
       backdrop-filter: blur(16px);
-      color: #fff; font-size: 13px; font-weight: 600;
+      color: var(--jg-gold-pale); font-size: 13px; font-weight: 600;
       padding: 9px 20px; border-radius: 99px;
       box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
       opacity: 0; pointer-events: none;
@@ -861,7 +948,7 @@
     #jarvis-dock {
       position: fixed; top: var(--header-h); left: 0; bottom: 0; width: 260px;
       z-index: 940; display: flex; flex-direction: column;
-      background: rgba(12, 17, 28, 0.82);
+      background: rgba(18, 20, 24, 0.82);
       backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
       border-right: 1px solid var(--glass-border);
     }
@@ -884,12 +971,6 @@
     #dock-top .metric-grid { display: none; }
     #dock-top .window-header { display: none; }
     #dock-chat .window-header { display: none; }
-    #dock-top .telemetry-actions {
-      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
-    }
-    #dock-top .telemetry-actions .action-btn {
-      flex: 1 1 45%; padding: 8px 4px; font-size: 11px;
-    }
     #dock-chat { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
     #dock-chat .chat-container { height: 100%; display: flex; flex-direction: column; }
     #dock-chat .chat-feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
@@ -909,7 +990,7 @@
     #dock-chat .chat-btn-icon { font-size: 13px; }
     .chat-img {
       display: block; max-width: 100%; margin-top: 7px;
-      border-radius: 10px; border: 1px solid rgba(140, 160, 255, 0.3);
+      border-radius: 10px; border: 1px solid rgba(255, 214, 10, 0.3);
       cursor: pointer;
     }
 
@@ -939,23 +1020,181 @@
       touch-action: none;
     }
     .desk-icon:hover, .desk-icon.grabbed {
-      background: rgba(56, 189, 248, 0.12);
-      outline: 1px solid rgba(56, 189, 248, 0.35);
+      background: rgba(255, 208, 74, 0.12);
+      outline: 1px solid rgba(255, 208, 74, 0.35);
     }
     .desk-icon.grabbed { cursor: grabbing; }
     .desk-icon .ico { font-size: 46px; line-height: 1; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.55)); pointer-events: none; }
     .desk-icon .lbl {
       margin-top: 7px; font: 600 11px/1.3 system-ui;
-      color: #d7e7ff; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+      color: #ffe9a3; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
       word-break: break-word; pointer-events: none;
     }
     .folder-list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; max-height: 100%; }
     .folder-list li {
       padding: 7px 12px; border-radius: 8px; cursor: pointer;
-      font: 500 13px/1.4 system-ui; color: #cfe3ff;
+      font: 500 13px/1.4 system-ui; color: #ffe9a3;
       white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     }
-    .folder-list li:hover { background: rgba(56, 189, 248, 0.14); }
+    .folder-list li:hover { background: rgba(255, 208, 74, 0.14); }
+    /* ═════════════════════════════════════════════════════════════════════════
+       GOLD GLASS — the look, on every surface.
+       The tokens, the rounded face and the shared pane live in
+       /static/jarvis-glass.css, which the rooms link too: a window here and a
+       panel there are made of the same glass, and the same sliders move it.
+       ═════════════════════════════════════════════════════════════════════════ */
+
+    /* The sand-blast grit. Every pane is blasted glass, never a clear sheet. */
+    .glass-window::after,
+    #hud-header::after,
+    #jarvis-dock::after,
+    #spatial-status-hud::after,
+    .cam-helper-banner::after,
+    #hud-toast::after {
+      content: ''; position: absolute; inset: 0; border-radius: inherit;
+      background-image: var(--jg-grit); background-size: 120px 120px;
+      opacity: calc(var(--jg-sand, 0.3) * 0.30);
+      mix-blend-mode: overlay; pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ── The windows: transparency, sand and frost all follow the sliders ── */
+    .glass-window {
+      --jg-sand: var(--jg-win-sand);
+      background-color: rgba(18, 20, 24, var(--jg-win-alpha));
+      background-image:
+        linear-gradient(157deg, rgba(255, 255, 255, 0.075) 0%, rgba(255, 255, 255, 0) 42%),
+        linear-gradient(rgba(224, 228, 236, calc(var(--jg-win-sand) * 0.20)),
+                        rgba(224, 228, 236, calc(var(--jg-win-sand) * 0.20)));
+      backdrop-filter: blur(var(--jg-win-frost)) saturate(104%) brightness(0.98);
+      -webkit-backdrop-filter: blur(var(--jg-win-frost)) saturate(104%) brightness(0.98);
+      border: var(--jg-line-width) solid var(--jg-line);
+      border-radius: var(--jg-radius);
+      color: var(--jg-text);
+      /* Clear glass over a camera picture still has to be readable: the words
+         carry a dark halo of their own. */
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.75), 0 0 10px rgba(0, 0, 0, 0.5);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.16),
+        0 0 var(--jg-glow-size) var(--jg-glow),
+        0 24px 48px -20px rgba(0, 0, 0, 0.9);
+    }
+    /* A window you are working in: a brighter line and a deeper glow, so the
+       stack still reads when several panes overlap. */
+    .glass-window.focused,
+    .glass-window.grabbed {
+      border-color: var(--jg-gold);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 240, 190, 0.20),
+        0 0 calc(var(--jg-glow-size) * 1.7) var(--jg-glow),
+        0 30px 66px -20px rgba(0, 0, 0, 0.92);
+    }
+    /* While My Hands is engaged the pane gives a little more of the picture. */
+    body.myhands-engaged .glass-window {
+      background-color: rgba(18, 20, 24, var(--jg-win-alpha));
+      border-color: var(--jg-line);
+    }
+
+    /* ── The HUD, the dock and the small readouts: the panel glass ── */
+    #hud-header,
+    #jarvis-dock,
+    #spatial-status-hud,
+    .status-pill,
+    .cam-helper-banner,
+    #hud-toast {
+      --jg-sand: var(--jg-panel-sand);
+      background-color: rgba(18, 20, 24, var(--jg-panel-alpha));
+      backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
+      -webkit-backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
+      border-color: var(--jg-line);
+      color: var(--jg-text);
+      text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.14),
+        0 0 var(--jg-glow-size) var(--jg-glow),
+        0 18px 40px -18px rgba(0, 0, 0, 0.85);
+    }
+    #hud-header { border-bottom: var(--jg-line-width) solid var(--jg-line); }
+    #jarvis-dock { border-right: var(--jg-line-width) solid var(--jg-line); }
+    #dock-top, #dock-chat, #hud-header, #jarvis-dock { border-radius: 0; }
+
+    /* ── The chrome inside a window, in gold and glass ── */
+    .window-header {
+      border-bottom: var(--jg-line-width) solid var(--jg-line-soft);
+      background: rgba(255, 255, 255, 0.035);
+      color: var(--jg-gold-bright);
+    }
+    .window-grab-bar {
+      background: rgba(255, 255, 255, 0.05);
+      border: var(--jg-line-width) solid var(--jg-line-soft);
+    }
+    .window-grab-bar::after { background: rgba(255, 214, 10, 0.60); }
+    .window-grab-bar:hover { border-color: var(--jg-line); box-shadow: 0 0 12px var(--jg-glow); }
+    .window-grab-bar:hover::after { background: var(--jg-gold-bright); }
+    .window-resizer::after { border-color: rgba(255, 214, 10, 0.60); }
+    .window-resizer:hover::after { border-color: var(--jg-gold); }
+
+    /* ── Controls: one gold shape everywhere ── */
+    button, input, select, textarea { font-family: var(--jg-font); }
+    button {
+      color: var(--jg-gold-bright);
+      border: var(--jg-line-width) solid var(--jg-line);
+      background: rgba(255, 255, 255, 0.05);
+    }
+    button:hover:not(:disabled) { background: rgba(255, 214, 10, 0.18); }
+    input, select, textarea {
+      color: var(--jg-gold-bright) !important;
+      background: rgba(0, 0, 0, 0.35);
+      border: var(--jg-line-width) solid var(--jg-line-soft);
+      border-radius: var(--jg-radius);
+    }
+    input::placeholder, textarea::placeholder { color: var(--jg-text-faint); }
+    select option { background: #191a1e; color: var(--jg-gold-bright); }
+    .chat-input:focus, input:focus, select:focus, textarea:focus {
+      border-color: var(--jg-gold);
+      box-shadow: 0 0 0 2px rgba(255, 214, 10, 0.18), 0 0 14px var(--jg-glow);
+      outline: none;
+    }
+    /* The sliders: a thin gold rail with a gold bead. */
+    input[type="range"], .range-input {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 22px; background: transparent; accent-color: var(--jg-gold);
+    }
+    input[type="range"]::-webkit-slider-runnable-track, .range-input::-webkit-slider-runnable-track {
+      height: 3px; background: rgba(255, 214, 10, 0.30); border-radius: 2px;
+    }
+    input[type="range"]::-webkit-slider-thumb, .range-input::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 14px; height: 14px; margin-top: -6px; border-radius: 50%;
+      background: var(--jg-gold); border: 1px solid rgba(255, 246, 212, 0.9);
+      box-shadow: 0 0 12px rgba(255, 208, 74, 0.55);
+    }
+    input[type="range"]::-moz-range-track, .range-input::-moz-range-track {
+      height: 3px; background: rgba(255, 214, 10, 0.30); border-radius: 2px;
+    }
+    input[type="range"]::-moz-range-thumb, .range-input::-moz-range-thumb {
+      width: 13px; height: 13px; border-radius: 50%;
+      background: var(--jg-gold); border: 1px solid rgba(255, 246, 212, 0.9);
+      box-shadow: 0 0 12px rgba(255, 208, 74, 0.55);
+    }
+    .switch-toggle { border: var(--jg-line-width) solid var(--jg-line-soft); }
+    .switch-toggle.on { background: var(--jg-gold); box-shadow: 0 0 12px var(--jg-glow); }
+    .switch-toggle { background: rgba(255, 255, 255, 0.06); }
+    .settings-section-title { color: var(--jg-gold); border-bottom: var(--jg-line-width) solid var(--jg-line-soft); }
+    .settings-desc { color: var(--jg-text-soft); }
+    .preset-btn { color: var(--jg-gold-bright); }
+
+    /* ── The rooms frame: a thin gold line around the whole sliding surface ── */
+    #win-rooms { border: var(--jg-line-width) solid var(--jg-line); border-right: none; }
+    /* ── The chat, readable over any picture behind it ── */
+    .chat-bubble.speaker-jarvis { background: rgba(255, 255, 255, 0.04); border: var(--jg-line-width) solid var(--jg-line-soft); }
+    .chat-bubble.speaker-user { background: rgba(255, 255, 255, 0.07); border: var(--jg-line-width) solid var(--jg-line-soft); }
+    .chat-footer { border-top: var(--jg-line-width) solid var(--jg-line-soft); background: rgba(14, 15, 18, 0.45); }
+    .code-block { border: var(--jg-line-width) solid var(--jg-line-soft); color: var(--jg-gold-bright); }
+
+    /* Depth: every floating thing drops a long, soft shadow. */
+    .desk-icon { text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9); }
+
   </style>
 </head>
 <body data-theme="stark">
@@ -989,16 +1228,6 @@
       <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle Camera Video Feed">
         <span class="btn-icon">📷</span>
         <span id="txt-btn-cam">Camera</span>
-      </button>
-
-      <button class="hud-toggle-btn" id="hud-mic-btn" onclick="doMic()" title="Voice command — click once, then just talk">
-        <span class="btn-icon">🎤</span>
-        <span id="hud-mic-label">Mic</span>
-      </button>
-
-      <button class="hud-toggle-btn" onclick="toggleSpeak()" title="JARVIS speaks replies aloud">
-        <span class="btn-icon">🔊</span>
-        <span>Voice</span>
       </button>
 
       <button class="hud-toggle-btn" onclick="toggleRooms()" title="Sweep the rooms in or away (or just sweep a flat hand)">
@@ -1087,10 +1316,8 @@
           </div>
         </div>
 
-        <div class="telemetry-actions">
-          <button class="action-btn primary" id="btn-wake" onclick="doWake()">⚡ Wake System</button>
-          <button class="action-btn secondary" onclick="requestSystemDiagnostics()">Diagnostics</button>
-        </div>
+        <!-- No wake and no diagnostics buttons: the round JARVIS speaks for
+             itself, and both are still there by voice ("wake up", "status"). -->
       </div>
       <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-telemetry')" title="Tactile Glass Grab Handle"></div>
       <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-telemetry')" title="Drag to Resize Glass Window"></div>
@@ -1110,9 +1337,15 @@
       <div class="window-body chat-container">
         <div class="chat-feed" id="chat-feed"></div>
 
-        <div class="suggestion-row">
-          <div class="sugg-chip" onclick="sendSuggestion('System status check')">📊 Status Check</div>
-          <div class="sugg-chip" onclick="sendSuggestion('List active project modules')">🧩 Project Modules</div>
+        <!-- THE EARS: always visible while the microphone is on. It says what the
+             microphone is doing and mutes/unmutes it with one press — the owner
+             asked never to have to say "Hey Jarvis" again, and to be able to
+             silence the room whenever he likes. -->
+        <div class="listen-bar" id="listen-bar">
+          <span class="listen-dot"></span>
+          <span class="listen-bar-text" id="listen-text">Microphone on — just speak.</span>
+          <button class="listen-bar-btn" id="listen-mode-btn" onclick="toggleListenMode()" title="Switch between responding to everything you say and waiting for &quot;Hey Jarvis&quot;">Always on</button>
+          <button class="listen-bar-btn" id="listen-mute-btn" onclick="toggleMute()" title="Silence the microphone (JARVIS stops listening until you unmute)">🔇 Mute</button>
         </div>
 
         <!-- What the microphone is doing right now, in plain words. Hidden when idle. -->
@@ -1125,14 +1358,15 @@
         </div>
 
         <div class="chat-footer">
+          <!-- The typing row is for typing. Files and documents are imported in
+               the Files window (📂 PC Environment & Files → ⬆ Import, or drag
+               them onto it) — that is the place that shows what came in. -->
           <input class="chat-input" id="chat-input" placeholder="Give JARVIS a directive or ask a question…" autocomplete="off">
-          
-          <label class="chat-btn chat-btn-icon" for="file-upload-input" title="Attach file">📎</label>
-          <input type="file" id="file-upload-input" multiple style="display:none">
 
-          <button class="chat-btn chat-btn-icon" id="mic-btn" onclick="doMic()" title="Voice command">🎤</button>
+          <!-- One speaker button and nothing else: the microphone is always
+               listening, and mute lives in the bar above (🔇 Mute), so two more
+               mic icons in this row were only noise. -->
           <button class="chat-btn chat-btn-icon" id="speak-btn" onclick="toggleSpeak()" title="JARVIS speaks replies aloud (click to switch off)">🔊</button>
-          <button class="chat-btn chat-btn-icon" id="wake-btn" onclick="toggleWakeWord()" title="Listen for &quot;Hey Jarvis&quot; (click to start)">🎙</button>
           <button class="chat-btn chat-btn-send" onclick="doSend()">Send</button>
         </div>
       </div>
@@ -1154,8 +1388,14 @@
       <div class="window-body tree-container">
         <div class="tree-toolbar">
           <input class="tree-search" id="tree-search" placeholder="Filter files…" oninput="filterTree()">
+          <!-- The one place files and documents are brought in. -->
+          <label class="tree-import-btn" for="tree-import-input" title="Import files and documents from this computer">⬆ Import</label>
+          <input type="file" id="tree-import-input" multiple style="display:none">
           <button class="tree-refresh-btn" onclick="loadProjectTree()" title="Refresh file hierarchy">↻</button>
         </div>
+        <div class="tree-drop-hint" id="tree-drop-hint">Drop files and documents here to import them</div>
+        <!-- What was imported just now: name, size, where it went. -->
+        <div class="imported-files" id="imported-files" hidden></div>
         <div class="tree-viewport" id="tree-viewport">
           <div style="padding: 16px; color: var(--text-muted); font-size: 12px;">Loading workspace files…</div>
         </div>
@@ -1213,7 +1453,7 @@
             <span class="settings-desc">Paste your Gemini API key. It is saved to config/api_keys.json (the file the desktop app and every action read; ./.env is updated as well when it holds the key) and is used immediately — no restart. Below: where the key in use comes from, and the model in use.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="AIza… (your Gemini API key)"
-                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:8px 10px; font-size:12px;">
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
               <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey()">Save</button>
             </div>
             <span class="settings-desc" id="gemini-key-status">Checking…</span>
@@ -1300,7 +1540,7 @@
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
             <span class="settings-label">Camera Video Source</span>
             <div style="display: flex; gap: 8px; width: 100%;">
-              <select id="sel-camera" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:12px;" onchange="switchCameraDevice(this.value)">
+              <select id="sel-camera" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="switchCameraDevice(this.value)">
                 <option value="">Default User Camera</option>
               </select>
               <button class="preset-btn" style="padding: 6px 12px; margin: 0;" onclick="cycleCamera()">Cycle</button>
@@ -1314,7 +1554,7 @@
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
             <span class="settings-label">Microphone Source</span>
             <div style="display: flex; gap: 8px; width: 100%;">
-              <select id="sel-mic" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:6px 10px; font-size:12px;" onchange="switchMicDevice(this.value)">
+              <select id="sel-mic" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="switchMicDevice(this.value)">
                 <option value="">System Default Microphone</option>
               </select>
               <button class="preset-btn" style="padding: 6px 12px; margin: 0;" onclick="populateMicDevices(true)">↻</button>
@@ -1335,40 +1575,108 @@
               <button class="preset-btn" id="btn-mic-always" style="flex:1; margin: 0;" onclick="toggleWakeWord()">🎤 Microphone: ON</button>
               <button class="preset-btn" id="btn-speak-always" style="flex:1; margin: 0;" onclick="toggleSpeak()">🔊 Speakers: ON</button>
             </div>
-            <span class="settings-desc">Both stay ON by default: the microphone keeps listening for "Hey Jarvis", the speakers speak every reply. Browsers only open a microphone after a click, so the very first click anywhere on the page arms it — after that it stays on. The plain 🎤 button in the top row is still there for one command without the wake word.</span>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <button class="preset-btn" id="btn-mute" style="flex:1; margin: 0;" onclick="toggleMute()">🔇 Mute listening</button>
+              <select id="sel-listen-mode" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setListenMode(this.value)">
+                <option value="always">Always listen — no wake word</option>
+                <option value="wake">Wake word — "Hey Jarvis"</option>
+              </select>
+            </div>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <button class="preset-btn" id="btn-voice-browser" style="flex:1; margin: 0;" onclick="setVoiceEngine('browser')">🗣 This computer's voice</button>
+              <button class="preset-btn" id="btn-voice-server" style="flex:1; margin: 0;" onclick="setVoiceEngine('server')">🎧 JARVIS server voice</button>
+            </div>
+            <select id="sel-voice-engine" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setVoiceEngine(this.value)">
+              <option value="server">Voice engine: JARVIS server voice — every reply, always (the default)</option>
+              <option value="browser">Voice engine: This computer's voice only (free; for use with no internet or no key)</option>
+            </select>
+            <span class="settings-desc">The server voice is the one that always works, and it is what JARVIS uses unless you change it here. Each spoken sentence is one Gemini voice call, counted in its OWN daily budget (<span id="voice-budget-line">…</span>) — it never eats the answers' budget. Repeated lines ("Listening, sir") are cached and cost nothing after the first time.</span>
+            <span class="settings-desc">The microphone stays ON: in <b>Always listen</b> you simply talk — no "Hey Jarvis" needed before every sentence — and <b>Mute</b> silences it instantly (the same mute is the 🎙 button in the chat bar and the red-dot bar above the input). In <b>Wake word</b> mode JARVIS waits for "Hey Jarvis" first. Browsers only open a microphone after a click, so the very first click anywhere on the page arms it — after that it stays on by itself. The plain 🎤 button is still there for one dictated command.</span>
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-brain-config-1 — the model and the key's source appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-simple-hud-2 — the model and the key's source appear here as soon as the page is open.</span>
           </div>
         </div>
 
         <div>
-          <div class="settings-section-title">Surface Optics & Transparency</div>
-          <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 10px;">
-            <div class="range-wrap">
+          <div class="settings-section-title">Clear Glass &amp; Yellow Lines — every surface</div>
+          <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 12px;">
+            <span class="settings-desc">The glass is clear: you look through it at the room, or at your own camera when it is on, and the thin yellow line is what tells you where a pane ends. Three kinds of surface, two sliders each. <b>Transparency</b>: 0% is invisible glass, 90% is a smoked pane. <b>Sand-blast</b>: a little frost cleans the picture up; a lot of sand makes the pane milky, so nothing behind it can be read — private, not transparent. The yellow line and the bloom (the glow that lifts a pane off the dark) are set once, for all of them, and your numbers are remembered on this computer.</span>
+
+            <!-- Windows: the panels you work in -->
+            <div class="range-wrap" style="width: 100%;">
               <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span>Glass Acrylic Opacity</span>
-                <span id="lbl-opacity">82%</span>
+                <span>🪟 Windows — transparency</span>
+                <span class="settings-desc" id="lbl-win-alpha" style="font-weight: 700; color: var(--jg-gold);">18%</span>
               </div>
-              <input type="range" class="range-input" min="40" max="98" value="82" id="rng-opacity" oninput="updateGlassOpacity(this.value)">
+              <input type="range" class="range-input" min="0" max="90" value="18" id="rng-win-alpha" oninput="updateGlass('win','alpha',this.value)">
             </div>
-            <div class="range-wrap">
+            <div class="range-wrap" style="width: 100%;">
               <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span>Backdrop Blur</span>
-                <span id="lbl-blur">24px</span>
+                <span>🪟 Windows — sand-blast</span>
+                <span class="settings-desc" id="lbl-win-sand" style="font-weight: 700; color: var(--jg-gold);">8%</span>
               </div>
-              <input type="range" class="range-input" min="0" max="40" value="24" id="rng-blur" oninput="updateGlassBlur(this.value)">
+              <input type="range" class="range-input" min="0" max="100" value="8" id="rng-win-sand" oninput="updateGlass('win','sand',this.value)">
             </div>
+
+            <!-- The HUD and the dock -->
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>🧭 HUD &amp; dock — transparency</span>
+                <span class="settings-desc" id="lbl-panel-alpha" style="font-weight: 700; color: var(--jg-gold);">34%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="90" value="34" id="rng-panel-alpha" oninput="updateGlass('panel','alpha',this.value)">
+            </div>
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>🧭 HUD &amp; dock — sand-blast</span>
+                <span class="settings-desc" id="lbl-panel-sand" style="font-weight: 700; color: var(--jg-gold);">6%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="100" value="6" id="rng-panel-sand" oninput="updateGlass('panel','sand',this.value)">
+            </div>
+
+            <!-- The rooms, which are their own page: the same glass, sent over -->
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>🚪 Rooms — transparency</span>
+                <span class="settings-desc" id="lbl-room-alpha" style="font-weight: 700; color: var(--jg-gold);">14%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="90" value="14" id="rng-room-alpha" oninput="updateGlass('room','alpha',this.value)">
+            </div>
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>🚪 Rooms — sand-blast</span>
+                <span class="settings-desc" id="lbl-room-sand" style="font-weight: 700; color: var(--jg-gold);">6%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="100" value="6" id="rng-room-sand" oninput="updateGlass('room','sand',this.value)">
+            </div>
+
+            <!-- One line and one glow, for everything -->
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>✨ Yellow line around every frame</span>
+                <span class="settings-desc" id="lbl-gl-line" style="font-weight: 700; color: var(--jg-gold);">55%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="100" value="55" id="rng-gl-line" oninput="updateGlass('line','line',this.value)">
+            </div>
+            <div class="range-wrap" style="width: 100%;">
+              <div style="display: flex; justify-content: space-between; font-size: 12px;">
+                <span>💡 Bloom &amp; shadow depth</span>
+                <span class="settings-desc" id="lbl-gl-bloom" style="font-weight: 700; color: var(--jg-gold);">100%</span>
+              </div>
+              <input type="range" class="range-input" min="0" max="150" value="100" id="rng-gl-bloom" oninput="updateGlass('bloom','bloom',this.value)">
+            </div>
+            <button class="preset-btn" style="width: 100%; margin: 0;" onclick="resetGlass()">↺ Clear glass, thin yellow lines (reset)</button>
           </div>
         </div>
 
         <div>
-          <div class="settings-section-title">Visual Tone & Palette</div>
+          <div class="settings-section-title">Visual Tone &amp; Palette</div>
           <div class="preset-grid">
-            <button class="preset-btn" onclick="setTheme('stark')">Stark Indigo</button>
-            <button class="preset-btn" onclick="setTheme('emerald')">Matrix Emerald</button>
-            <button class="preset-btn" onclick="setTheme('titanium')">Titanium Cyan</button>
+            <button class="preset-btn" onclick="setTheme('gold')">Bright Yellow</button>
+            <button class="preset-btn" onclick="setTheme('amber')">Amber Yellow</button>
+            <button class="preset-btn" onclick="setTheme('pale')">Pale Yellow</button>
           </div>
         </div>
       </div>
@@ -1386,7 +1694,7 @@
         <span class="spatial-dot" id="dot-hands"></span>
         <span id="txt-hands-status">My Hands: Off</span>
       </div>
-      <div class="spatial-badge" id="badge-gesture" style="color: #38bdf8;">
+      <div class="spatial-badge" id="badge-gesture" style="color: #ffd60a;">
         <span>Gesture: Pointer</span>
       </div>
     </div>
@@ -1408,10 +1716,11 @@
        stay visible — they are the same in every room. A hand sweep, a voice
        command or Esc moves the rooms; there is no chrome and no close button. -->
   <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:260px; right:0; bottom:0;
-       z-index:900; background:#05070f;
-       transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
-       box-shadow:-40px 0 120px rgba(0,0,0,0.8);">
-    <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:#05070f;"></iframe>
+       z-index:900; background:#141519;
+       border:1px solid var(--jg-line); border-right:none;
+       box-shadow:-40px 0 120px rgba(0,0,0,0.8), 0 0 var(--jg-glow-size) var(--jg-glow);
+       transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);">
+    <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:#141519;"></iframe>
   </div>
 
   <!-- TOAST NOTIFICATION -->
@@ -1422,7 +1731,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-11-brain-config-1';
+    const JARVIS_BUILD = '2026-10-11-simple-hud-2';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1589,11 +1898,48 @@
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data);
-          if (m.type === 'log') {
-            appendChat(m.speaker, m.text, m.image);
-            // Speak only fresh JARVIS replies — never the replayed history on page load.
-            if (m.speaker === 'jarvis' && m.timestamp && (Date.now() - m.timestamp) < 10000) {
-              speakReply(m.text);
+          handleServerMessage(m);
+        } catch (err) { console.error('WS msg parse error:', err); }
+      };
+    }
+    initWebSocket();
+
+    /* Every frame the server pushes is handled here — and only here, so the
+       headless tests can feed frames in without a socket (window.__jarvisWs). */
+    function handleServerMessage(m) {
+      {
+        try {
+          if (m.type === 'stream') {
+            // The answer is arriving piece by piece: show it as it is written and
+            // read the finished sentences out loud while the rest is still coming.
+            updateStreamBubble(m.id, m.text, m.done !== false);
+            if (m.speaker === 'jarvis') {
+              if (m.done) finishStreamed(m.id, m.text);
+              else speakStreamed(m.id, m.text);
+            }
+          } else if (m.type === 'log') {
+            if (m.speaker === 'user' && m.id && localEchoes.has(m.id)) {
+              localEchoes.delete(m.id);          // our own command, already on screen
+            } else if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) {
+              renderedReplies.delete(m.id);      // already shown (and spoken) from the HTTP answer
+            } else {
+            const live = liveStreamBubble(m.id);
+            if (live) {
+              // The full reply arrived; it replaces the live bubble, and only the
+              // tail that was never read out is sent to the speakers.
+              live.classList.remove('streaming');
+              renderBubbleBody(live, m.text);
+              if (m.speaker === 'jarvis') finishStreamed(m.id, m.text);
+              liveStreams.delete(m.id);
+            } else {
+              const bubble = appendChat(m.speaker, m.text, m.image, m.replay === true);
+              // Every fresh reply is spoken. Only the history replayed to a page
+              // that has just opened is silent — the server says which is which,
+              // so a slow answer can never be mistaken for old history again.
+              if (m.speaker === 'jarvis' && m.replay !== true) speakReply(m.text);
+              else if (m.speaker === 'jarvis') console.log('[speech] replay, not spoken:', String(m.text).slice(0, 60));
+              void bubble;
+            }
             }
           }
           if (m.type === 'status') {
@@ -1610,22 +1956,93 @@
               toggleMyHandsTracking();
             }
           }
+          if (m.type === 'ui_control') {
+            // Local commands the server passed on: no AI was involved in any of them.
+            if (m.action === 'mute' && !_muted) toggleMute();
+            else if (m.action === 'unmute' && _muted) toggleMute();
+            else if (m.action === 'silence') stopSpeaking();
+            else if (m.action === 'open-window' && m.window) {
+              const w = document.getElementById(m.window);
+              if (w && w.style.display === 'none') toggleWindow(m.window);
+              else if (w && typeof bringToFront === 'function') bringToFront(w);
+            } else if (m.action === 'close-window' && m.window) {
+              const w = document.getElementById(m.window);
+              if (w && w.style.display !== 'none') toggleWindow(m.window);
+            }
+            // The camera, the glass and the rooms' own controls, by voice: no
+            // button in any room is needed for any of them.
+            else if (m.action === 'camera-on' && !cameraStream) enableCameraBackground();
+            else if (m.action === 'camera-off' && cameraStream) disableCameraBackground();
+            else if (m.action === 'toggle-camera') toggleCameraBackground();
+            else if (m.action === 'glass-reset') resetGlass();
+            else if (m.action === 'rooms-tools') sendToRooms({ type: 'jarvis-rooms-tools', open: m.open });
+          }
           if (m.type === 'rooms_control') {
             if (m.action === 'open') openRooms();
             else if (m.action === 'close') closeRooms();
             else if (m.action === 'next') { openRooms(); roomsStep(1); }
             else if (m.action === 'prev') { openRooms(); roomsStep(-1); }
             else if (m.action === 'goto' && m.room) roomsGoto(m.room);
+            else if (m.action === 'tools') sendToRooms({ type: 'jarvis-rooms-tools', open: Boolean(m.open) });
           }
-        } catch (err) { console.error('WS msg parse error:', err); }
-      };
+        } catch (err) { console.error('WS message error:', err); }
+      }
     }
-    initWebSocket();
+    window.__jarvisWs = handleServerMessage;
 
-    function appendChat(speaker, text, image) {
+    // Live (streamed) reply bubbles, by the request id the server echoes back.
+    const liveStreams = new Map();
+    // Commands this page sent itself, by id: the server echoes them back to every
+    // client, and the sender must not print its own words twice.
+    const localEchoes = new Map();
+    // Replies this page has already put on screen through the HTTP answer, by id:
+    // the websocket copy of the same reply must not print it a second time (the
+    // two paths race, and either may arrive first).
+    const renderedReplies = new Map();
+    setInterval(() => {
+      const cutoff = Date.now() - 20000;
+      for (const [id, at] of localEchoes) if (at < cutoff) localEchoes.delete(id);
+      for (const [id, at] of renderedReplies) if (at < cutoff) renderedReplies.delete(id);
+    }, 5000);
+
+    function bubbleName(speaker) {
+      return speaker === 'jarvis' ? _assistantName : (speaker === 'user' ? 'You' : 'System');
+    }
+    function renderBubbleBody(b, text) {
+      let formatted = esc(text);
+      if (String(text).includes('```')) {
+        formatted = String(text).replace(/```([\s\S]*?)```/g, (_m, code) => `<div class="code-block">${esc(code.trim())}</div>`);
+      }
+      const header = b.querySelector('.bubble-header');
+      const tail = b.querySelector('.bubble-tail');
+      header.textContent = bubbleName(b.dataset.speaker);
+      if (tail) tail.innerHTML = formatted; else b.innerHTML = `<div class="bubble-header">${bubbleName(b.dataset.speaker)}</div>${formatted}`;
+    }
+    function liveStreamBubble(id) { return id ? liveStreams.get(id) : null; }
+    function updateStreamBubble(id, text, done) {
+      if (!id) return null;
+      let b = liveStreams.get(id);
+      if (!b) {
+        b = document.createElement('div');
+        b.className = 'chat-bubble speaker-jarvis streaming';
+        b.dataset.speaker = 'jarvis';
+        b.innerHTML = `<div class="bubble-header">${bubbleName('jarvis')}</div><div class="bubble-tail"></div>`;
+        chatFeed.appendChild(b);
+        liveStreams.set(id, b);
+        if (liveStreams.size > 6) liveStreams.delete(liveStreams.keys().next().value);
+      }
+      renderBubbleBody(b, text);
+      if (done) b.classList.remove('streaming');
+      chatFeed.scrollTop = chatFeed.scrollHeight;
+      return b;
+    }
+
+    function appendChat(speaker, text, image, replay) {
       const b = document.createElement('div');
       b.className = `chat-bubble speaker-${speaker}`;
-      const name = speaker === 'jarvis' ? _assistantName : (speaker === 'user' ? 'You' : 'System');
+      b.dataset.speaker = speaker;
+      const name = bubbleName(speaker);
+      void replay;
 
       // Check if text has code blocks
       let formatted = esc(text);
@@ -1654,6 +2071,16 @@
       const txt = inp.value.trim();
       if (!txt) return;
       inp.value = '';
+      sendCommand(txt);
+    }
+
+    /* One place that sends a command — typed, spoken or suggested. The command
+       carries an id, and the server sends that id back with both the live
+       (streamed) answer and the finished one, so a page with the websocket down
+       can still show — and speak — exactly one copy of the reply. */
+    function sendCommand(text) {
+      const txt = String(text || '').trim();
+      if (!txt) return;
       // "voice test" is answered locally: it inspects THIS browser's mouth
       // and ears, which no server can see.
       if (/^(voice|sound|mic|audio)\s*(check|test)$/i.test(txt)) {
@@ -1661,26 +2088,38 @@
         runVoiceCheck();
         return;
       }
+      const requestId = 'cmd-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      localEchoes.set(requestId, Date.now());
       appendChat('user', txt);
       const enc = _encrypt(txt);
-      const body = enc ? { enc } : { text: txt };
-      // Replies normally arrive on the websocket. If that socket is down (a proxy that
-      // drops upgrades, a sleeping tab), the server also returns the reply here, so a
-      // command — especially a spoken one — is never left without an answer.
+      const body = Object.assign(enc ? { enc } : { text: txt }, { requestId });
+      // Replies normally arrive on the websocket as they are written. If that
+      // socket is down (a proxy that drops upgrades, a sleeping tab), the reply
+      // also comes back in this response — and the id it carries keeps the two
+      // paths from ever producing two bubbles or two voices for one command.
       const socketWasUp = (typeof ws !== 'undefined') && ws && ws.readyState === WebSocket.OPEN;
       _authFetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then((r) => (r.ok ? r.json() : null)).then((data) => {
-        if (data && data.reply && !socketWasUp) {
-          appendChat('jarvis', data.reply);
-          speakReply(data.reply);
-        }
+        if (!data || !data.reply) return;
+        const id = data.id || requestId;
+        const live = liveStreamBubble(id);
+        renderedReplies.set(id, Date.now());
+        if (live) { live.classList.remove('streaming'); renderBubbleBody(live, data.reply); liveStreams.delete(id); }
+        else if (!socketWasUp) appendChat('jarvis', data.reply);
+        // The speaking happens exactly once, on whichever path delivered the
+        // words: the stream's tail if this page watched it live, or this reply.
+        if (!socketWasUp && !live) speakReply(data.reply);
       }).catch(() => {
-        if (!socketWasUp) appendChat('system', 'The server did not answer — is JARVIS still running on port 3000?');
+        if (!socketWasUp) {
+          const id = requestId;
+          if (!liveStreamBubble(id)) appendChat('system', 'The server did not answer — is JARVIS still running on port 3000?');
+        }
       });
     }
+    window.sendCommand = sendCommand;
 
     function sendSuggestion(text) {
       document.getElementById('chat-input').value = text;
@@ -1699,16 +2138,31 @@
       const lines = [];
       lines.push(`Secure page (needed for mic): ${window.isSecureContext ? 'yes' : 'NO — mic is blocked on insecure pages'}`);
       lines.push(`Running inside a frame: ${window.top !== window.self ? 'yes — frames often lose mic/speaker rights' : 'no'}`);
-      // The mouth
+      // The mouth — with the two facts that actually cause silence: is speech
+      // switched on in this app, and has the browser loaded any voice at all.
       if ('speechSynthesis' in window) {
+        const st = window.jarvisSpeechStatus ? window.jarvisSpeechStatus() : null;
         const voices = speechSynthesis.getVoices();
         lines.push(`Speech out (TTS): available, ${voices.length} voices loaded${voices.length === 0 ? ' — ZERO voices is why nothing is heard' : ''}`);
+        lines.push(`Speakers in the app: ${st && st.on ? 'ON' : 'OFF — the 🔊 button (or Settings → Voice) turns the voice back on'}; voice: ${st ? st.voice : 'browser default'}${st && st.speaking ? '; speaking now' : ''}`);
+        lines.push(`Voice engine: ${st && st.usingServer ? "the server's Gemini voice (real audio files)" : "this computer's own voice"}${st && st.engine === 'auto' ? ' (automatic)' : ''}${st && st.browserVoiceStarted === false && st.engine === 'auto' && !st.usingServer ? '; the browser voice never started here, so the server voice takes over on the first reply' : ''}`);
       } else {
         lines.push('Speech out (TTS): MISSING in this browser');
       }
-      // The ears
+      // The ears: what the always-on listener is doing this second.
       lines.push(`Mic API: ${navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'available' : 'MISSING'}`);
-      lines.push(`Speech recognition: ${('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) ? 'available' : 'missing — the server transcription fallback is used instead'}`);
+      if (typeof window.jarvisMicStatus === 'function') {
+        const ear = window.jarvisMicStatus();
+        const mode = ear.listenMode === 'always' ? 'ALWAYS listen (no wake word needed)' : 'wake word — answering only to "Hey Jarvis"';
+        const doing = ear.listenState === 'listening' ? 'open and listening now'
+          : ear.listenState === 'muted' ? 'MUTED by you (press 🎙 or the green bar to unmute)'
+          : ear.listenState === 'waiting-for-click' ? 'armed — waiting for one click anywhere so the browser lets it open'
+          : ear.listenState === 'speaking' ? 'paused while JARVIS is speaking; it returns by itself'
+          : ear.listenState === 'busy' ? 'the 🎤 button has the microphone for one dictation'
+          : ear.listenState;
+        lines.push(`Always-on ear: ${mode}; ${doing}`);
+      }
+      lines.push(`Speech recognition: ${('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) ? 'available' : 'missing — the server transcription fallback is used instead (and always-on listening needs Chrome or Edge)'}`);
       const micPolicy = (typeof micPolicyAllows === 'function') ? micPolicyAllows() : null;
       if (micPolicy === false) lines.push('Microphone policy: BLOCKED BY THIS FRAME — open JARVIS in its own tab and the mic works');
       else if (micPolicy === true) lines.push('Microphone policy: the page itself is allowed to ask');
@@ -2284,6 +2738,63 @@
       }
     }
 
+    // ── ONE CAMERA, EVERYWHERE ─────────────────────────────────────────────
+    // The rooms live in their own page. They must show the SAME picture this
+    // page shows — asking for the camera twice is what breaks on a machine that
+    // only allows one viewer — so the stream itself is handed over, and the
+    // rooms only ask for the camera themselves if that hand-over is refused.
+    // The glass numbers travel the same way, so the rooms look like this page.
+    function roomsFrameWindow() {
+      try {
+        const f = document.getElementById('rooms-frame');
+        return f && f.contentWindow ? f.contentWindow : null;
+      } catch (_) { return null; }
+    }
+
+    function sendCameraToRooms() {
+      const win = roomsFrameWindow();
+      if (!win) return;
+      const on = Boolean(cameraStream);
+      try {
+        // Chrome and Firefox can hand a live camera stream to another frame.
+        win.postMessage({ type: 'jarvis-camera', on, stream: cameraStream || null }, location.origin);
+      } catch (err) {
+        // A browser that refuses to send the stream still gets the state, and
+        // the rooms then use the camera themselves.
+        try { win.postMessage({ type: 'jarvis-camera', on }, location.origin); } catch (_) {}
+      }
+    }
+
+    function sendToRooms(message) {
+      const win = roomsFrameWindow();
+      if (!win) return;
+      try { win.postMessage(message, location.origin); } catch (_) {}
+    }
+
+    function pushGlassToRooms() {
+      sendToRooms({ type: 'jarvis-glass', glass: glassSettings });
+    }
+    window.pushGlassToRooms = pushGlassToRooms;
+
+    // What the rooms say back: "hello" when they load, and "please turn the
+    // camera on" when the owner asks for it from inside a room.
+    window.addEventListener('message', (ev) => {
+      if (ev.origin !== location.origin) return;
+      const msg = ev.data || {};
+      if (msg.type === 'jarvis-rooms-hello') {
+        pushGlassToRooms();
+        sendCameraToRooms();
+      } else if (msg.type === 'jarvis-glass-hello') {
+        pushGlassToRooms();
+      } else if (msg.type === 'jarvis-camera-hello') {
+        sendCameraToRooms();
+      } else if (msg.type === 'jarvis-camera-request') {
+        if (msg.on && !cameraStream) enableCameraBackground();
+        else if (!msg.on && cameraStream) disableCameraBackground();
+        else sendCameraToRooms();
+      }
+    });
+
     // ── CAMERA & HARDWARE DIAGNOSTICS ──
     let cameraStream = null;
     let currentCameraId = '';
@@ -2383,8 +2894,10 @@
         dotCam.classList.add('active');
         txtCamStatus.textContent = 'Cam: Active';
         document.body.classList.add('myhands-engaged');
+        document.body.classList.add('jg-cam-on');
         closeCamHelper();
         toast('Camera background active');
+        sendCameraToRooms();        // his picture becomes the glass in the rooms too
         populateCameraDevices();
       } catch (primaryErr) {
         console.warn('Primary camera stream request failed, trying fallback constraints:', primaryErr);
@@ -2397,8 +2910,10 @@
           dotCam.classList.add('active');
           txtCamStatus.textContent = 'Cam: Fallback';
           document.body.classList.add('myhands-engaged');
+          document.body.classList.add('jg-cam-on');
           closeCamHelper();
           toast('Camera background connected');
+          sendCameraToRooms();
           populateCameraDevices();
         } catch (fallbackErr) {
           console.error('Camera access blocked/failed:', fallbackErr);
@@ -2427,6 +2942,8 @@
       if (!handTrackingActive) {
         document.body.classList.remove('myhands-engaged');
       }
+      document.body.classList.remove('jg-cam-on');
+      sendCameraToRooms();          // the rooms go back to their dark grey
       toast('Camera background disabled');
     }
 
@@ -2467,7 +2984,7 @@
         cyberCtx.clearRect(0, 0, w, h);
 
         // Ambient perspective grid
-        cyberCtx.strokeStyle = 'rgba(99, 102, 241, 0.12)';
+        cyberCtx.strokeStyle = 'rgba(255, 214, 10, 0.12)';
         cyberCtx.lineWidth = 1;
         const gridStep = 60;
         const offset = (t * 15) % gridStep;
@@ -2489,7 +3006,7 @@
         cyberCtx.save();
         cyberCtx.translate(cx, cy);
         cyberCtx.rotate(t * 0.08);
-        cyberCtx.strokeStyle = 'rgba(56, 189, 248, 0.2)';
+        cyberCtx.strokeStyle = 'rgba(255, 208, 74, 0.2)';
         cyberCtx.beginPath();
         cyberCtx.arc(0, 0, 240, 0, Math.PI * 1.5);
         cyberCtx.stroke();
@@ -2849,12 +3366,12 @@
       overlayCtx.beginPath();
       overlayCtx.moveTo(thmTip.x, thmTip.y);
       overlayCtx.lineTo(idxTip.x, idxTip.y);
-      overlayCtx.strokeStyle = isPinching ? '#10b981' : (pinchDist < pinchThreshold * 1.5 ? 'rgba(56, 189, 248, 0.8)' : 'rgba(255, 255, 255, 0.3)');
+      overlayCtx.strokeStyle = isPinching ? '#10b981' : (pinchDist < pinchThreshold * 1.5 ? 'rgba(255, 208, 74, 0.8)' : 'rgba(255, 255, 255, 0.3)');
       overlayCtx.lineWidth = isPinching ? 4 : 2;
       overlayCtx.stroke();
 
       // Readout badge
-      overlayCtx.fillStyle = isPinching ? '#10b981' : 'rgba(15, 23, 42, 0.8)';
+      overlayCtx.fillStyle = isPinching ? '#10b981' : 'rgba(24, 25, 30, 0.8)';
       overlayCtx.font = '10px monospace';
       overlayCtx.fillText(`${Math.round(pinchDist)}px`, cursorX + 12, cursorY - 8);
       overlayCtx.restore();
@@ -2921,7 +3438,7 @@
         } else {
           cursorTag.textContent = 'POINTER';
           badgeGesture.textContent = 'Gesture: Pointer';
-          badgeGesture.style.color = '#38bdf8';
+          badgeGesture.style.color = '#ffd60a';
         }
       }
     }
@@ -2934,7 +3451,7 @@
         resetDwell();
         cursorTag.textContent = 'POINTER';
         badgeGesture.textContent = 'Gesture: Pointer';
-        badgeGesture.style.color = '#38bdf8';
+        badgeGesture.style.color = '#ffd60a';
         return;
       }
 
@@ -2985,7 +3502,7 @@
       ];
 
       overlayCtx.save();
-      overlayCtx.strokeStyle = 'rgba(56, 189, 248, 0.4)';
+      overlayCtx.strokeStyle = 'rgba(255, 208, 74, 0.4)';
       overlayCtx.lineWidth = 2;
       for (const [s, e] of connections) {
         const p1 = toScreen(lms[s]);
@@ -3138,45 +3655,213 @@
     }
 
     // ── WORKSPACE APPEARANCE CUSTOMIZATION ──
-    function updateGlassOpacity(val) {
-      document.documentElement.style.setProperty('--glass-bg', `rgba(18, 24, 38, ${val / 100})`);
-      document.getElementById('lbl-opacity').textContent = `${val}%`;
+    // Three kinds of surface, two numbers each (transparency, sand-blast), plus
+    // one thin gold line and one bloom for all of them. The numbers are written
+    // into CSS variables that every pane reads (the shared sheet is
+    // /static/jarvis-glass.css), so a slider moves the whole workspace at once.
+    // The rooms are a separate page: the same numbers are posted into it.
+    // The defaults are CLEAR glass: you see through the pane, and the thin
+    // yellow line is what draws its edge. Sand-blast is the owner's dial for
+    // making a pane milky when he wants privacy rather than a view.
+    const GLASS_KEY = 'jarvis.glass.v2';       // v2: the clear-glass defaults
+    const GLASS_DEFAULTS = {
+      win:   { alpha: 18, sand: 8 },
+      panel: { alpha: 34, sand: 6 },
+      room:  { alpha: 14, sand: 6 },
+      line: 62,
+      bloom: 100,
+    };
+    const GLASS_KINDS = ['win', 'panel', 'room'];
+
+    function glassNumber(value, fallback, lo, hi) {
+      const n = Number(value);
+      return Number.isFinite(n) ? Math.max(lo, Math.min(hi, n)) : fallback;
     }
 
-    function updateGlassBlur(val) {
-      document.documentElement.style.setProperty('--glass-blur', `${val}px`);
-      document.getElementById('lbl-blur').textContent = `${val}px`;
+    function loadGlassSettings() {
+      let raw = {};
+      try { raw = JSON.parse(localStorage.getItem(GLASS_KEY) || '{}') || {}; } catch (_) { raw = {}; }
+      const out = JSON.parse(JSON.stringify(GLASS_DEFAULTS));
+      for (const kind of GLASS_KINDS) {
+        const saved = raw[kind] || {};
+        out[kind] = {
+          alpha: glassNumber(saved.alpha, GLASS_DEFAULTS[kind].alpha, 0, 90),
+          sand: glassNumber(saved.sand, GLASS_DEFAULTS[kind].sand, 0, 100),
+        };
+      }
+      out.line = glassNumber(raw.line, GLASS_DEFAULTS.line, 0, 100);
+      out.bloom = glassNumber(raw.bloom, GLASS_DEFAULTS.bloom, 0, 150);
+      return out;
+    }
+
+    let glassSettings = loadGlassSettings();
+
+    function applyGlassSettings() {
+      const root = document.documentElement.style;
+      for (const kind of GLASS_KINDS) {
+        const g = glassSettings[kind];
+        root.setProperty(`--jg-${kind}-alpha`, (g.alpha / 100).toFixed(3));
+        root.setProperty(`--jg-${kind}-sand`, (g.sand / 100).toFixed(3));
+        // One slider, one effect: the sand-blast thickens the pane AND frosts
+        // it, so "more sand" really does mean "less see-through".
+        root.setProperty(`--jg-${kind}-frost`, `${Math.round((g.sand / 100) * 40)}px`);
+      }
+      const line = glassSettings.line / 100;
+      root.setProperty('--jg-line', `rgba(255, 214, 10, ${(0.15 + line * 0.80).toFixed(3)})`);
+      root.setProperty('--jg-line-soft', `rgba(255, 214, 10, ${(0.05 + line * 0.33).toFixed(3)})`);
+      const bloom = glassSettings.bloom / 100;
+      root.setProperty('--jg-glow', `rgba(255, 214, 10, ${(0.30 * bloom).toFixed(3)})`);
+      root.setProperty('--jg-glow-size', `${Math.round(22 * bloom)}px`);
+      glassReadouts();
+      pushGlassToRooms();
+    }
+
+    function glassReadouts() {
+      const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+      for (const kind of GLASS_KINDS) {
+        set(`lbl-${kind}-alpha`, `${Math.round(glassSettings[kind].alpha)}%`);
+        set(`lbl-${kind}-sand`, `${Math.round(glassSettings[kind].sand)}%`);
+        const a = document.getElementById(`rng-${kind}-alpha`);
+        const sd = document.getElementById(`rng-${kind}-sand`);
+        if (a) a.value = String(Math.round(glassSettings[kind].alpha));
+        if (sd) sd.value = String(Math.round(glassSettings[kind].sand));
+      }
+      set('lbl-gl-line', `${Math.round(glassSettings.line)}%`);
+      set('lbl-gl-bloom', `${Math.round(glassSettings.bloom)}%`);
+      const line = document.getElementById('rng-gl-line');
+      const bloom = document.getElementById('rng-gl-bloom');
+      if (line) line.value = String(Math.round(glassSettings.line));
+      if (bloom) bloom.value = String(Math.round(glassSettings.bloom));
+    }
+
+    function updateGlass(kind, key, value) {
+      if (kind === 'line' || kind === 'bloom') {
+        glassSettings[kind] = glassNumber(value, GLASS_DEFAULTS[kind], 0, kind === 'bloom' ? 150 : 100);
+      } else if (GLASS_KINDS.includes(kind) && (key === 'alpha' || key === 'sand')) {
+        glassSettings[kind][key] = glassNumber(value, GLASS_DEFAULTS[kind][key], 0, key === 'alpha' ? 90 : 100);
+      } else {
+        return;
+      }
+      try { localStorage.setItem(GLASS_KEY, JSON.stringify(glassSettings)); } catch (_) {}
+      applyGlassSettings();
+    }
+
+    function resetGlass() {
+      glassSettings = JSON.parse(JSON.stringify(GLASS_DEFAULTS));
+      try { localStorage.setItem(GLASS_KEY, JSON.stringify(glassSettings)); } catch (_) {}
+      applyGlassSettings();
+      toast('Glass reset: clear, with thin yellow lines');
     }
 
     function setTheme(theme) {
-      document.body.setAttribute('data-theme', theme);
+      document.body.setAttribute('data-theme', theme === 'gold' ? '' : theme);
       FoleyAudio.place();
-      toast(`Theme set to ${theme}`);
+      const names = { gold: 'Bright yellow', amber: 'Amber yellow', pale: 'Pale yellow' };
+      toast(`Palette: ${names[theme] || theme}`);
     }
 
-    // ── FILE UPLOADS ──
-    document.getElementById('file-upload-input').addEventListener('change', function () {
-      Array.from(this.files).forEach(uploadFileToJarvis);
-      this.value = '';
-    });
+    // ── IMPORTING FILES AND DOCUMENTS — in the Files window ─────────────────
+    // The owner asked for the typing row to be for typing: files and documents
+    // are imported in the 📂 PC Environment & Files window, with the ⬆ Import
+    // button or by dropping them onto that window. Everything lands in this
+    // computer's uploads folder and appears in the tree; no AI is involved.
+    let importing = 0;
+
+    function importFiles(fileList) {
+      const files = Array.from(fileList || []);
+      if (!files.length) return;
+      if (importedFilesEl) importedFilesEl.hidden = false;
+      for (const file of files) uploadFileToJarvis(file);
+    }
 
     function uploadFileToJarvis(file) {
       const fd = new FormData();
       fd.append('file', file);
-      toast(`Uploading ${file.name}…`);
-      _authFetch('/api/upload', {
-        method: 'POST',
-        body: fd
-      }).then(r => r.json()).then(data => {
-        if (data.ok) {
-          FoleyAudio.place();
-          toast(`Uploaded: ${file.name}`);
-          loadProjectTree();
-        } else {
-          toast('Upload failed');
-        }
-      }).catch(err => toast(`Upload error: ${err.message}`));
+      importing += 1;
+      const kb = (file.size / 1024).toFixed(0);
+      toast(`Importing ${file.name} (${kb} KB)…`);
+      _authFetch('/api/upload', { method: 'POST', body: fd })
+        .then((r) => r.json())
+        .then((data) => {
+          if (data.ok) {
+            FoleyAudio.place();
+            toast(`Imported: ${file.name} → uploads/${data.name}`);
+            showImported(`📄 ${file.name}`, `${kb} KB → uploads/${data.name}`);
+            loadProjectTree();
+          } else {
+            toast(`Import failed: ${file.name}`);
+            showImported(`⚠ ${file.name}`, 'the computer refused it');
+          }
+        })
+        .catch((err) => {
+          toast(`Import error: ${err.message}`);
+          showImported(`⚠ ${file.name}`, err.message);
+        })
+        .finally(() => {
+          importing = Math.max(0, importing - 1);
+          if (!importing) toast('All files imported — they are in the tree and in uploads/');
+        });
     }
+
+    // The list of what just came in, inside the Files window: a name and where
+    // it landed, so an import is never a mystery.
+    const importedFilesEl = document.getElementById('imported-files');
+    function showImported(name, where) {
+      if (!importedFilesEl) return;
+      importedFilesEl.hidden = false;
+      const row = document.createElement('div');
+      row.className = 'imported-row';
+      const title = document.createElement('span');
+      title.className = 'imported-name';
+      title.textContent = name;
+      const detail = document.createElement('span');
+      detail.className = 'imported-where';
+      detail.textContent = where;
+      row.appendChild(title);
+      row.appendChild(detail);
+      importedFilesEl.appendChild(row);
+      importedFilesEl.scrollTop = importedFilesEl.scrollHeight;
+    }
+
+    (function wireFileImporting() {
+      const picker = document.getElementById('tree-import-input');
+      if (picker) {
+        picker.addEventListener('change', function () {
+          importFiles(this.files);
+          this.value = '';
+        });
+      }
+
+      // Dropping onto the window: the whole Files window is the target, with the
+      // hint appearing while a drag is over it.
+      const win = document.getElementById('win-tree');
+      const body = win && win.querySelector('.window-body');
+      if (!win) return;
+      const hint = document.getElementById('tree-drop-hint');
+      const over = (on) => {
+        win.classList.toggle('drop-ready', on);
+        if (hint) hint.classList.toggle('show', on);
+      };
+      for (const el of [win, body]) {
+        if (!el) continue;
+        el.addEventListener('dragover', (e) => {
+          if (!e.dataTransfer) return;
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'copy';
+          over(true);
+        });
+        el.addEventListener('dragleave', (e) => {
+          // Leaving for a child element is not leaving the window.
+          if (e.relatedTarget && win.contains(e.relatedTarget)) return;
+          over(false);
+        });
+        el.addEventListener('drop', (e) => {
+          e.preventDefault();
+          over(false);
+          if (e.dataTransfer && e.dataTransfer.files) importFiles(e.dataTransfer.files);
+        });
+      }
+    })();
 
     /* ══ VOICE — THE MICROPHONE BUTTON ══════════════════════════════════════
        One click, then just talk. This used to hand everything to the browser's
@@ -3195,11 +3880,10 @@
             are being heard — no mysterious second click needed;
          5. when neither path can work it prints the one thing to fix, with a
             button that does it (usually "Open in New Tab").
-       doMic() is wired to the top-row Mic button, the dialogue mic and the
-       wake word, so it stays a plain global function. */
-    const micBtn        = document.getElementById('mic-btn');
-    const micHudBtn     = document.getElementById('hud-mic-btn');
-    const micHudLabel   = document.getElementById('hud-mic-label');
+       The microphone needs no button anywhere: it is always listening, the bar
+       above the message box says what it is doing and holds the one Mute
+       control, and doMic() stays a plain global function for the "Send now"
+       button and for anything else that wants to take one utterance. */
     const micStripEl    = document.getElementById('mic-strip');
     const micStatusEl   = document.getElementById('mic-status');
     const micMeterFillEl = document.getElementById('mic-meter-fill');
@@ -3243,25 +3927,15 @@
       Mic.state = state;
       const listening = state === 'listening';
       const working = state === 'opening' || state === 'transcribing';
-      if (micBtn) {
-        micBtn.classList.toggle('recording', listening);
-        micBtn.classList.toggle('working', working);
-        micBtn.title = listening ? 'Listening — click to send what you have said'
-                      : working ? 'Working…'
-                      : 'Voice command — click once, then just talk';
-      }
-      if (micHudBtn) micHudBtn.classList.toggle('active', listening);
-      if (micHudLabel) micHudLabel.textContent = listening ? 'Listening' : (state === 'transcribing' ? 'Sending…' : 'Mic');
       if (micNewTabEl) micNewTabEl.style.display = micInFrame() ? '' : 'none';
       if (state === 'idle') {
         micStrip(false, false);
         if (micMeterFillEl) micMeterFillEl.style.width = '0%';
         micArmHint();                       // always-on: show that the ear is still open
-        // A one-shot command pauses the always-on listener; once the session is over,
-        // arm it again — otherwise the microphone would quietly stay off after one use.
-        setTimeout(() => {
-          if (_wakeOn && Mic.state === 'idle' && !_wakeRec && !_wakeNeedsGesture) startWakeLoop();
-        }, 300);
+        // A one-shot dictation uses the microphone for itself; once it is over the
+        // always-on listener is armed again — otherwise the microphone would
+        // quietly stay off after one press of the 🎤 button.
+        setTimeout(() => { ensureListening(); renderWakeBtn(); }, 300);
       } else {
         if (micStripEl) micStripEl.classList.remove('armed');
         micStrip(true, false);
@@ -3662,7 +4336,7 @@
 
       const gen = ++Mic.gen;
       const stale = () => Mic.gen !== gen;
-      stopWakeLoop();                                   // one recogniser at a time
+      pauseListeningForSpeech();                        // one recogniser at a time
       if (window.speechSynthesis) { try { speechSynthesis.cancel(); } catch (_) {} }
       Mic.srHeard = false; Mic.srNote = ''; Mic.speechSeen = false;
       Mic.loudSince = 0; Mic.lastLoudAt = 0; Mic.deadAirWarned = false; Mic.noise = 0.004;
@@ -3716,23 +4390,6 @@
       toast('🎤 Listening — speak now');
     }
     window.doMic = doMic;
-    // One call that answers "why did the mic not work?" — used by the harness and by
-    // anyone diagnosing a machine where Chrome's own recogniser is silent.
-    window.jarvisMicStatus = () => ({
-      state: Mic.state,
-      recogniser: Mic.sr ? 'listening' : (Mic.srNote || 'idle'),
-      heardSpeech: Mic.speechSeen,
-      capturedSeconds: Math.round((Mic.samples / (Mic.rate || 48000)) * 100) / 100,
-      recogniserAvailable: !!(window.SpeechRecognition || window.webkitSpeechRecognition),
-      rawCapture: !!Mic.proc,
-      securePage: !!window.isSecureContext,
-      inFrame: micInFrame(),
-      frameAllowsMicrophone: micPolicyAllows(),
-      savedDevice: localStorage.getItem('jarvis-mic-device') || 'system default',
-      micAlwaysOn: _wakeOn,
-      alwaysListening: !!_wakeRec,
-      waitingForFirstClick: _wakeNeedsGesture,
-    });
 
     // ── Settings → Voice: the two self-tests, in their own words ───────────
     function openVoiceSettings() {
@@ -3741,6 +4398,7 @@
       else if (w && typeof bringToFront === 'function') bringToFront(w);
       if (w) { try { w.scrollIntoView({ block: 'nearest' }); } catch (_) {} }
       populateMicDevices();
+      refreshVoiceBudget();
       const rep = document.getElementById('voice-test-report');
       if (rep) { rep.style.borderColor = 'var(--accent)'; setTimeout(() => { rep.style.borderColor = ''; }, 900); }
     }
@@ -3879,225 +4537,938 @@
           out.push(`✖ A tone could not be played: ${err.message}`);
         }
       }
-      if ('speechSynthesis' in window) {
+      // ── The three ways sound can leave this page, each proved on its own ──
+      // 1. the tones above (Web Audio)  2. this computer's own voice  3. the
+      // server's voice, played as an audio file. Whichever of the three is heard
+      // tells the owner exactly where the silence is coming from.
+      let browserSpoke = false;
+      if ('speechSynthesis' in window && typeof SpeechSynthesisUtterance === 'function') {
         try {
           const voices = speechSynthesis.getVoices();
-          const u = new SpeechSynthesisUtterance('Voice check. If you hear this sentence, my speakers work.');
-          const preferred = voices.find((v) => /en[-_]GB/i.test(v.lang) && /male|daniel|george|ryan/i.test(v.name))
+          const u = new SpeechSynthesisUtterance('This is this computer\'s own voice.');
+          const preferred = voices.find((v) => /en[-_]GB/i.test(v.lang) && /male|daniel|george|ryan|arthur/i.test(v.name))
             || voices.find((v) => /en[-_]GB/i.test(v.lang))
             || voices.find((v) => /^en/i.test(v.lang));
           if (preferred) u.voice = preferred;
+          u.onstart = () => { browserSpoke = true; };
           speechSynthesis.cancel();
-          speechSynthesis.speak(u);
-          out.push(`🗣 A spoken sentence is playing as well (${voices.length} browser voice${voices.length === 1 ? '' : 's'} loaded).`);
+          setTimeout(() => speechSynthesis.speak(u), 60);
+          out.push(`🗣 2. This computer's voice: ${voices.length ? `${voices.length} voice${voices.length === 1 ? '' : 's'} loaded, sentence playing — you should hear "This is this computer's own voice."` : 'NO VOICES ARE INSTALLED on this computer, so this path can never make a sound. Use the server voice below.'}`);
         } catch (err) {
-          out.push(`✖ Speech synthesis refused: ${err.message}`);
+          out.push(`✖ 2. This computer's voice refused to speak: ${err.message}`);
         }
       } else {
-        out.push('✖ This browser has no speech synthesis, so JARVIS cannot speak replies aloud here.');
+        out.push('✖ 2. This browser has no speech synthesis at all — this path can never make a sound here. Use the server voice below.');
       }
-      out.push('Nothing heard? Check the volume, the output device, and mute in the system mixer — the page cannot see those.');
+
+      try {
+        out.push('🎧 3. JARVIS server voice: asking the server to say "This is my own voice, sir." — it arrives as an audio file…');
+        if (rep) rep.textContent = out.join('\n');
+        const res = await _authFetch('/api/voice/speak', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'This is my own voice, sir.' }),
+        });
+        const data = await res.json();
+        if (data.ok && data.audio) {
+          const bytes = Uint8Array.from(atob(data.audio), (c) => c.charCodeAt(0));
+          const url = URL.createObjectURL(new Blob([bytes], { type: data.mime || 'audio/wav' }));
+          const el = new Audio(url);
+          el.onended = () => URL.revokeObjectURL(url);
+          await el.play();
+          out.push(`🎧 3. JARVIS server voice: PLAYING — ${(data.audio.length * 3 / 4 / 1024).toFixed(0)} kB of real audio from ${data.model}, made in ${data.ms} ms.`);
+        } else {
+          out.push(`✖ 3. JARVIS server voice could not speak: ${data.message || res.status}`);
+        }
+      } catch (err) {
+        out.push(`✖ 3. JARVIS server voice could not be reached or played: ${err.message}`);
+      }
+
+      out.push('— what the results mean —');
+      out.push('• Tones heard but neither sentence: the browser is fine, its speech engine is not — pick "JARVIS server voice" above.');
+      out.push('• Tones AND the server sentence heard: the page can make sound; set the voice engine to the server voice and every reply will be audible.');
+      out.push('• Nothing at all is heard, not even the tones: the sound is being stopped outside this page — right-click the page tab and check it is not muted, check the site is not silenced in the browser, and check the volume mixer (Windows) or Sound settings (macOS) for the browser itself. The page cannot see or change any of those.');
+      void browserSpoke;
       if (rep) rep.textContent = out.join('\n');
     }
     window.testSpeakersNow = testSpeakersNow;
 
-    // ── JARVIS speaks (browser speech synthesis — no server, no network) ────
+    /* ══ JARVIS'S MOUTH — speech synthesis, made reliable ═════════════════════
+       The owner's report was "it answers in the chat but I hear nothing", and
+       there were three real reasons for that in this page:
+
+         1. a reply was only read aloud when its timestamp was under ten seconds
+            old. A slow answer — thinking enabled, or a second model tried after
+            the first — took longer than that, so it was written to the screen
+            and silently dropped from the speakers. (The same clock comparison
+            also misfires whenever the browser's clock differs from the server's.)
+         2. speechSynthesis.cancel() was called in the same tick as speak(),
+            the well-known Chrome race in which the new utterance is thrown
+            away and nothing is ever heard;
+         3. an entire long reply was one utterance of several hundred
+            characters, and Chrome stops reading a long utterance part-way.
+
+       This engine fixes all three. Every fresh reply is spoken (the only thing
+       skipped is the history replayed to a page that has just opened, and the
+       server marks those messages), the text is queued sentence by sentence so
+       no single utterance is long, and a watchdog notices an utterance that
+       never started or never finished and moves on to the next one instead of
+       going silent forever. speechSynthesis.resume() is called whenever Chrome
+       pauses itself mid-sentence.
+
+       The queue is also what lets a streamed answer be read out loud while the
+       model is still writing the end of it: each new complete sentence goes
+       straight into the queue, so JARVIS starts talking in about a second
+       instead of waiting for the whole paragraph. */
     const speakBtn = document.getElementById('speak-btn');
     let _speakOn = localStorage.getItem('jarvis-speak') !== 'off';
+    let _lastSpokenText = '';        // so the microphone can ignore JARVIS's own voice
+    // Which throat speaks: the browser's own voice (free, instant), the server's
+    // Gemini voice (real audio, works even on a machine with no voices installed),
+    // or — the default — the browser when it can, the server when it cannot.
+    // The owner's instruction: JARVIS's own server voice, always — never the
+    // browser's. (An older saved value of 'auto' means the same thing now.)
+    const _savedEngine = localStorage.getItem('jarvis-voice-engine');
+    let _voiceEngine = _savedEngine === 'browser' ? 'browser' : 'server';
+    let _browserVoiceFailed = false;   // has the browser's voice ever actually started?
+    let _voiceProofDone = false;     // has the first click been answered with a word?
+
+    const Speech = {
+      queue: [],          // sentences waiting to be read out
+      speaking: false,    // the browser's mouth is busy right now
+      startedAt: 0,
+      voice: null,
+      streams: {},        // streamId -> { spoken: characters already queued }
+      watchdog: 0,
+      resumeTimer: 0,
+    };
+
+    // Both halves are required to say anything: the synthesiser itself and the
+    // utterance class. A webview with one but not the other is honestly silent.
+    function speechSupported() {
+      return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance === 'function';
+    }
+    /** Somewhere for the words to come out of: the browser's voice, or the server's. */
+    function canSpeak() { return speechSupported() || _voiceEngine === 'server' || _voiceEngine === 'auto'; }
+
+    /* The clearest English voice this machine has: a British male first, then any
+       British, then any English. Chrome loads its voice list asynchronously, so
+       this is also called again from the voiceschanged event. */
+    function pickVoice() {
+      if (!speechSupported()) return null;
+      try {
+        const voices = window.speechSynthesis.getVoices() || [];
+        if (!voices.length) return null;
+        const choice = voices.find((v) => /en[-_]GB/i.test(v.lang) && /male|daniel|george|ryan|arthur/i.test(v.name))
+          || voices.find((v) => /en[-_]GB/i.test(v.lang))
+          || voices.find((v) => /^en/i.test(v.lang))
+          || voices[0];
+        Speech.voice = choice || null;
+      } catch (_) { Speech.voice = null; }
+      return Speech.voice;
+    }
+
+    if (speechSupported()) {
+      pickVoice();
+      try { window.speechSynthesis.onvoiceschanged = () => pickVoice(); } catch (_) {}
+      // Chrome silently pauses speechSynthesis after a while and needs resume()
+      // poked at it; this is also the watchdog that recovers a dropped utterance.
+      Speech.watchdog = setInterval(() => {
+        const synth = window.speechSynthesis;
+        if (!synth) return;
+        try { if (synth.paused) synth.resume(); } catch (_) {}
+        if (Speech.speaking && !synth.speaking && !synth.pending && performance.now() - Speech.startedAt > 1400) {
+          // The synthesiser took the sentence and never made a sound. That is the
+          // exact failure this app's voice engine is meant to avoid, so it is
+          // reported: the server voice is one press away, and it has never failed
+          // for this reason.
+          const first = !_browserVoiceFailed;
+          _browserVoiceFailed = true;
+          console.warn('[speech] the browser voice never started');
+          if (first) {
+            toast('🔇 This computer\'s voice made no sound — switch to the JARVIS server voice');
+            micReport('🔊 This computer\'s own voice accepted the sentence and never made a sound. That is the browser\'s speech engine failing, not the speakers. ' +
+              'Use the JARVIS server voice instead — Settings → Voice → "JARVIS server voice" (or the option in the voice-engine list) — which plays real audio files and does not depend on this computer having a voice.', [
+              { label: '🔊 Use the server voice', run: () => setVoiceEngine('server') },
+              { label: '🔊 Test speakers', run: () => testSpeakersNow() },
+            ]);
+          }
+          finishUtterance('swallowed');
+        }
+        if (!Speech.speaking && Speech.queue.length && _speakOn) pumpSpeech();
+        // The ear looks after itself: a session the browser accepted but never
+        // started means it is waiting for a click, and one with no session and
+        // no restart pending is simply opened again.
+        if (_listener && !_startedAt && _requestedAt && performance.now() - _requestedAt > 2000) {
+          stopListener();
+          armWakeOnGesture();
+        } else if (shouldListen() && !_listener && !_listenTimer && Mic.state === 'idle') {
+          scheduleListenRestart(300);
+        }
+      }, 800);
+    }
+
+    /* Strip what should not be read out (code, markup) and cut the text into
+       short pieces, so one utterance is never more than a few sentences. */
+    function cleanForSpeech(text) {
+      return String(text || '')
+        .replace(/```[\s\S]*?```/g, ' — code block — ')
+        .replace(/[*_#`>|]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+    function chunkForSpeech(text) {
+      const clean = cleanForSpeech(text);
+      if (!clean) return [];
+      const sentences = clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean];
+      const out = [];
+      let buf = '';
+      for (const s of sentences) {
+        if (buf && (buf + s).length > 240) { out.push(buf.trim()); buf = ''; }
+        buf += s;
+        while (buf.length > 320) {
+          const cut = buf.lastIndexOf(' ', 240);
+          const at = cut > 80 ? cut : 240;
+          out.push(buf.slice(0, at).trim());
+          buf = buf.slice(at);
+        }
+      }
+      if (buf.trim()) out.push(buf.trim());
+      return out.filter(Boolean).slice(0, 60);
+    }
+
     function renderSpeakBtn() {
-      speakBtn.textContent = _speakOn ? '🔊' : '🔇';
-      speakBtn.title = _speakOn ? 'JARVIS speaks replies aloud (click to switch off)'
-                                : 'JARVIS is silent (click to speak replies aloud)';
+      if (speakBtn) {
+        speakBtn.textContent = _speakOn ? '🔊' : '🔇';
+        speakBtn.title = _speakOn ? 'JARVIS speaks replies aloud (click to switch off)'
+                                  : 'JARVIS is silent (click to speak replies aloud)';
+      }
       const btn = document.getElementById('btn-speak-always');
       if (btn) {
         btn.textContent = _speakOn ? '🔊 Speakers: ON' : '🔊 Speakers: OFF';
         btn.style.color = _speakOn ? 'var(--emerald)' : '';
       }
     }
+
     function toggleSpeak() {
       _speakOn = !_speakOn;
       localStorage.setItem('jarvis-speak', _speakOn ? 'on' : 'off');
-      if (!_speakOn && window.speechSynthesis) speechSynthesis.cancel();
+      if (!_speakOn) stopSpeaking();
       renderSpeakBtn();
+      renderListenBar();
       toast(_speakOn ? '🔊 JARVIS voice on' : '🔇 JARVIS voice off');
       if (_speakOn) speakReply('Voice online, sir.');
     }
-    function speakReply(text) {
-      if (!_speakOn || !window.speechSynthesis || !text) return;
-      if (Mic.state === 'listening') return;            // never talk over the microphone
-      const clean = String(text)
-        .replace(/```[\s\S]*?```/g, ' — code block — ')
-        .replace(/[*_#`>|]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .slice(0, 1200);
-      if (!clean) return;
-      speechSynthesis.cancel();
-      const u = new SpeechSynthesisUtterance(clean);
-      u.rate = 1.02;
-      u.pitch = 0.95;
-      const voices = speechSynthesis.getVoices();
-      const preferred = voices.find(v => /en[-_]GB/i.test(v.lang) && /male|daniel|george|ryan/i.test(v.name))
-        || voices.find(v => /en[-_]GB/i.test(v.lang))
-        || voices.find(v => /^en/i.test(v.lang));
-      if (preferred) u.voice = preferred;
-      speechSynthesis.speak(u);
+
+    /* Everything in the mouth stops now (used when the mode or the mic changes). */
+    function stopSpeaking() {
+      Speech.queue.length = 0;
+      Speech.streams = {};
+      try { window.speechSynthesis.cancel(); } catch (_) {}
+      try { window.speechSynthesis.resume(); } catch (_) {}
+      Speech.speaking = false;
+      resumeListeningAfterSpeech();
     }
-    if (window.speechSynthesis) speechSynthesis.getVoices();   // warm the voice list (async in Chrome)
-    refreshBuildLine(null);   // the build marker + the settings in force, before the pane is opened
+    window.__jarvisStopSpeaking = stopSpeaking;
+
+    /* Speak one whole reply (a reply that arrived in one piece, or an
+       acknowledgement such as "Microphone on, sir."). */
+    function speakReply(text) {
+      if (!_speakOn || !canSpeak() || !text) return;
+      const pieces = chunkForSpeech(text);
+      if (!pieces.length) return;
+      _lastSpokenText = cleanForSpeech(text);
+      Speech.queue.push(...pieces);
+      pumpSpeech();
+    }
+
+    /* Speak a reply that is still being written: everything up to the last
+       complete sentence goes into the queue; the half-written tail waits for
+       the next piece of the answer. */
+    function speakStreamed(id, textSoFar) {
+      if (!_speakOn || !canSpeak() || !textSoFar) return;
+      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const clean = cleanForSpeech(textSoFar);
+      if (clean.length <= entry.spoken) return;
+      _lastSpokenText = clean;
+      const fresh = clean.slice(entry.spoken);
+      const upto = fresh.match(/^[\s\S]*[.!?…]+(?=\s|$)/);      // only finished sentences
+      if (!upto) return;
+      const speakable = upto[0];
+      entry.spoken += speakable.length;
+      Speech.queue.push(...chunkForSpeech(speakable));
+      pumpSpeech();
+    }
+
+    /* The answer is complete: read out whatever tail was still waiting. */
+    function finishStreamed(id, fullText) {
+      if (!_speakOn || !canSpeak() || !fullText) return;
+      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const clean = cleanForSpeech(fullText);
+      const tail = clean.slice(entry.spoken);
+      entry.spoken = clean.length;
+      if (!tail.trim()) return;
+      Speech.queue.push(...chunkForSpeech(tail));
+      pumpSpeech();
+    }
+
+    /* The server's voice: one sentence in, a real WAV file out, played by the
+       page. This is the path that works when the computer has no voice of its
+       own — the sound does not depend on what the browser can synthesise. */
+    const _serverVoiceCache = new Map();     // sentence -> object URL (this page's copy)
+    async function speakViaServer(text) {
+      const sentence = String(text || '').slice(0, 1200);
+      const remembered = _serverVoiceCache.get(sentence);
+      if (remembered) {
+        try {
+          const el = new Audio(remembered);
+          el.onended = () => finishUtterance('end');
+          el.onerror = () => finishUtterance('error');
+          await el.play();
+          return true;
+        } catch (_) { /* the remembered copy would not play: ask for it again below */ }
+      }
+      const body = JSON.stringify({ text: sentence });
+      let res, data;
+      try {
+        res = await _authFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        data = await res.json();
+      } catch (err) {
+        toast('🔇 The server voice could not be reached');
+        console.warn('[speech] the server voice could not be reached:', err && err.message);
+        return false;
+      }
+      if (!data || !data.ok || !data.audio) {
+        console.warn('[speech] the server voice refused:', data && data.message);
+        micReport(`🔊 The server voice could not speak: ${(data && data.message) || 'no reason given'}.`, []);
+        return false;
+      }
+      try {
+        const bytes = Uint8Array.from(atob(data.audio), (c) => c.charCodeAt(0));
+        const url = URL.createObjectURL(new Blob([bytes], { type: data.mime || 'audio/wav' }));
+        _serverVoiceCache.set(sentence, url);           // said again later: no new call
+        while (_serverVoiceCache.size > 60) {
+          const oldest = _serverVoiceCache.keys().next().value;
+          try { URL.revokeObjectURL(_serverVoiceCache.get(oldest)); } catch (_) {}
+          _serverVoiceCache.delete(oldest);
+        }
+        const el = new Audio(url);
+        el.onended = () => finishUtterance('end');       // the URL is kept for the cache
+        el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error'); };
+        await el.play();
+        return true;
+      } catch (err) {
+        toast('🔇 The browser refused to play the audio — click the page once, then try again');
+        console.warn('[speech] playback refused:', err && err.message);
+        return false;
+      }
+    }
+
+    function engineUsesServer() {
+      // One rule, one switch: the server voice unless the owner deliberately
+      // chose this computer's voice (offline use). Nothing falls back by itself,
+      // so a failure is always reported instead of quietly sounding different.
+      return _voiceEngine !== 'browser';
+    }
+
+    function renderVoiceEngine() {
+      const sel = document.getElementById('sel-voice-engine');
+      if (sel && sel.value !== _voiceEngine) sel.value = _voiceEngine;
+    }
+    async function refreshVoiceBudget() {
+      const el = document.getElementById('voice-budget-line');
+      if (!el) return;
+      try {
+        const res = await _authFetch('/api/system-status');
+        const info = await res.json();
+        if (info && info.voice) {
+          el.textContent = `${info.voice.used} of ${info.voice.limit} spoken sentences used today (${info.voice.source}), and ${info.knowledge ? info.knowledge.entries : '?'} local answers stored`;
+        }
+      } catch (_) { el.textContent = 'the server did not answer'; }
+    }
+    window.refreshVoiceBudget = refreshVoiceBudget;
+    function setVoiceEngine(engine) {
+      _voiceEngine = engine === 'browser' ? 'browser' : 'server';
+      localStorage.setItem('jarvis-voice-engine', _voiceEngine);
+      renderVoiceEngine();
+      const what = _voiceEngine === 'browser' ? "this computer's own voice (free, offline)"
+        : "the server's voice — every reply, always";
+      toast(`🔊 Voice engine: ${what}`);
+      speakReply('Voice engine set, sir.');
+    }
+    window.setVoiceEngine = setVoiceEngine;
+
+    function pumpSpeech() {
+      const synth = window.speechSynthesis;
+      if (!_speakOn) { Speech.queue.length = 0; return; }
+      if (Speech.speaking) return;                       // onend continues the queue
+      const next = Speech.queue.shift();
+      if (!next) { onSpeechQueueEmpty(); return; }
+
+      pauseListeningForSpeech();                          // never listen to our own voice
+
+      if (engineUsesServer()) {
+        Speech.speaking = true;                           // the file's own end continues the queue
+        Speech.startedAt = performance.now();
+        speakViaServer(next).then((played) => { if (!played) finishUtterance('server-failed'); });
+        return;
+      }
+
+      const u = new SpeechSynthesisUtterance(next);
+      u.rate = 1.05;
+      u.pitch = 0.95;
+      if (!synth) { finishUtterance('no-synthesiser'); return; }
+      const v = Speech.voice || pickVoice();
+      if (v) { u.voice = v; u.lang = v.lang; }
+      Speech.speaking = true;
+      Speech.startedAt = performance.now();
+      u.onstart = () => { Speech.startedAt = performance.now(); };
+      u.onend = () => finishUtterance('end');
+      u.onerror = (e) => {
+        if (e && e.error && e.error !== 'interrupted' && e.error !== 'canceled') console.warn('[speech] utterance error:', e.error);
+        finishUtterance('error');
+      };
+      // A cancel() in the same tick as speak() makes Chrome drop the utterance,
+      // so the two are never in the same tick — and when nothing was playing
+      // there is no cancel at all.
+      const wasBusy = !!(synth.speaking || synth.pending);
+      if (wasBusy) { try { synth.cancel(); } catch (_) {} }
+      setTimeout(() => {
+        try {
+          if (synth.paused) synth.resume();
+          synth.speak(u);
+        } catch (err) {
+          console.warn('[speech] could not speak:', err && err.message);
+          finishUtterance('refused');
+        }
+      }, wasBusy ? 90 : 0);
+    }
+
+    function finishUtterance(reason) {
+      if (!Speech.speaking) return;
+      Speech.speaking = false;
+      void reason;
+      setTimeout(pumpSpeech, 30);
+    }
+
+    function onSpeechQueueEmpty() {
+      renderListenBar();
+      clearTimeout(Speech.resumeTimer);
+      Speech.resumeTimer = setTimeout(() => resumeListeningAfterSpeech(), 350);
+    }
+
+    /* The old public names, kept working: some code and the tests call
+       speakReply(); nothing outside this block needs the internals. */
+    window.speakReply = speakReply;
+
     renderSpeakBtn();
     window.toggleSpeak = toggleSpeak;
+    window.speakStreamed = speakStreamed;
+    window.finishStreamed = finishStreamed;
+    window.jarvisSpeechStatus = () => ({
+      on: _speakOn,
+      supported: speechSupported(),
+      engine: _voiceEngine,
+      usingServer: engineUsesServer(),
+      browserVoiceStarted: _browserVoiceFailed,
+      voice: Speech.voice ? `${Speech.voice.name} (${Speech.voice.lang})` : 'browser default',
+      voiceCount: speechSupported() ? (window.speechSynthesis.getVoices() || []).length : 0,
+      speaking: !!(speechSupported() && window.speechSynthesis.speaking),
+      queued: Speech.queue.length,
+      lastSpoken: _lastSpokenText.slice(0, 120),
+    });
+    refreshBuildLine(null);   // the build marker + the settings in force, before the pane is opened
 
-    // ── The microphone, always on — "Hey Jarvis" (continuous recognition) ───
-    // The owner asked for the mic and speakers to simply be ON, controlled by one
-    // plain button each in Settings. So the wake listener is armed by default; the
-    // only thing standing in the way is that browsers refuse to open a microphone
-    // until the page has been clicked at least once. That first click is what arms it.
-    const wakeBtn = document.getElementById('wake-btn');
-    let _wakeOn = localStorage.getItem('jarvis-wake') !== 'off';   // ON unless switched off
-    let _wakeRec = null;
-    let _awaitingCmd = false;
+    /* ══ THE EARS — always listening, and one button to silence them ═════════
+       The owner's report: "the mic works but it does not stay on — I have to
+       keep saying Hey Jarvis, it is very monotonous. Keep it listening always
+       and let me mute it at my choice."
+
+       So there are two modes, and the microphone is ON by default in both:
+
+         ALWAYS (the default) — everything the microphone hears is treated as
+         something said to JARVIS. No wake word, ever. Short noise is ignored by
+         requiring a real phrase, fragments are joined so a pause mid-sentence is
+         not sent as two commands, and the last thing JARVIS himself said is
+         filtered out so he can never obey his own voice.
+
+         WAKE WORD — JARVIS waits for "Hey Jarvis", as before, for anyone who
+         wants the room private. "Hey Jarvis, what is the time" still works in one
+         breath, and "Hey Jarvis" on its own is answered with "Yes, sir?".
+
+       And the mute button — the green bar above the message box, the 🎙 in the
+       chat row, and Settings → Voice all drive it — stops the listening at once,
+       with no need to touch the master switch. A mute is remembered across
+       reloads, so the room stays private until the owner says otherwise.
+
+       The listening itself is kept alive on purpose: browsers end a recognition
+       session after a silence, so the ear is opened again the moment it closes
+       (Chrome stops, we start — about a tenth of a second, not a button press).
+       It also steps out of the way while JARVIS speaks, so he never transcribes
+       his own voice into a command. */
+    const wakeBtn          = document.getElementById('wake-btn');
+    const listenBarEl      = document.getElementById('listen-bar');
+    const listenTextEl     = document.getElementById('listen-text');
+    const listenModeBtnEl  = document.getElementById('listen-mode-btn');
+    const listenMuteBtnEl  = document.getElementById('listen-mute-btn');
+
+    const WAKEWORD_RE = /\b(?:hey|hi|ok|okay)?,?\s*jarvis\b[,.!?]?\s*(.*)$/i;
+
+    let _micOn = localStorage.getItem('jarvis-wake') !== 'off';                       // master switch, ON unless switched off
+    let _listenMode = localStorage.getItem('jarvis-listen-mode') === 'wake' ? 'wake' : 'always';
+    let _muted = localStorage.getItem('jarvis-mute') === 'on';
+    let _listener = null;            // the live SpeechRecognition session
+    let _listenGen = 0;              // bumped whenever a session is retired; stale callbacks exit
+    let _listenTimer = null;
+    let _listenBackoff = 0;          // grows only when sessions keep dying instantly
+    let _needsGesture = false;       // the browser wants a click before it opens a microphone
+    let _denied = 0;                 // how many times the browser refused its own recogniser
+    let _pausedForSpeech = false;    // the ear is closed because JARVIS is talking
+    let _awaitingCmd = false;        // wake word said on its own — waiting for the command
     let _awaitTimer = null;
-    let _wakeNeedsGesture = false;
-    let _wakeArmTries = 0;
+    let _pendingWords = '';          // final fragments being joined into one command
+    let _pendingTimer = null;
+    let _interim = '';               // what is being said right now
+    let _lastHeard = { text: '', at: 0 };
+    let _lastHeardAt = 0;
+    let _startedAt = 0;          // when the live session began (to spot one that dies instantly)
+    let _requestedAt = 0;        // when the session was asked for (to spot one that never starts)
 
-    function micArmHint() {
-      if (!_wakeOn || Mic.state !== 'idle') return;
-      if (micStripEl) micStripEl.classList.add('armed');
-      micStrip(true, false);
-      micSay(_wakeNeedsGesture
-        ? 'Microphone is ON — click anywhere once to let the browser open it.'
-        : 'Microphone is ON — say "Hey Jarvis", or press 🎤 for one command.');
+    function listenSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+    function shouldListen() {
+      return _micOn && !_muted && !_pausedForSpeech && !_needsGesture && Mic.state === 'idle';
     }
 
-    function armWakeOnGesture() {
-      if (_wakeNeedsGesture) return;
-      _wakeNeedsGesture = true;
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return;                                  // nothing to arm — the browser cannot listen
-      const once = () => {
-        _wakeNeedsGesture = false;
-        document.removeEventListener('pointerdown', once, true);
-        document.removeEventListener('keydown', once, true);
-        if (_wakeOn && Mic.state === 'idle') startWakeLoop();
-      };
-      document.addEventListener('pointerdown', once, true);
-      document.addEventListener('keydown', once, true);
-      micArmHint();
+    /* What the ear is doing, in one word — used by the bar and by the status API. */
+    function listenState() {
+      if (!listenSupported()) return 'unsupported';
+      if (!_micOn) return 'off';
+      if (_muted) return 'muted';
+      if (Mic.state !== 'idle') return 'busy';
+      if (_pausedForSpeech) return 'speaking';
+      if (_listener || _listenTimer) return 'listening';   // a restart a tenth of a second away is still listening
+      return _needsGesture ? 'waiting-for-click' : 'starting';
+    }
+
+    function renderListenBar() {
+      if (listenBarEl) {
+        const show = _micOn && listenSupported();
+        listenBarEl.classList.toggle('show', show);
+        listenBarEl.classList.toggle('muted', _muted);
+        listenBarEl.classList.toggle('speaking', !_muted && _pausedForSpeech);
+        listenBarEl.classList.toggle('hearing', !_muted && !!_interim);
+      }
+      if (listenTextEl) {
+        const state = listenState();
+        listenTextEl.textContent =
+          state === 'muted' ? 'Muted — JARVIS is not listening.'
+          : state === 'off' ? ''
+          : state === 'busy' ? 'The 🎤 button has the microphone — one moment.'
+          : state === 'speaking' ? 'Speaking — the ears come back as soon as I finish.'
+          : state === 'waiting-for-click' ? 'Microphone on — click anywhere once to let the browser open it.'
+          : state === 'starting' ? 'Microphone on — opening the ears…'
+          : _interim ? `Hearing: “${_interim}”`
+          : _listenMode === 'always' ? 'Listening — just speak, no wake word needed.'
+          : 'Listening for “Hey Jarvis”.';
+      }
+      if (listenModeBtnEl) {
+        listenModeBtnEl.textContent = _listenMode === 'always' ? '🎙 Always on' : '🎯 Wake word';
+        listenModeBtnEl.title = _listenMode === 'always'
+          ? 'Responding to everything you say — click for "Hey Jarvis" mode'
+          : 'Waiting for "Hey Jarvis" — click to answer to everything you say';
+      }
+      if (listenMuteBtnEl) {
+        listenMuteBtnEl.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
+        listenMuteBtnEl.title = _muted ? 'Start listening again' : 'Silence the microphone (JARVIS stops listening)';
+      }
     }
 
     function renderWakeBtn() {
-      wakeBtn.classList.toggle('recording', _wakeOn);
-      wakeBtn.style.opacity = _wakeOn ? '1' : '0.55';
-      wakeBtn.title = _wakeOn ? 'Microphone is always on, listening for "Hey Jarvis" (click to switch off)'
-                              : 'Switch the microphone on (listens for "Hey Jarvis")';
-      wakeBtn.style.display = (window.SpeechRecognition || window.webkitSpeechRecognition) ? '' : 'none';
+      if (wakeBtn) {
+        wakeBtn.style.display = listenSupported() ? '' : 'none';
+        wakeBtn.textContent = _muted ? '🔇' : '🎙';
+        wakeBtn.classList.toggle('recording', _micOn && !_muted);
+        wakeBtn.classList.toggle('muted', _micOn && _muted);
+        wakeBtn.style.opacity = _micOn ? '1' : '0.55';
+        wakeBtn.title = !_micOn ? 'Microphone is off (click to switch it on)'
+          : _muted ? 'Muted — click to start listening again'
+          : 'Microphone is on and listening (click to mute)';
+      }
       const btn = document.getElementById('btn-mic-always');
       if (btn) {
-        btn.textContent = _wakeOn ? '🎤 Microphone: ON' : '🎤 Microphone: OFF';
-        btn.style.color = _wakeOn ? 'var(--emerald)' : '';
+        btn.textContent = _micOn ? '🎤 Microphone: ON' : '🎤 Microphone: OFF';
+        btn.style.color = _micOn ? 'var(--emerald)' : '';
       }
+      const muteBtn = document.getElementById('btn-mute');
+      if (muteBtn) {
+        muteBtn.textContent = _muted ? '🎙 Unmute listening' : '🔇 Mute listening';
+        muteBtn.style.color = _muted ? 'var(--rose)' : '';
+      }
+      const sel = document.getElementById('sel-listen-mode');
+      if (sel && sel.value !== _listenMode) sel.value = _listenMode;
+      renderListenBar();
     }
 
-    function toggleWakeWord() {
-      _wakeOn = !_wakeOn;
-      localStorage.setItem('jarvis-wake', _wakeOn ? 'on' : 'off');
-      if (_wakeOn) {
-        _wakeArmTries = 0;
-        startWakeLoop();
-        if (_wakeOn && !_wakeRec) armWakeOnGesture();    // browsers demand a click first
-      } else {
-        _wakeNeedsGesture = false;
-        stopWakeLoop();
-        if (Mic.state === 'idle') micStrip(false, false);
+    /* The strip in the message area is only used for the one thing the owner
+       must act on: the browser's demand for a first click. Everything else the
+       ear is doing is in the green bar, which is always there. */
+    function micArmHint() {
+      if (!_micOn || Mic.state !== 'idle') return;
+      if (_needsGesture && !_muted) {
+        if (micStripEl) micStripEl.classList.add('armed');
+        micStrip(true, false);
+        micSay('Microphone is ON — click anywhere once to let the browser open it.');
+      } else if (micStripEl && micStripEl.classList.contains('armed')) {
+        micStripEl.classList.remove('armed');
+        micStrip(false, false);
       }
+      renderListenBar();
+    }
+
+    function armWakeOnGesture() {
+      if (!listenSupported()) return;
+      if (!_needsGesture) {
+      _needsGesture = true;
+      const once = () => {
+        _needsGesture = false;
+        document.removeEventListener('pointerdown', once, true);
+        document.removeEventListener('keydown', once, true);
+        if (shouldListen()) { _listenBackoff = 0; startListener(); }
+        renderWakeBtn();
+        micArmHint();
+      };
+      document.addEventListener('pointerdown', once, true);
+      document.addEventListener('keydown', once, true);
+      }
+      micArmHint();                                  // idempotent: also just re-says the hint
       renderWakeBtn();
-      toast(_wakeOn ? '🎤 Microphone on — say "Hey Jarvis"' : '🎤 Microphone off');
-      if (_wakeOn) speakReply('Microphone on, sir. Say: Hey Jarvis.');
     }
 
-    function startWakeLoop() {
+    /* The one way the rest of the page asks for the ear. It never invents a
+       gesture requirement: a click is only ever demanded after the browser
+       itself refused to start (see rec.onerror), so a pause cannot leave the
+       microphone quietly dead. */
+    function ensureListening() {
+      if (!_micOn || _muted) return;
+      if (_needsGesture) { armWakeOnGesture(); return; }   // the browser wants a click: keep the hint up
+      if (shouldListen()) { _listenBackoff = 0; startListener(); return; }
+      if (_pausedForSpeech) return;                        // the ear returns by itself when the voice stops
+      if (Mic.state !== 'idle') return;                    // the 🎤 dictation has the microphone for now
+      if (!_listener && !_listenTimer) scheduleListenRestart(400);
+    }
+
+    function startListener() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) {
-        toast('This browser has no speech recognition — use Chrome or Edge for the wake word.');
-        _wakeOn = false; localStorage.setItem('jarvis-wake', 'off'); renderWakeBtn();
-        return;
-      }
-      if (_wakeRec || Mic.state !== 'idle') return;     // the microphone is already busy
+      if (!SR) return;
+      if (!shouldListen() || _listener) { renderWakeBtn(); return; }
+      const gen = ++_listenGen;
       const rec = new SR();
       rec.continuous = true;
-      rec.interimResults = false;
-      rec.lang = 'en-US';
-      rec.onresult = (evt) => {
-        if (window.speechSynthesis && speechSynthesis.speaking) return;   // never hear our own voice
-        const res = evt.results[evt.results.length - 1];
-        if (!res.isFinal) return;
-        const heard = (res[0].transcript || '').trim();
-        if (!heard) return;
-        if (_awaitingCmd) {
-          _awaitingCmd = false;
-          clearTimeout(_awaitTimer);
-          submitVoiceCommand(heard);
+      rec.interimResults = true;                     // words appear in the box while you speak
+      rec.maxAlternatives = 1;
+      rec.lang = navigator.language || 'en-US';
+      rec.onstart = () => {
+        if (gen !== _listenGen) return;
+        _startedAt = performance.now();
+        _denied = 0;
+        renderWakeBtn();
+      };
+      rec.onresult = (evt) => { if (gen === _listenGen) handleHeard(evt); };
+      rec.onerror = (e) => {
+        if (gen !== _listenGen) return;
+        const code = (e && e.error) || 'unknown';
+        if (code === 'no-speech' || code === 'aborted' || code === 'audio-capture') return;   // onend brings it straight back
+        if (code === 'not-allowed' || code === 'service-not-allowed') {
+          // The browser refused its own recogniser. Another click is usually all
+          // it wanted (its first session must be born in a gesture); two refusals
+          // in a row mean it is genuinely blocked, and then the owner is told so.
+          stopListener();
+          _denied++;
+          if (_denied <= 2) { armWakeOnGesture(); return; }
+          _micOn = false; localStorage.setItem('jarvis-wake', 'off');
+          _needsGesture = false;
+          renderWakeBtn();
+          const why = micExplain(Object.assign(new Error(code), { name: 'NotAllowedError' }));
+          toast(`🎤 ${why.short}`);
+          micReport(`🎤 ${why.short}.\n${why.long}`, why.actions);
           return;
         }
-        const m = heard.match(/\b(?:hey|ok|okay)?,?\s*jarvis\b[,.!?]?\s*(.*)$/i);
-        if (!m) return;
-        const cmd = (m[1] || '').trim();
-        if (cmd.split(/\s+/).filter(Boolean).length >= 2) {
-          submitVoiceCommand(cmd);                     // "Hey Jarvis, open the files" — all in one breath
-        } else {
-          speakReply('Yes, sir?');                     // just "Hey Jarvis" — wait for the command
-          _awaitingCmd = true;
-          _awaitTimer = setTimeout(() => { _awaitingCmd = false; }, 8000);
-        }
-      };
-      rec.onstart = () => micArmHint();
-      rec.onerror = (e) => {
-        const err = (e && e.error) || '';
-        if (err === 'not-allowed' || err === 'service-not-allowed') {
-          stopWakeLoop();
-          _wakeArmTries++;
-          if (_wakeArmTries <= 2) {
-            armWakeOnGesture();                          // the browser wants a click first
-          } else {
-            _wakeOn = false; localStorage.setItem('jarvis-wake', 'off');
-            _wakeNeedsGesture = false; renderWakeBtn();
-            if (Mic.state === 'idle') micStrip(false, false);
-            const why = micExplain(Object.assign(new Error(err), { name: 'NotAllowedError' }));
-            toast(`🎤 ${why.short}`);
-            micReport(`🎤 ${why.short}.\n${why.long}`, why.actions);
-          }
-        } else if (err && err !== 'no-speech' && err !== 'aborted') {
-          micSay(`The listening service reported "${err}" — press 🎤 to try once more.`, true);
-        }
+        console.warn('[listen] the recogniser reported', code);
       };
       rec.onend = () => {
-        _wakeRec = null;                               // Chrome stops after silence: restart quietly
-        if (_wakeOn && Mic.state === 'idle') setTimeout(() => { if (_wakeOn && Mic.state === 'idle') startWakeLoop(); }, 400);
+        if (gen !== _listenGen) return;
+        _listener = null;                            // Chrome stops after a silence: come straight back
+        // A session that lived is the normal end-of-silence; one that dies in the
+        // first moments is trouble, and only that grows a pause between retries.
+        if (performance.now() - _startedAt < 300) _listenBackoff = Math.min(_listenBackoff + 150, 900);
+        else _listenBackoff = 0;
+        renderWakeBtn();
+        scheduleListenRestart();
       };
-      try { rec.start(); _wakeRec = rec; } catch (_) { /* already running */ }
+      _listener = rec;                               // registered first: onstart sees it at once
+      _startedAt = 0;                                // 0 until the browser really starts it
+      _requestedAt = performance.now();
+      try {
+        rec.start();
+      } catch (_) {
+        _listener = null;
+        scheduleListenRestart(600);
+      }
+      renderWakeBtn();
     }
 
-    function stopWakeLoop() {
-      const r = _wakeRec;
-      _wakeRec = null;
-      if (r) { try { r.stop(); } catch (_) {} }
+    /* A session that ends (the usual way, on a silence) is opened again after a
+       breath. Only sessions that die instantly get a growing pause, so a broken
+       microphone cannot turn into a restart loop that pins the processor. */
+    function scheduleListenRestart(delay) {
+      if (!shouldListen()) { renderWakeBtn(); return; }
+      // The ear comes back in about a tenth of a second — words said in the gap
+      // between sessions are the only thing the owner could notice, so the gap is
+      // kept as short as the browser can be asked for.
+      const wait = delay != null ? delay : (120 + _listenBackoff);
+      clearTimeout(_listenTimer);
+      _listenTimer = setTimeout(() => { if (shouldListen()) startListener(); }, wait);
+    }
+
+    function stopListener() {
+      _listenGen++;
+      clearTimeout(_listenTimer);
+      _listenTimer = null;
+      const rec = _listener;
+      _listener = null;
+      if (rec) { try { rec.abort(); } catch (_) {} }
       _awaitingCmd = false;
       clearTimeout(_awaitTimer);
+      _pendingWords = '';
+      clearTimeout(_pendingTimer);
+      _interim = '';
+      renderWakeBtn();
     }
 
-    function submitVoiceCommand(text) {
-      toast(`Voice: "${text}"`);
-      document.getElementById('chat-input').value = text;
-      doSend();
+    /* One result from the recogniser: show what is being said, then join the
+       final fragments into a single command. A pause in the middle of a sentence
+       is not two commands. */
+    function handleHeard(evt) {
+      if (!_micOn || _muted) return;
+      let final = '', interim = '';
+      for (let i = evt.resultIndex; i < evt.results.length; i++) {
+        const r = evt.results[i];
+        if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
+      }
+      _interim = (interim || '').trim().slice(0, 140);
+      if (_interim) {
+        const inp = document.getElementById('chat-input');
+        if (inp && !inp.value.trim()) inp.value = _interim;
+      }
+      if (interim.trim()) renderListenBar();
+      if (!final.trim()) return;
+      _pendingWords = (_pendingWords ? `${_pendingWords} ` : '') + final.trim();
+      clearTimeout(_pendingTimer);
+      _pendingTimer = setTimeout(flushHeard, 550);
     }
 
-    if (_wakeOn) setTimeout(() => {
+    /* Was this the speaker's own voice coming back through the microphone?
+       An echo repeats the words in the same order, so runs of three words are
+       compared rather than single words — "open the files" must never be mistaken
+       for JARVIS having said "the file browser". */
+    function isOwnVoice(heard) {
+      if (!_lastSpokenText) return false;
+      if (!_lastHeardAt || Date.now() - _lastHeardAt > 8000) return false;
+      const words = String(heard).toLowerCase().split(/[^a-z0-9']+/).filter((w) => w.length > 1);
+      if (words.length < 3) return false;
+      const spoken = ` ${_lastSpokenText.toLowerCase().replace(/[^a-z0-9' ]+/g, ' ').replace(/\s+/g, ' ')} `;
+      let runs = 0, total = 0;
+      for (let i = 0; i + 2 < words.length + 1; i++) {
+        const run = words.slice(i, i + 3);
+        total++;
+        if (spoken.includes(` ${run.join(' ')} `)) runs++;
+      }
+      return total > 0 && runs / total >= 0.5;      // half of the three-word runs, in order
+    }
+
+    function meaningfulCommand(text) {
+      const t = String(text || '').trim();
+      if (t.length < 2) return false;
+      if (/^(?:hey|hi|ok|okay)?,?\s*jarvis[,.!?]*$/i.test(t)) return false;      // just the name
+      const words = t.split(/\s+/).filter(Boolean);
+      if (words.length >= 2) return true;
+      // A single word is only obeyed when it is plainly a command, so a cough,
+      // a name from the television or a stray "um" never wakes anything up.
+      return /^(?:stop|status|mute|unmute|quiet|hello|hi|hey|yes|no|cancel|pause|sleep|wake|help|report)$/i.test(t);
+    }
+
+    function stripWakeWord(text) {
+      const m = String(text || '').match(WAKEWORD_RE);
+      return m ? (m[1] || '').trim() : String(text || '').trim();
+    }
+
+    function flushHeard() {
+      const heard = _pendingWords.replace(/\s+/g, ' ').trim();
+      _pendingWords = '';
+      _interim = '';
+      renderListenBar();
+      if (!heard || !_micOn || _muted) return;
+      if (isOwnVoice(heard)) { console.log('[listen] ignored my own voice:', heard); return; }
+
+      if (_awaitingCmd) {
+        _awaitingCmd = false;
+        clearTimeout(_awaitTimer);
+        const cmd = stripWakeWord(heard) || heard;
+        if (meaningfulCommand(cmd)) submitHeard(cmd);
+        return;
+      }
+      if (_listenMode === 'wake') {
+        const m = heard.match(WAKEWORD_RE);
+        if (!m) return;
+        const cmd = (m[1] || '').trim();
+        if (cmd.split(/\s+/).filter(Boolean).length >= 2) submitHeard(cmd);      // "Hey Jarvis, open the files"
+        else {
+          _awaitingCmd = true;                                                  // just "Hey Jarvis"
+          speakReply('Yes, sir?');
+          clearTimeout(_awaitTimer);
+          _awaitTimer = setTimeout(() => { _awaitingCmd = false; renderListenBar(); }, 8000);
+        }
+        return;
+      }
+      // Always-listening mode: what was said IS the command.
+      const cmd = stripWakeWord(heard);
+      if (!meaningfulCommand(cmd)) { renderListenBar(); return; }
+      submitHeard(cmd);
+    }
+
+    function submitHeard(text) {
+      const clean = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!clean) return;
+      const now = Date.now();
+      const key = clean.toLowerCase();
+      if (key === _lastHeard.text && now - _lastHeard.at < 3000) return;          // the same words twice: one command
+      _lastHeard = { text: key, at: now };
+      _lastHeardAt = now;
+      toast(`🎙 ${clean}`);
+      const inp = document.getElementById('chat-input');
+      if (inp && inp.value.trim() === (clean || '').trim()) inp.value = '';       // clear only our own interim text
+      if (typeof window.sendCommand === 'function') window.sendCommand(clean);
+    }
+
+    function toggleWakeWord() {                                                  // the master switch
+      _micOn = !_micOn;
+      localStorage.setItem('jarvis-wake', _micOn ? 'on' : 'off');
+      if (_micOn) {
+        _denied = 0;
+        _listenBackoff = 0;
+        toast(_listenMode === 'always' ? '🎤 Microphone on — just speak' : '🎤 Microphone on — say "Hey Jarvis"');
+        ensureListening();
+        speakReply(_listenMode === 'always' ? 'Microphone on, sir. Just speak — no wake word needed.' : 'Microphone on, sir. Say: Hey Jarvis.');
+      } else {
+        stopListener();
+        toast('🎤 Microphone off');
+      }
+      renderWakeBtn();
+      micArmHint();
+    }
+
+    function toggleMute() {
+      _muted = !_muted;
+      localStorage.setItem('jarvis-mute', _muted ? 'on' : 'off');
+      if (_muted) {
+        stopListener();
+        toast('🔇 Muted — JARVIS is not listening');
+        // A short line so the owner hears that the mute landed. The speakers are
+        // a different device from the microphone; muting the ear does not stop
+        // the voice, and this is exactly how that is proved.
+        speakReply('Muted, sir. I am not listening.');
+      } else {
+        toast('🎙 Listening again — just speak');
+        ensureListening();
+        speakReply('Listening, sir.');
+      }
+      renderWakeBtn();
+      micArmHint();
+    }
+
+    function setListenMode(mode) {
+      _listenMode = mode === 'wake' ? 'wake' : 'always';
+      localStorage.setItem('jarvis-listen-mode', _listenMode);
+      renderWakeBtn();
+      toast(_listenMode === 'always' ? '🎙 Always listening — no wake word needed' : '🎯 Wake word mode — say "Hey Jarvis"');
+      if (_micOn && !_muted) ensureListening();
+    }
+    function toggleListenMode() { setListenMode(_listenMode === 'always' ? 'wake' : 'always'); }
+
+    /* JARVIS is about to talk: close the ear so he cannot hear himself. The ear
+       comes back by itself the moment he stops (see onSpeechQueueEmpty). */
+    function pauseListeningForSpeech() {
+      if (_pausedForSpeech) return;
+      _pausedForSpeech = true;
+      if (_listener) {
+        const rec = _listener;
+        _listener = null;
+        _listenGen++;
+        try { rec.abort(); } catch (_) {}
+      }
+      clearTimeout(_listenTimer);
+      _interim = '';
+      renderListenBar();
+    }
+
+    function resumeListeningAfterSpeech() {
+      if (!_pausedForSpeech) { renderListenBar(); return; }
+      _pausedForSpeech = false;
+      renderListenBar();
+      if (shouldListen()) { _listenBackoff = 0; startListener(); }
+    }
+
+    /* Everything the rest of the page may ask about the ear. */
+    window.jarvisMicStatus = () => ({
+      state: Mic.state,
+      recogniser: Mic.sr ? 'listening' : (Mic.srNote || 'idle'),
+      heardSpeech: Mic.speechSeen,
+      capturedSeconds: Math.round((Mic.samples / (Mic.rate || 48000)) * 100) / 100,
+      recogniserAvailable: listenSupported(),
+      rawCapture: !!Mic.proc,
+      securePage: !!window.isSecureContext,
+      inFrame: micInFrame(),
+      frameAllowsMicrophone: micPolicyAllows(),
+      savedDevice: localStorage.getItem('jarvis-mic-device') || 'system default',
+      micAlwaysOn: _micOn,
+      alwaysListening: !!_listener,
+      waitingForFirstClick: _needsGesture,
+      muted: _muted,
+      listenMode: _listenMode,
+      listenState: listenState(),
+      pausedForSpeech: _pausedForSpeech,
+      hearing: _interim,
+      lastHeard: _lastHeard.text,
+    });
+    window.toggleMute = toggleMute;
+    window.toggleListenMode = toggleListenMode;
+    window.setListenMode = setListenMode;
+    window.jarvisListenMode = () => _listenMode;
+
+    /* Browsers will not make a sound until the page has been clicked, and some
+       only unlock it on the FIRST click. So the first click anywhere earns one
+       short sentence — proof, out loud, that he can be heard. */
+    function armVoiceOnGesture() {
+      if (_voiceProofDone) return;
+      const once = () => {
+        if (_voiceProofDone) return;
+        _voiceProofDone = true;
+        document.removeEventListener('pointerdown', once, true);
+        document.removeEventListener('keydown', once, true);
+        if (_speakOn) speakReply('Voice online, sir.');
+      };
+      document.addEventListener('pointerdown', once, true);
+      document.addEventListener('keydown', once, true);
+    }
+
+    if (_micOn) setTimeout(() => {
       if (Mic.state !== 'idle') return;
-      startWakeLoop();                                   // this page may already be trusted
-      if (_wakeOn && !_wakeRec) armWakeOnGesture();      // otherwise the next click arms it
-    }, 1200);
+      ensureListening();          // this page may already be trusted; otherwise the refusal arms the click hint
+      micArmHint();
+    }, 900);
+    armVoiceOnGesture();
+    renderVoiceEngine();
     renderWakeBtn();
+    renderListenBar();
 
 
     // Window focus & touch-anywhere grab handler
@@ -4160,7 +5531,7 @@
             : 0.16 + 0.1 * Math.sin(t * 2 + i);
           const r0 = 26;
           const r1 = r0 + 30 * energy;
-          ctx.strokeStyle = speaking ? 'rgba(56,189,248,0.95)' : 'rgba(56,189,248,0.4)';
+          ctx.strokeStyle = speaking ? 'rgba(255,208,74,0.95)' : 'rgba(255,208,74,0.4)';
           ctx.lineWidth = 3;
           ctx.beginPath();
           ctx.moveTo(64 + Math.cos(a) * r0, 64 + Math.sin(a) * r0);
@@ -4245,7 +5616,7 @@
         </div>
         <div class="window-body" style="display:flex; flex-direction:column; min-height:0; height:calc(100% - 42px); padding:6px;">
           <ul class="folder-list" style="flex:1 1 auto; min-height:0;"></ul>
-          <pre class="fw-preview" style="display:none; flex:1 1 auto; min-height:0; overflow:auto; margin:0; padding:10px; font:12px/1.5 monospace; color:#cfe3ff; white-space:pre-wrap;"></pre>
+          <pre class="fw-preview" style="display:none; flex:1 1 auto; min-height:0; overflow:auto; margin:0; padding:10px; font:12px/1.5 monospace; color:#ffe9a3; white-space:pre-wrap;"></pre>
         </div>
         <div class="window-grab-bar" onpointerdown="startWindowDrag(event, '${id}')" title="Grab handle"></div>`;
       document.body.appendChild(win);
@@ -4309,6 +5680,10 @@
       preview.ondblclick = () => fwNavigate(win, backDir);
     }
     window.openFolderWindow = openFolderWindow;
+
+    // The owner's glass numbers are on screen from the first paint: they are
+    // applied here, and again every time a slider moves.
+    applyGlassSettings();
 
     buildDesktop();
   </script>

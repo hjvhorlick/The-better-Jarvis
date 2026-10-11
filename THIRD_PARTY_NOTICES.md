@@ -17,6 +17,13 @@ project itself.
   `web/myhands.js`) does not import, copy or reuse barehands code, text or assets (see
   `docs/MYHANDS_CLEAN_ROOM.md`).
 
+## Fonts
+
+- **Nunito** (`dashboard/static/fonts/nunito-latin-*-normal.woff2`), **SIL Open Font
+  License 1.1** — the rounded face used by the whole interface. The licence text is
+  beside the font files (`dashboard/static/fonts/NUNITO-OFL.txt`). Vendored, so no
+  internet connection is needed to look like JARVIS.
+
 ## My Hands runtime dependencies (optional, loaded when My Hands starts)
 
 | Component | Version | Licence | Where the licence text is | Use |

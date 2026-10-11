@@ -23,13 +23,18 @@ EXEMPT = {"plugins/barehands.py"}          # the third-party plugin itself
 # A handful of lines must still name the vendored project, because they point at
 # its folder, its own config file or its module. Those are references to a
 # separate project we are told not to rename, not the app calling itself that.
+#
+# The exemption is matched on the line's own text, not on its number: the files
+# grow, and a rule that says "line 721" silently starts exempting the wrong line
+# (or fails) the first time anything above it is edited. Each entry is the exact
+# snippet that makes the mention legitimate.
 EXEMPT_LINES = {
     "server.ts": {
-        40: "path to the vendored hand-board folder",
-        721: "the board's own config file name",
+        "path.join(process.cwd(), 'barehands')": "path to the vendored hand-board folder",
+        "path.join(HAND_BOARD_DIR, 'barehands.json')": "the board's own config file name",
     },
     "ui.py": {
-        3892: "imports the vendored hand-board plugin module",
+        'importlib.import_module("plugins.barehands")': "imports the vendored hand-board plugin module",
     },
 }
 
@@ -54,8 +59,13 @@ def test_the_app_says_my_hands_on_its_screens():
 def test_the_app_never_uses_the_other_projects_name(path):
     rel = path.relative_to(ROOT).as_posix()
     allowed = EXEMPT_LINES.get(rel, {})
-    hits = [i + 1 for i, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines())
-            if NAME.search(line) and (i + 1) not in allowed]
+    hits = []
+    for i, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines()):
+        if not NAME.search(line):
+            continue
+        if any(snippet in line for snippet in allowed):
+            continue                      # a legitimate pointer at the vendored project
+        hits.append(i + 1)
     assert not hits, f"'barehands' found in {rel} on line(s) {hits}; use 'My Hands'"
 
 
