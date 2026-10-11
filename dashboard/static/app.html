@@ -799,6 +799,105 @@
     #hud-toast.show {
       opacity: 1; transform: translateX(-50%) translateY(0);
     }
+    /* ── THE JARVIS DOCK: slim left column — visualiser up top, chats below ── */
+    #jarvis-dock {
+      position: fixed; top: var(--header-h); left: 0; bottom: 0; width: 260px;
+      z-index: 940; display: flex; flex-direction: column;
+      background: rgba(12, 17, 28, 0.82);
+      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+      border-right: 1px solid var(--glass-border);
+    }
+    /* Section 1: the original JARVIS window, fitted to the narrow frame —
+       the round reactor, its readings and the wake buttons. */
+    #dock-top {
+      flex: 0 0 auto; border-bottom: 1px solid var(--glass-border);
+      /* Only as tall as the round JARVIS + wake buttons need — the chat
+         window below starts just under the active JARVIS section. */
+    }
+    #dock-top .window-body { padding: 10px; }
+    #dock-top .reactor-pod { padding: 8px; }
+    #dock-top .reactor-disc { width: 84px; height: 84px; }
+    #dock-top .reactor-core { width: 32px; height: 32px; }
+    #dock-top .reactor-state-tag { margin-top: 8px; font-size: 10px; letter-spacing: 1.5px; }
+    /* The readings (Memory RSS, Uptime) are noise in the panel — hidden.
+       The round JARVIS and the wake buttons are all that stays. No heading
+       either: the sections need no "Core Telemetry" or "Command & Dialogue"
+       titles — the panel speaks for itself. */
+    #dock-top .metric-grid { display: none; }
+    #dock-top .window-header { display: none; }
+    #dock-chat .window-header { display: none; }
+    #dock-top .telemetry-actions {
+      display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;
+    }
+    #dock-top .telemetry-actions .action-btn {
+      flex: 1 1 45%; padding: 8px 4px; font-size: 11px;
+    }
+    #dock-chat { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
+    #dock-chat .chat-container { height: 100%; display: flex; flex-direction: column; }
+    #dock-chat .chat-feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+
+    /* Command & Dialogue in the narrow panel: smaller type, tighter spacing,
+       so the conversation fits the window properly. */
+    #dock-chat .chat-feed { padding: 10px; gap: 8px; }
+    #dock-chat .chat-bubble { font-size: 11.5px; line-height: 1.5; padding: 8px 11px; max-width: 92%; border-radius: 11px; }
+    #dock-chat .chat-bubble.speaker-system { font-size: 10px; }
+    #dock-chat .bubble-header { font-size: 8.5px; letter-spacing: 1px; margin-bottom: 3px; }
+    #dock-chat .code-block { font-size: 10.5px; padding: 7px; }
+    #dock-chat .suggestion-row { padding: 6px 10px; gap: 5px; }
+    #dock-chat .sugg-chip { font-size: 9.5px; padding: 4px 9px; }
+    #dock-chat .chat-footer { padding: 8px 10px; gap: 5px; }
+    #dock-chat .chat-input { font-size: 11.5px; padding: 8px 10px; }
+    #dock-chat .chat-btn { font-size: 10.5px; padding: 8px 9px; }
+    #dock-chat .chat-btn-icon { font-size: 13px; }
+    .chat-img {
+      display: block; max-width: 100%; margin-top: 7px;
+      border-radius: 10px; border: 1px solid rgba(140, 160, 255, 0.3);
+      cursor: pointer;
+    }
+
+    /* A docked window: the same window, pinned inside the left panel.
+       It keeps its title bar but can no longer be dragged, resized or
+       minimised — it is part of the main interface now. */    .glass-window.docked {
+      position: static !important;
+      width: 100% !important; height: 100% !important;
+      min-width: 0 !important; min-height: 0 !important;
+      display: flex !important; flex-direction: column;
+      border: none; border-radius: 0; box-shadow: none;
+      background: transparent;
+      transform: none !important;
+    }
+    #dock-top .glass-window.docked { height: auto !important; }
+    .glass-window.docked .window-body { flex: 1 1 auto; min-height: 0; }
+    .glass-window.docked .window-header { cursor: default; }
+    .glass-window.docked .window-grab-bar,
+    .glass-window.docked .window-resizer,
+    .glass-window.docked .window-actions { display: none !important; }
+
+    /* ── THE DESKTOP: the open area — your folders as icons you pick up ── */
+    .desk-icon {
+      position: fixed; width: 96px; z-index: 6;
+      text-align: center; cursor: grab; user-select: none;
+      padding: 10px 4px 8px; border-radius: 14px;
+      touch-action: none;
+    }
+    .desk-icon:hover, .desk-icon.grabbed {
+      background: rgba(56, 189, 248, 0.12);
+      outline: 1px solid rgba(56, 189, 248, 0.35);
+    }
+    .desk-icon.grabbed { cursor: grabbing; }
+    .desk-icon .ico { font-size: 46px; line-height: 1; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.55)); pointer-events: none; }
+    .desk-icon .lbl {
+      margin-top: 7px; font: 600 11px/1.3 system-ui;
+      color: #d7e7ff; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
+      word-break: break-word; pointer-events: none;
+    }
+    .folder-list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; max-height: 100%; }
+    .folder-list li {
+      padding: 7px 12px; border-radius: 8px; cursor: pointer;
+      font: 500 13px/1.4 system-ui; color: #cfe3ff;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .folder-list li:hover { background: rgba(56, 189, 248, 0.14); }
   </style>
 </head>
 <body data-theme="stark">
@@ -822,38 +921,31 @@
 
   <!-- HUD NAVIGATION HEADER -->
   <header id="hud-header">
-    <div class="hud-brand" onclick="resetLayout()">
-      <div class="brand-symbol">J</div>
-      <div class="brand-text">
-        <span class="brand-title">JARVIS</span>
-        <span class="brand-sub">Spatial Assistant HUD</span>
-      </div>
-    </div>
-
+    <!-- The top row: the always-there buttons, the same in every room. -->
     <div class="hud-center-controls">
-      <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle Camera Video Feed">
-        <span class="btn-icon">📷</span>
-        <span id="txt-btn-cam">Camera</span>
-      </button>
-
       <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleMyHandsTracking()" title="Toggle Hand Gesture Tracking (My Hands)">
         <span class="btn-icon">🖐️</span>
         <span>My Hands</span>
       </button>
 
-      <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)">
-        <span class="btn-icon">🎮</span>
-        <span>Hand <small style="opacity:0.6">[V]</small></span>
+      <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle Camera Video Feed">
+        <span class="btn-icon">📷</span>
+        <span id="txt-btn-cam">Camera</span>
       </button>
 
-      <button class="hud-toggle-btn active" id="btn-toggle-tree" onclick="toggleWindow('win-tree')" title="Show/Hide PC File Tree">
-        <span class="btn-icon">📂</span>
-        <span>Files</span>
+      <button class="hud-toggle-btn" onclick="doMic()" title="Speak one command to JARVIS">
+        <span class="btn-icon">🎤</span>
+        <span>Mic</span>
       </button>
 
-      <button class="hud-toggle-btn active" id="btn-toggle-chat" onclick="toggleWindow('win-chat')" title="Show/Hide Chat">
-        <span class="btn-icon">💬</span>
-        <span>Directives</span>
+      <button class="hud-toggle-btn" onclick="toggleSpeak()" title="JARVIS speaks replies aloud">
+        <span class="btn-icon">🔊</span>
+        <span>Voice</span>
+      </button>
+
+      <button class="hud-toggle-btn" onclick="toggleRooms()" title="Sweep the rooms in or away (or just sweep a flat hand)">
+        <span class="btn-icon">🪟</span>
+        <span>Rooms</span>
       </button>
 
       <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace Settings">
@@ -861,14 +953,18 @@
         <span>Settings</span>
       </button>
 
-      <button class="hud-toggle-btn" onclick="openStandaloneTab()" title="Open JARVIS in Standalone Window for direct Camera Hardware access">
-        <span class="btn-icon">↗️</span>
-        <span>Pop Out</span>
+      <!-- Kept for the V shortcut and tests; not part of the daily top row. -->
+      <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)" style="display:none;">
+        <span class="btn-icon">🎮</span>
+        <span>Hand <small style="opacity:0.6">[V]</small></span>
       </button>
-
-      <button class="hud-toggle-btn" onclick="resetLayout()" title="Snap Windows to Balanced HUD">
-        <span class="btn-icon">📐</span>
-        <span>Reset</span>
+      <button class="hud-toggle-btn" id="btn-toggle-tree" onclick="toggleWindow('win-tree')" title="Show/Hide PC File Tree" style="display:none;">
+        <span class="btn-icon">📂</span>
+        <span>Files</span>
+      </button>
+      <button class="hud-toggle-btn" id="btn-toggle-chat" style="display:none;">
+        <span class="btn-icon">💬</span>
+        <span>Directives</span>
       </button>
     </div>
 
@@ -934,7 +1030,7 @@
         </div>
 
         <div class="telemetry-actions">
-          <button class="action-btn primary" id="btn-wake" onclick="doWake()">Wake System</button>
+          <button class="action-btn primary" id="btn-wake" onclick="doWake()">⚡ Wake System</button>
           <button class="action-btn secondary" onclick="requestSystemDiagnostics()">Diagnostics</button>
         </div>
       </div>
@@ -957,10 +1053,8 @@
         <div class="chat-feed" id="chat-feed"></div>
 
         <div class="suggestion-row">
-          <div class="sugg-chip" onclick="sendSuggestion('Activate My Hands')">🖐️ Activate My Hands</div>
           <div class="sugg-chip" onclick="sendSuggestion('System status check')">📊 Status Check</div>
           <div class="sugg-chip" onclick="sendSuggestion('List active project modules')">🧩 Project Modules</div>
-          <div class="sugg-chip" onclick="sendSuggestion('Explain current workspace architecture')">🏗️ Architecture</div>
         </div>
 
         <div class="chat-footer">
@@ -970,6 +1064,8 @@
           <input type="file" id="file-upload-input" multiple style="display:none">
 
           <button class="chat-btn chat-btn-icon" id="mic-btn" onclick="doMic()" title="Voice command">🎤</button>
+          <button class="chat-btn chat-btn-icon" id="speak-btn" onclick="toggleSpeak()" title="JARVIS speaks replies aloud (click to switch off)">🔊</button>
+          <button class="chat-btn chat-btn-icon" id="wake-btn" onclick="toggleWakeWord()" title="Listen for &quot;Hey Jarvis&quot; (click to start)">🎙</button>
           <button class="chat-btn chat-btn-send" onclick="doSend()">Send</button>
         </div>
       </div>
@@ -1178,6 +1274,27 @@
 
   </div>
 
+  <!-- THE JARVIS DOCK: always on the left — the visualiser up tight in the
+       corner, the chats below it. Small, permanent, the same in every room. -->
+  <aside id="jarvis-dock">
+    <!-- Section 1: the ORIGINAL JARVIS window — the round reactor, its
+         readings and the wake buttons — moved in here at boot, permanent. -->
+    <div id="dock-top"></div>
+    <!-- Section 2: the chat window, underneath it. -->
+    <div id="dock-chat"></div>
+  </aside>
+
+  <!-- ROOMS: the open area becomes a full workspace (Coding · 3D Design · Flat
+       · Studio · Files) that SWEEPS IN from the side. The top row and the dock
+       stay visible — they are the same in every room. A hand sweep, a voice
+       command or Esc moves the rooms; there is no chrome and no close button. -->
+  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:260px; right:0; bottom:0;
+       z-index:900; background:#05070f;
+       transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+       box-shadow:-40px 0 120px rgba(0,0,0,0.8);">
+    <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:#05070f;"></iframe>
+  </div>
+
   <!-- TOAST NOTIFICATION -->
   <div id="hud-toast"></div>
 
@@ -1261,7 +1378,13 @@
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data);
-          if (m.type === 'log') appendChat(m.speaker, m.text);
+          if (m.type === 'log') {
+            appendChat(m.speaker, m.text, m.image);
+            // Speak only fresh JARVIS replies — never the replayed history on page load.
+            if (m.speaker === 'jarvis' && m.timestamp && (Date.now() - m.timestamp) < 10000) {
+              speakReply(m.text);
+            }
+          }
           if (m.type === 'status') {
             reactorTag.textContent = m.state === 'active' ? 'JARVIS ACTIVE' : 'JARVIS SLEEPING';
           }
@@ -1276,12 +1399,19 @@
               toggleMyHandsTracking();
             }
           }
+          if (m.type === 'rooms_control') {
+            if (m.action === 'open') openRooms();
+            else if (m.action === 'close') closeRooms();
+            else if (m.action === 'next') { openRooms(); roomsStep(1); }
+            else if (m.action === 'prev') { openRooms(); roomsStep(-1); }
+            else if (m.action === 'goto' && m.room) roomsGoto(m.room);
+          }
         } catch (err) { console.error('WS msg parse error:', err); }
       };
     }
     initWebSocket();
 
-    function appendChat(speaker, text) {
+    function appendChat(speaker, text, image) {
       const b = document.createElement('div');
       b.className = `chat-bubble speaker-${speaker}`;
       const name = speaker === 'jarvis' ? 'JARVIS' : (speaker === 'user' ? 'You' : 'System');
@@ -1293,6 +1423,17 @@
       }
 
       b.innerHTML = `<div class="bubble-header">${name}</div>${formatted}`;
+
+      // A picture Jarvis made lands right in the dialogue.
+      if (image) {
+        const img = document.createElement('img');
+        img.className = 'chat-img';
+        img.alt = 'Picture made by JARVIS';
+        img.src = `${image}${image.includes('?') ? '&' : '?'}token=${encodeURIComponent(_authToken)}`;
+        img.addEventListener('click', () => window.open(img.src, '_blank'));
+        b.appendChild(img);
+      }
+
       chatFeed.appendChild(b);
       chatFeed.scrollTop = chatFeed.scrollHeight;
     }
@@ -1302,6 +1443,13 @@
       const txt = inp.value.trim();
       if (!txt) return;
       inp.value = '';
+      // "voice test" is answered locally: it inspects THIS browser's mouth
+      // and ears, which no server can see.
+      if (/^(voice|sound|mic|audio)\s*(check|test)$/i.test(txt)) {
+        appendChat('user', txt);
+        runVoiceCheck();
+        return;
+      }
       appendChat('user', txt);
       const enc = _encrypt(txt);
       const body = enc ? { enc } : { text: txt };
@@ -1321,6 +1469,89 @@
       _authFetch('/api/wake', { method: 'POST' });
       toast('Sending wake directive…');
     }
+
+    // ── Voice check: Jarvis inspects his own mouth and ears ────────────────
+    // Reports exactly WHY sound or mic fails in this browser — permissions,
+    // iframes, missing APIs — so a failed test is never a mystery.
+    async function runVoiceCheck() {
+      const lines = [];
+      lines.push(`Secure page (needed for mic): ${window.isSecureContext ? 'yes' : 'NO — mic is blocked on insecure pages'}`);
+      lines.push(`Running inside a frame: ${window.top !== window.self ? 'yes — frames often lose mic/speaker rights' : 'no'}`);
+      // The mouth
+      if ('speechSynthesis' in window) {
+        const voices = speechSynthesis.getVoices();
+        lines.push(`Speech out (TTS): available, ${voices.length} voices loaded${voices.length === 0 ? ' — ZERO voices is why nothing is heard' : ''}`);
+      } else {
+        lines.push('Speech out (TTS): MISSING in this browser');
+      }
+      // The ears
+      lines.push(`Mic API: ${navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'available' : 'MISSING'}`);
+      lines.push(`Speech recognition: ${('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) ? 'available' : 'missing — the server transcription fallback is used instead'}`);
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const p = await navigator.permissions.query({ name: 'microphone' });
+          lines.push(`Mic permission: ${p.state}`);
+        } catch (_) { /* some browsers refuse the query */ }
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        stream.getTracks().forEach((t) => t.stop());
+        lines.push('Mic open test: OK — the microphone itself works');
+      } catch (err) {
+        lines.push(`Mic open test: FAILED — ${err.name}: ${err.message}`);
+      }
+      appendChat('system', 'Voice check:\n' + lines.join('\n'));
+      // Finally, the proof: speak one line out loud.
+      try {
+        const u = new SpeechSynthesisUtterance('Voice check. If you hear this, my speakers work.');
+        speechSynthesis.speak(u);
+        appendChat('system', 'I just spoke a test line — did you hear it?');
+      } catch (err) {
+        appendChat('system', `Could not even try to speak: ${err.message}`);
+      }
+    }
+    window.runVoiceCheck = runVoiceCheck;
+
+    // ── Rooms: full-screen workspaces that SWEEP in — hands and voice first ─
+    const roomsWin = document.getElementById('win-rooms');
+    const roomsFrame = document.getElementById('rooms-frame');
+    let roomsOpen = false;
+
+    function openRooms() {
+      if (!roomsFrame.src) roomsFrame.src = '/rooms.html';
+      if (roomsOpen) return;
+      roomsWin.style.display = 'block';
+      // Two frames so the browser paints the off-screen state before the sweep.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        roomsWin.style.transform = 'translateX(0)';
+      }));
+      roomsOpen = true;
+      toast('🖐️ Rooms — sweep a flat hand to slide, sweep down to dismiss');
+    }
+    function closeRooms() {
+      if (!roomsOpen) return;
+      roomsWin.style.transform = 'translateX(100%)';
+      roomsOpen = false;
+      setTimeout(() => { if (!roomsOpen) roomsWin.style.display = 'none'; }, 550);
+    }
+    function toggleRooms() { roomsOpen ? closeRooms() : openRooms(); }
+    window.toggleRooms = toggleRooms;
+
+    function roomsShell() {
+      try { return roomsFrame.contentWindow && roomsFrame.contentWindow.Shell; }
+      catch (_) { return null; }
+    }
+    function roomsStep(delta) { const s = roomsShell(); if (s) s.step(delta); }
+    function roomsGoto(id, tries = 0) {
+      openRooms();
+      const s = roomsShell();
+      if (s) { s.open(id); return; }
+      if (tries < 20) setTimeout(() => roomsGoto(id, tries + 1), 400);
+    }
+    document.addEventListener('keydown', (e) => {
+      if (!roomsOpen) return;
+      if (e.key === 'Escape') closeRooms();
+    });
 
     function requestSystemDiagnostics() {
       sendSuggestion('Report core telemetry and system health');
@@ -1590,6 +1821,7 @@
       if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('.tree-search') || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
       const win = document.getElementById(winId);
       if (!win) return;
+      if (win.classList.contains('docked')) return; // pinned in the left panel
 
       bringToFront(win);
       activeDragWin = win;
@@ -1708,15 +1940,16 @@
 
     // ── LAYOUT PRESETS ──
     function resetLayout() {
-      const t = document.getElementById('win-telemetry');
-      const c = document.getElementById('win-chat');
-      const tr = document.getElementById('win-tree');
-
-      if (t) { t.style.display = 'flex'; t.style.left = '24px'; t.style.top = '24px'; t.style.width = '320px'; t.style.height = 'auto'; t.classList.remove('minimized'); }
-      if (c) { c.style.display = 'flex'; c.style.left = '364px'; c.style.top = '24px'; c.style.width = '480px'; c.style.height = 'calc(100vh - 110px)'; c.classList.remove('minimized'); }
-      if (tr) { tr.style.display = 'flex'; tr.style.left = '864px'; tr.style.top = '24px'; tr.style.width = '380px'; tr.style.height = 'calc(100vh - 110px)'; tr.classList.remove('minimized'); }
+      // The OS layout: dock left, buttons top, open desktop. A reset clears
+      // stray windows and remembered icon positions — nothing else moves.
+      document.querySelectorAll('[id^="win-folder-"]').forEach((w) => w.remove());
+      localStorage.removeItem(DESK_POS_KEY);
+      document.querySelectorAll('.desk-icon').forEach((icon, i) => {
+        icon.style.left = '292px';
+        icon.style.top = (96 + i * 128) + 'px';
+      });
       FoleyAudio.place();
-      toast('Workspace layout reset');
+      toast('Desktop reset');
     }
 
     function applyPreset(mode) {
@@ -1825,10 +2058,11 @@
         return;
       }
 
-      const constraints = prefId ? { video: { deviceId: { exact: prefId } } } : {
+      const constraints = prefId ? { video: { deviceId: { exact: prefId }, frameRate: { ideal: 60 } } } : {
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
+          frameRate: { ideal: 60 }, // fresher frames = a faster hand
           facingMode: 'user'
         }
       };
@@ -2026,12 +2260,17 @@
         if (!cameraStream) {
           document.body.classList.remove('myhands-engaged');
         }
+        publishHandsLost();
         toast('My Hands tracking disabled');
       } else {
         if (!cameraStream) {
           await enableCameraBackground();
         }
         handTrackingActive = true;
+        ensureHandsBus();
+        // Hand skeleton and cursor stay visible above the full-screen rooms.
+        overlayCanvas.style.zIndex = '950';
+        handCursor.style.zIndex = '951';
         document.body.classList.add('myhands-engaged');
         btnHands.classList.add('active');
         if (swHands) swHands.classList.add('on');
@@ -2042,6 +2281,109 @@
       }
     }
     window.toggleMyHandsTracking = toggleMyHandsTracking;
+
+    // ── The gesture bus ────────────────────────────────────────────────────
+    // The tracked hand is published on /ws/myhands — the same channel the
+    // rooms listen on — so the hand that moves the glass also draws in the
+    // Flat, turns the 3D model, pans with a fist and scales with two hands.
+    // The SWEEP is read here too: a flat open hand moving fast sideways
+    // sweeps the rooms in and slides between them; a fast downward sweep
+    // dismisses them. No mouse, no keyboard, no buttons.
+    let handsBus = null;
+    function ensureHandsBus() {
+      if (handsBus && handsBus.readyState <= 1) return;
+      try {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        handsBus = new WebSocket(`${proto}://${location.host}/ws/myhands`);
+      } catch (_) { handsBus = null; }
+    }
+    function busSend(ev) {
+      if (handsBus && handsBus.readyState === 1) {
+        try { handsBus.send(JSON.stringify(ev)); } catch (_) { /* bus hiccup */ }
+      }
+    }
+
+    const gest = { present: false, pinch: false, fist: false, scaling: false, scaleBase: 0, clapped: false };
+    const sweepTrail = { samples: [], lastFire: 0 };
+
+    function publishGesture(cursorX, cursorY, isPinching, isFist) {
+      ensureHandsBus();
+      if (!gest.present) { gest.present = true; busSend({ type: 'hand_detected' }); }
+      busSend({ type: 'cursor_moved', x: cursorX / window.innerWidth, y: cursorY / window.innerHeight });
+      if (isPinching !== gest.pinch) {
+        gest.pinch = isPinching;
+        busSend({ type: isPinching ? 'pinch_started' : 'pinch_released' });
+      }
+      if (isFist !== gest.fist) {
+        gest.fist = isFist;
+        busSend({ type: isFist ? 'fist_started' : 'fist_released' });
+      }
+      detectSweep(cursorX, cursorY, isPinching || isFist);
+    }
+
+    function publishHandsLost() {
+      if (!gest.present) return;
+      gest.present = false;
+      if (gest.pinch) { gest.pinch = false; busSend({ type: 'pinch_released' }); }
+      if (gest.fist) { gest.fist = false; busSend({ type: 'fist_released' }); }
+      if (gest.scaling) { gest.scaling = false; busSend({ type: 'scale_ended' }); }
+      busSend({ type: 'hand_lost' });
+      sweepTrail.samples = [];
+    }
+
+    // Two hands: the distance between the wrists scales the work; bringing
+    // the palms together is a clap, which centres it.
+    function publishTwoHands(all) {
+      if (all.length >= 2) {
+        const a = all[0][0], b = all[1][0];
+        const dist = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
+        if (!gest.scaling) {
+          gest.scaling = true;
+          gest.scaleBase = Math.max(dist, 0.01);
+          busSend({ type: 'scale_started' });
+        } else {
+          busSend({ type: 'scale_delta', factor: dist / gest.scaleBase });
+        }
+        if (dist < 0.09 && !gest.clapped) {
+          gest.clapped = true;
+          busSend({ type: 'clap' });
+        } else if (dist > 0.22) {
+          gest.clapped = false;
+        }
+      } else if (gest.scaling) {
+        gest.scaling = false;
+        gest.clapped = false;
+        busSend({ type: 'scale_ended' });
+      }
+    }
+
+    // The sweep: an OPEN hand (no pinch, no fist — a grab must never slide the
+    // room out from under you) crossing a third of the screen inside ~0.35s.
+    function detectSweep(x, y, grabbing) {
+      const now = performance.now();
+      if (grabbing) { sweepTrail.samples = []; return; }
+      sweepTrail.samples.push({ x, y, t: now });
+      while (sweepTrail.samples.length && now - sweepTrail.samples[0].t > 350) sweepTrail.samples.shift();
+      if (now - sweepTrail.lastFire < 650 || sweepTrail.samples.length < 3) return;
+      const first = sweepTrail.samples[0];
+      const dx = x - first.x;
+      const dy = y - first.y;
+      if (Math.abs(dx) > window.innerWidth * 0.28 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+        sweepTrail.lastFire = now;
+        sweepTrail.samples = [];
+        if (!roomsOpen) {
+          openRooms();
+        } else {
+          roomsStep(dx < 0 ? 1 : -1); // sweep like turning a page
+        }
+        FoleyAudio.grab();
+      } else if (roomsOpen && dy > window.innerHeight * 0.3 && dy > Math.abs(dx) * 1.8) {
+        sweepTrail.lastFire = now;
+        sweepTrail.samples = [];
+        closeRooms();
+        FoleyAudio.place();
+      }
+    }
 
     // MediaPipe Hand Landmarker loop
     let landmarker = null;
@@ -2061,8 +2403,11 @@
             },
             numHands: 2,
             runningMode: "VIDEO",
-            minHandDetectionConfidence: 0.6,
-            minHandPresenceConfidence: 0.5
+            // Tuned for speed: find the hand a little more eagerly, and keep
+            // TRACKING it rather than falling back to the slow re-detection.
+            minHandDetectionConfidence: 0.5,
+            minHandPresenceConfidence: 0.4,
+            minTrackingConfidence: 0.5
           });
           handTrackerLoaded = true;
         } catch (e) {
@@ -2073,12 +2418,7 @@
 
       let lastVideoTime = -1;
 
-      function trackingFrame(now) {
-        if (!handTrackingActive) {
-          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-          return;
-        }
-
+      function processNow(now) {
         if (landmarker && bgCam && bgCam.currentTime !== lastVideoTime && bgCam.videoWidth > 0) {
           lastVideoTime = bgCam.currentTime;
           const res = landmarker.detectForVideo(bgCam, now);
@@ -2086,16 +2426,73 @@
 
           if (res.landmarks && res.landmarks.length > 0) {
             const lms = res.landmarks[0];
+            publishTwoHands(res.landmarks);
             processHandLandmarks(lms);
           } else {
             handCursor.style.display = 'none';
             resetDwell();
+            resetHandFilter();
+            publishHandsLost();
           }
         }
+      }
+
+      // The fast path: run the moment the camera delivers a frame, instead of
+      // waiting for the next screen paint. Falls back to rAF where missing.
+      if (bgCam && typeof bgCam.requestVideoFrameCallback === 'function') {
+        const onFrame = (now) => {
+          if (!handTrackingActive) {
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            return;
+          }
+          processNow(now);
+          bgCam.requestVideoFrameCallback(onFrame);
+        };
+        bgCam.requestVideoFrameCallback(onFrame);
+      } else {
+        const trackingFrame = (now) => {
+          if (!handTrackingActive) {
+            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            return;
+          }
+          processNow(now);
+          requestAnimationFrame(trackingFrame);
+        };
         requestAnimationFrame(trackingFrame);
       }
-      requestAnimationFrame(trackingFrame);
     }
+
+    // ── Real-world hand speed ──────────────────────────────────────────────
+    // A One-Euro filter: a still hand is steadied, a FAST hand is followed
+    // almost raw — the smoothing falls away as speed rises, so there is no
+    // lag when you move like you mean it. On top of that, a short velocity
+    // lead cancels the camera-to-screen pipeline delay when the hand is free.
+    const euro = { x: null, y: null, dx: 0, dy: 0, t: 0, minCutoff: 1.4, beta: 0.04, dcutoff: 1.0 };
+    const HAND_LEAD_S = 0.06; // seconds of velocity lead while not grabbing
+    function euroAlpha(cutoff, dt) {
+      const r = 2 * Math.PI * cutoff * dt;
+      return r / (r + 1);
+    }
+    function filterHand(rx, ry) {
+      const now = performance.now();
+      if (euro.x === null) {
+        euro.x = rx; euro.y = ry; euro.dx = 0; euro.dy = 0; euro.t = now;
+        return { x: rx, y: ry, vx: 0, vy: 0 };
+      }
+      const dt = Math.max(0.001, (now - euro.t) / 1000);
+      euro.t = now;
+      const vx = (rx - euro.x) / dt;
+      const vy = (ry - euro.y) / dt;
+      const ad = euroAlpha(euro.dcutoff, dt);
+      euro.dx += ad * (vx - euro.dx);
+      euro.dy += ad * (vy - euro.dy);
+      const speed = Math.hypot(euro.dx, euro.dy);
+      const a = euroAlpha(euro.minCutoff + euro.beta * speed, dt);
+      euro.x += a * (rx - euro.x);
+      euro.y += a * (ry - euro.y);
+      return { x: euro.x, y: euro.y, vx: euro.dx, vy: euro.dy };
+    }
+    function resetHandFilter() { euro.x = null; }
 
     // Process Hand Landmarks with Pinch, Fist, and Dwell Grabbing
     function processHandLandmarks(lms) {
@@ -2113,9 +2510,10 @@
       // Draw skeleton joints on overlay canvas
       drawHandSkeleton(lms, toScreen);
 
-      // Primary interaction cursor center
-      const cursorX = (idxTip.x + thmTip.x) / 2;
-      const cursorY = (idxTip.y + thmTip.y) / 2;
+      // Primary interaction cursor center — filtered for real-world speed.
+      const f = filterHand((idxTip.x + thmTip.x) / 2, (idxTip.y + thmTip.y) / 2);
+      let cursorX = f.x;
+      let cursorY = f.y;
       const pinchDist = Math.hypot(idxTip.x - thmTip.x, idxTip.y - thmTip.y);
 
       // 1. PINCH DETECTION
@@ -2155,6 +2553,16 @@
 
       const isGrabbing = isPinching || isFist;
 
+      // A free hand gets a short velocity lead: the cursor arrives where the
+      // hand IS, not where the camera last saw it. Grabs stay exact.
+      if (!isGrabbing) {
+        cursorX += f.vx * HAND_LEAD_S;
+        cursorY += f.vy * HAND_LEAD_S;
+      }
+
+      // Publish this hand on the gesture bus (drives the rooms + the sweep).
+      publishGesture(cursorX, cursorY, isPinching, isFist);
+
       if (isGrabbing) {
         resetDwell();
         const gestureName = isFist ? 'FIST GRASP' : 'PINCH GRAB';
@@ -2164,7 +2572,10 @@
 
         if (!handGrabbedWin) {
           const el = document.elementFromPoint(cursorX, cursorY);
-          const win = el ? el.closest('.glass-window') : null;
+          // Windows and desktop icons alike: pick up, carry, put down.
+          // The docked panel windows are part of the interface — never grabbed.
+          let win = el ? el.closest('.desk-icon, .glass-window') : null;
+          if (win && win.classList.contains('docked')) win = null;
           if (win) {
             handGrabbedWin = win;
             bringToFront(win);
@@ -2180,6 +2591,11 @@
       } else {
         if (handGrabbedWin) {
           handGrabbedWin.classList.remove('grabbed');
+          // An icon put down by the hand keeps its place next boot too.
+          if (handGrabbedWin.classList.contains('desk-icon')) {
+            const lbl = handGrabbedWin.querySelector('.lbl');
+            if (lbl) deskSavePos(lbl.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
+          }
           FoleyAudio.place();
           handGrabbedWin = null;
         }
@@ -2454,8 +2870,139 @@
     let _micStm = null;
     let _speechRec = null;
 
+    // ── JARVIS speaks (browser speech synthesis — no server, no network) ────
+    const speakBtn = document.getElementById('speak-btn');
+    let _speakOn = localStorage.getItem('jarvis-speak') !== 'off';
+    function renderSpeakBtn() {
+      speakBtn.textContent = _speakOn ? '🔊' : '🔇';
+      speakBtn.title = _speakOn ? 'JARVIS speaks replies aloud (click to switch off)'
+                                : 'JARVIS is silent (click to speak replies aloud)';
+    }
+    function toggleSpeak() {
+      _speakOn = !_speakOn;
+      localStorage.setItem('jarvis-speak', _speakOn ? 'on' : 'off');
+      if (!_speakOn && window.speechSynthesis) speechSynthesis.cancel();
+      renderSpeakBtn();
+      toast(_speakOn ? '🔊 JARVIS voice on' : '🔇 JARVIS voice off');
+      if (_speakOn) speakReply('Voice online, sir.');
+    }
+    function speakReply(text) {
+      if (!_speakOn || !window.speechSynthesis || !text) return;
+      const clean = String(text)
+        .replace(/```[\s\S]*?```/g, ' — code block — ')
+        .replace(/[*_#`>|]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 1200);
+      if (!clean) return;
+      speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(clean);
+      u.rate = 1.02;
+      u.pitch = 0.95;
+      const voices = speechSynthesis.getVoices();
+      const preferred = voices.find(v => /en[-_]GB/i.test(v.lang) && /male|daniel|george|ryan/i.test(v.name))
+        || voices.find(v => /en[-_]GB/i.test(v.lang))
+        || voices.find(v => /^en/i.test(v.lang));
+      if (preferred) u.voice = preferred;
+      speechSynthesis.speak(u);
+    }
+    if (window.speechSynthesis) speechSynthesis.getVoices();   // warm the voice list (async in Chrome)
+    renderSpeakBtn();
+
+    // ── "Hey Jarvis" wake word (continuous browser speech recognition) ──────
+    const wakeBtn = document.getElementById('wake-btn');
+    let _wakeOn = localStorage.getItem('jarvis-wake') === 'on';
+    let _wakeRec = null;
+    let _awaitingCmd = false;
+    let _awaitTimer = null;
+
+    function renderWakeBtn() {
+      wakeBtn.classList.toggle('recording', _wakeOn);
+      wakeBtn.style.opacity = _wakeOn ? '1' : '0.55';
+      wakeBtn.title = _wakeOn ? '"Hey Jarvis" wake word is ON (click to stop)'
+                              : 'Listen for "Hey Jarvis" (click to start)';
+    }
+
+    function toggleWakeWord() {
+      _wakeOn = !_wakeOn;
+      localStorage.setItem('jarvis-wake', _wakeOn ? 'on' : 'off');
+      if (_wakeOn) startWakeLoop(); else stopWakeLoop();
+      renderWakeBtn();
+      toast(_wakeOn ? '🎙 Listening for "Hey Jarvis"' : '🎙 Wake word off');
+      if (_wakeOn) speakReply('Wake word armed. Say: Hey Jarvis.');
+    }
+
+    function startWakeLoop() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) {
+        toast('This browser has no speech recognition — use Chrome or Edge for the wake word.');
+        _wakeOn = false; localStorage.setItem('jarvis-wake', 'off'); renderWakeBtn();
+        return;
+      }
+      if (_wakeRec) return;
+      const rec = new SR();
+      rec.continuous = true;
+      rec.interimResults = false;
+      rec.lang = 'en-US';
+      rec.onresult = (evt) => {
+        if (window.speechSynthesis && speechSynthesis.speaking) return;   // never hear our own voice
+        const res = evt.results[evt.results.length - 1];
+        if (!res.isFinal) return;
+        const heard = (res[0].transcript || '').trim();
+        if (!heard) return;
+        if (_awaitingCmd) {
+          _awaitingCmd = false;
+          clearTimeout(_awaitTimer);
+          submitVoiceCommand(heard);
+          return;
+        }
+        const m = heard.match(/\b(?:hey|ok|okay)?,?\s*jarvis\b[,.!?]?\s*(.*)$/i);
+        if (!m) return;
+        const cmd = (m[1] || '').trim();
+        if (cmd.split(/\s+/).filter(Boolean).length >= 2) {
+          submitVoiceCommand(cmd);                     // "Hey Jarvis, open the files" — all in one breath
+        } else {
+          speakReply('Yes, sir?');                     // just "Hey Jarvis" — wait for the command
+          _awaitingCmd = true;
+          _awaitTimer = setTimeout(() => { _awaitingCmd = false; }, 8000);
+        }
+      };
+      rec.onerror = (e) => {
+        if (e && e.error === 'not-allowed') {
+          toast('🎙 Microphone blocked — allow it for this page, then switch the wake word on again.');
+          _wakeOn = false; localStorage.setItem('jarvis-wake', 'off');
+          stopWakeLoop(); renderWakeBtn();
+        }
+      };
+      rec.onend = () => {
+        _wakeRec = null;                               // Chrome stops after silence: restart quietly
+        if (_wakeOn) setTimeout(() => { if (_wakeOn && !_speechRec && !_voiceWs) startWakeLoop(); }, 400);
+      };
+      try { rec.start(); _wakeRec = rec; } catch (_) { /* already running */ }
+    }
+
+    function stopWakeLoop() {
+      const r = _wakeRec;
+      _wakeRec = null;
+      if (r) { try { r.stop(); } catch (_) {} }
+      _awaitingCmd = false;
+      clearTimeout(_awaitTimer);
+    }
+
+    function submitVoiceCommand(text) {
+      toast(`Voice: "${text}"`);
+      document.getElementById('chat-input').value = text;
+      doSend();
+    }
+
+    if (_wakeOn) setTimeout(startWakeLoop, 1200);      // resume after a reload, permission allowing
+    renderWakeBtn();
+
     async function doMic() {
-      if (_voiceWs || _speechRec) { stopMic(); return; }
+      if (_voiceWs) { finishPcmRecording(); return; }
+      if (_speechRec) { stopMic(); return; }
+      stopWakeLoop();                                  // one recogniser at a time; onend re-arms it
+      if (window.speechSynthesis) speechSynthesis.cancel();    // do not record JARVIS's own voice
 
       // Try browser SpeechRecognition first for direct verbal commands (e.g. "activate my hands" or "activate my hands")
       const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -2483,6 +3030,11 @@
           rec.onerror = (err) => {
             console.warn('Speech recognition warning, falling back to audio stream:', err);
             stopMic();
+            if (err && err.error === 'not-allowed') {
+              toast('🎤 Microphone blocked — allow it in the browser for this page.');
+              appendChat('system', 'The browser blocked the microphone. Click the lock/camera icon in the address bar and allow the microphone, then try again.');
+              return;
+            }
             startPcmAudioStream();
           };
 
@@ -2502,38 +3054,74 @@
       startPcmAudioStream();
     }
 
+    const MAX_RECORD_S = 12;      // auto-stop so a forgotten mic never streams forever
+
     async function startPcmAudioStream() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         micBtn.classList.add('recording');
-        toast('🎤 Recording voice command…');
+        toast('🎤 Recording — click the mic again when you finish speaking');
 
         const ctx = new AudioContext();
         const src = ctx.createMediaStreamSource(stream);
         const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new WebSocket(`${wsProto}://${location.host}/ws/phone-audio?token=${encodeURIComponent(_authToken)}`);
         ws.binaryType = 'arraybuffer';
+        let sentSamples = 0;
 
         ws.onopen = () => {
+          ws.send(JSON.stringify({ type: 'start', rate: ctx.sampleRate }));
           const sp = ctx.createScriptProcessor(4096, 1, 1);
           sp.onaudioprocess = (e) => {
-            if (ws.readyState === 1) {
+            if (ws.readyState === 1 && _voiceWs === ws) {
               const input = e.inputBuffer.getChannelData(0);
               const pcm16 = new Int16Array(input.length);
               for (let i = 0; i < input.length; i++) pcm16[i] = Math.max(-32768, Math.min(32767, input[i] * 32768));
               ws.send(pcm16.buffer);
+              sentSamples += input.length;
+              if (sentSamples > ctx.sampleRate * MAX_RECORD_S) finishPcmRecording();
             }
           };
           src.connect(sp);
           sp.connect(ctx.destination);
         };
 
-        ws.onclose = stopMic;
-        ws.onerror = stopMic;
+        ws.onmessage = (ev) => {
+          try {
+            const m = JSON.parse(ev.data);
+            if (m.type === 'transcript' && m.text) {
+              toast(`Voice: "${m.text}"`);
+              document.getElementById('chat-input').value = m.text;
+              doSend();
+            } else if (m.type === 'error') {
+              toast(`🎤 ${m.message}`);
+              appendChat('system', m.message);
+            }
+          } catch (_) {}
+          try { ws.close(); } catch (_) {}
+        };
+        ws.onclose = () => { if (_voiceWs === ws) { _voiceWs = null; micBtn.classList.remove('recording'); } };
+        ws.onerror = () => { if (_voiceWs === ws) { toast('🎤 Voice link failed'); stopMic(); } };
         _voiceWs = ws; _audioCtx = ctx; _micStm = stream;
       } catch (err) {
         toast(`Mic error: ${err.message}`);
         stopMic();
+      }
+    }
+
+    function finishPcmRecording() {
+      // Stop capturing, then ask the server to transcribe what it heard.
+      const ws = _voiceWs;
+      if (_micStm) { _micStm.getTracks().forEach(t => t.stop()); _micStm = null; }
+      if (_audioCtx) { _audioCtx.close(); _audioCtx = null; }
+      micBtn.classList.remove('recording');
+      if (ws && ws.readyState === 1) {
+        toast('Transcribing…');
+        try { ws.send(JSON.stringify({ type: 'end' })); } catch (_) { try { ws.close(); } catch (_) {} }
+        setTimeout(() => { try { ws.close(); } catch (_) {} }, 20000);   // belt and braces
+      } else if (ws) {
+        try { ws.close(); } catch (_) {}
+        _voiceWs = null;
       }
     }
 
@@ -2544,7 +3132,7 @@
       }
       if (_micStm) { _micStm.getTracks().forEach(t => t.stop()); _micStm = null; }
       if (_audioCtx) { _audioCtx.close(); _audioCtx = null; }
-      if (_voiceWs) { _voiceWs.close(); _voiceWs = null; }
+      if (_voiceWs) { try { _voiceWs.close(); } catch (_) {} _voiceWs = null; }
       micBtn.classList.remove('recording');
     }
 
@@ -2561,6 +3149,204 @@
 
     // Auto-probe camera on boot without breaking
     populateCameraDevices();
+
+    // ═══ THE JARVIS OS LAYOUT ═══════════════════════════════════════════════
+    // Left: the dock — visualiser up tight in the corner, the chats below it.
+    // Top: the always-there buttons. The rest: open area — your folders as
+    // icons you pick up, move, open and put down. Windows float over it.
+
+    // 1. Assemble the dock: the two windows already there — Core Telemetry
+    //    and Command & Dialogue — become PERMANENT in the left panel.
+    //    Telemetry (the round JARVIS + wake buttons) on top, the chat below.
+    (function assembleDock() {
+      const t = document.getElementById('win-telemetry');
+      if (t) {
+        t.classList.add('docked');
+        t.style.display = '';
+        document.getElementById('dock-top').appendChild(t);
+      }
+      const c = document.getElementById('win-chat');
+      if (c) {
+        c.classList.add('docked');
+        c.style.display = '';
+        document.getElementById('dock-chat').appendChild(c);
+      }
+      const tr = document.getElementById('win-tree');
+      if (tr) tr.style.display = 'none';
+    })();
+
+    // 2. The audio visualiser: alive in the corner, flares when JARVIS speaks.
+    (function startVisualiser() {
+      const c = document.getElementById('viz-canvas');
+      if (!c) return;
+      const ctx = c.getContext('2d');
+      const N = 28;
+      let t = 0;
+      function frame() {
+        t += 0.016;
+        ctx.clearRect(0, 0, 128, 128);
+        const speaking = !!(window.speechSynthesis && speechSynthesis.speaking);
+        const watching = typeof handTrackingActive !== 'undefined' && handTrackingActive;
+        const state = document.getElementById('dock-state');
+        if (state) state.textContent = speaking ? 'SPEAKING' : (watching ? 'WATCHING' : 'ONLINE');
+        for (let i = 0; i < N; i++) {
+          const a = (i / N) * Math.PI * 2;
+          const energy = speaking
+            ? 0.45 + 0.55 * Math.abs(Math.sin(t * 7 + i * 1.7))
+            : 0.16 + 0.1 * Math.sin(t * 2 + i);
+          const r0 = 26;
+          const r1 = r0 + 30 * energy;
+          ctx.strokeStyle = speaking ? 'rgba(56,189,248,0.95)' : 'rgba(56,189,248,0.4)';
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.moveTo(64 + Math.cos(a) * r0, 64 + Math.sin(a) * r0);
+          ctx.lineTo(64 + Math.cos(a) * r1, 64 + Math.sin(a) * r1);
+          ctx.stroke();
+        }
+        ctx.beginPath();
+        ctx.arc(64, 64, 10 + (speaking ? 3 * Math.abs(Math.sin(t * 9)) : 1.5 * Math.sin(t * 2)), 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(125,211,252,0.9)';
+        ctx.fill();
+        requestAnimationFrame(frame);
+      }
+      frame();
+    })();
+
+    // 3. The desktop: your real folders (Documents, Downloads, the project)
+    //    as icons. Pick them up with the hand or the pointer, put them down
+    //    anywhere, double-tap to open. Positions are remembered.
+    const DESK_POS_KEY = 'jarvis-desk-pos';
+    function deskSavePos(name, x, y) {
+      let all = {};
+      try { all = JSON.parse(localStorage.getItem(DESK_POS_KEY) || '{}'); } catch (_) { /* fresh */ }
+      all[name] = { x, y };
+      localStorage.setItem(DESK_POS_KEY, JSON.stringify(all));
+    }
+    async function buildDesktop() {
+      let roots = [];
+      try {
+        const res = await _authFetch('/api/files/roots');
+        roots = (await res.json()).roots || [];
+      } catch (_) { return; }
+      let saved = {};
+      try { saved = JSON.parse(localStorage.getItem(DESK_POS_KEY) || '{}'); } catch (_) { /* fresh */ }
+      const headerH = 72;
+      roots.forEach((root, i) => {
+        const icon = document.createElement('div');
+        icon.className = 'desk-icon';
+        const emoji = /download/i.test(root.name) ? '⬇️'
+          : /document/i.test(root.name) ? '📄'
+          : /jarvis|project/i.test(root.name) ? '🧠' : '📁';
+        const ico = document.createElement('div'); ico.className = 'ico'; ico.textContent = emoji;
+        const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = root.name;
+        icon.appendChild(ico); icon.appendChild(lbl);
+        const pos = saved[root.name] || { x: 292, y: headerH + 24 + i * 128 };
+        icon.style.left = pos.x + 'px';
+        icon.style.top = pos.y + 'px';
+
+        icon.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          const offX = e.clientX - icon.offsetLeft;
+          const offY = e.clientY - icon.offsetTop;
+          icon.setPointerCapture(e.pointerId);
+          icon.classList.add('grabbed');
+          const move = (ev) => {
+            icon.style.left = Math.max(0, Math.min(window.innerWidth - 96, ev.clientX - offX)) + 'px';
+            icon.style.top = Math.max(headerH - 16, Math.min(window.innerHeight - 90, ev.clientY - offY)) + 'px';
+          };
+          icon.addEventListener('pointermove', move);
+          icon.addEventListener('pointerup', () => {
+            icon.classList.remove('grabbed');
+            icon.removeEventListener('pointermove', move);
+            deskSavePos(root.name, icon.offsetLeft, icon.offsetTop);
+          }, { once: true });
+        });
+        icon.addEventListener('dblclick', () => openFolderWindow(root.path, root.name));
+        document.body.appendChild(icon);
+      });
+    }
+
+    // 4. Folder windows: an icon opens into a window you pull across the room.
+    let folderWinCount = 0;
+    function openFolderWindow(rootPath, title) {
+      const id = `win-folder-${++folderWinCount}`;
+      const win = document.createElement('div');
+      win.className = 'glass-window';
+      win.id = id;
+      win.style.cssText = `top:${90 + (folderWinCount % 5) * 30}px; left:${380 + (folderWinCount % 5) * 30}px; width:430px; height:470px;`;
+      win.innerHTML = `
+        <div class="window-header" onpointerdown="startWindowDrag(event, '${id}')">
+          <div class="window-title-group"><span class="window-icon">📂</span><span class="fw-title"></span></div>
+          <div class="window-actions"><button class="win-btn" onclick="document.getElementById('${id}').remove()">✕</button></div>
+        </div>
+        <div class="window-body" style="display:flex; flex-direction:column; min-height:0; height:calc(100% - 42px); padding:6px;">
+          <ul class="folder-list" style="flex:1 1 auto; min-height:0;"></ul>
+          <pre class="fw-preview" style="display:none; flex:1 1 auto; min-height:0; overflow:auto; margin:0; padding:10px; font:12px/1.5 monospace; color:#cfe3ff; white-space:pre-wrap;"></pre>
+        </div>
+        <div class="window-grab-bar" onpointerdown="startWindowDrag(event, '${id}')" title="Grab handle"></div>`;
+      document.body.appendChild(win);
+      win.querySelector('.fw-title').textContent = title;
+      bringToFront(win);
+      fwNavigate(win, rootPath);
+    }
+    async function fwNavigate(win, dirPath) {
+      const list = win.querySelector('.folder-list');
+      const preview = win.querySelector('.fw-preview');
+      preview.style.display = 'none';
+      list.style.display = '';
+      list.textContent = '';
+      let data;
+      try {
+        const res = await _authFetch(`/api/files/list?path=${encodeURIComponent(dirPath)}`);
+        data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'blocked');
+      } catch (err) {
+        const li = document.createElement('li');
+        li.textContent = `⚠ Cannot open: ${err.message}`;
+        list.appendChild(li);
+        return;
+      }
+      win.querySelector('.fw-title').textContent = dirPath.split(/[\\/]/).pop() || dirPath;
+      if (data.parent) {
+        const up = document.createElement('li');
+        up.textContent = '⬅ ..';
+        up.addEventListener('click', () => fwNavigate(win, data.parent));
+        list.appendChild(up);
+      }
+      for (const entry of data.entries || []) {
+        const li = document.createElement('li');
+        li.textContent = `${entry.kind === 'folder' ? '📁' : '📄'} ${entry.name}`;
+        li.addEventListener('click', () => {
+          if (entry.kind === 'folder') fwNavigate(win, entry.path);
+          else fwPreview(win, entry.path, dirPath);
+        });
+        list.appendChild(li);
+      }
+      if (data.truncated) {
+        const li = document.createElement('li');
+        li.textContent = '… more files not shown';
+        list.appendChild(li);
+      }
+    }
+    async function fwPreview(win, filePath, backDir) {
+      const list = win.querySelector('.folder-list');
+      const preview = win.querySelector('.fw-preview');
+      list.style.display = 'none';
+      preview.style.display = '';
+      preview.textContent = 'Reading…';
+      try {
+        const res = await _authFetch(`/api/files/read?path=${encodeURIComponent(filePath)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'blocked');
+        preview.textContent = `⬅ (double-click to go back)\n── ${data.name} ──\n\n${data.text}${data.truncated ? '\n\n… file continues' : ''}`;
+      } catch (err) {
+        preview.textContent = `⬅ (double-click to go back)\n⚠ Cannot read: ${err.message}`;
+      }
+      preview.ondblclick = () => fwNavigate(win, backDir);
+    }
+    window.openFolderWindow = openFolderWindow;
+
+    buildDesktop();
   </script>
 </body>
 </html>

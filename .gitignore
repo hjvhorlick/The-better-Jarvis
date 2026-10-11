@@ -6,6 +6,10 @@ __pycache__/
 config/api_keys.json
 config/certs/
 memory/long_term.json
+memory/dashboard_history.json
+memory/dashboard_memory.json
+uploads/
+node_modules/
 barehands/state/
 barehands/barehands.json
 runtime/

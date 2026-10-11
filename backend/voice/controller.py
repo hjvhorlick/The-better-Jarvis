@@ -29,6 +29,7 @@ import threading
 import time
 from typing import Callable
 
+from . import doctor
 from .audio import AudioUnavailable
 from .vad import EnergyVAD
 
@@ -67,6 +68,7 @@ class VoiceController:
     ) -> None:
         self._mic = mic
         self._speaker = speaker
+        self._devices = devices
         self._bus = bus
         self._budget = budget
         self._get_key = get_key
@@ -184,17 +186,33 @@ class VoiceController:
 
     def autostart_wake(self) -> dict:
         """At start-up: listen for the wake word, if the setting is on and the model is installed.
-        Quiet when it cannot start: the status says why, and nothing is raised."""
+        Never raises — but when it cannot start, it says so: last_error carries the reason
+        (the status chip shows it) and a voice_error event goes on the bus (diagnostics lists it)."""
         if not self._wake_default():
             return self.status()
-        ready, _ = self._wake_available()
+        ready, reason = self._wake_available()
         if not ready:
+            message = f"wake word is not listening: {reason}"
+            self._set_error(message)
+            self._publish("voice_error", message=message)
             return self.status()
         try:
             return self.set_wake(True)
         except VoiceError as e:
             self._set_error(str(e))
+            self._publish("voice_error", message=f"wake word could not start: {e}")
             return self.status()
+
+    def audio_test(self, listen_s: float = doctor.LISTEN_S) -> dict:
+        """The speaker-and-microphone self-test (backend/voice/doctor.py). Runs the hardware
+        through the device registry, so leases are respected and released. Refused while a
+        Live session is on, because the test and the session would fight over the devices."""
+        if self.live:
+            raise VoiceError("Stop voice first, then run the audio test.", 409)
+        result = doctor.run(self._devices, self._mic, self._speaker, listen_s=listen_s)
+        self._publish("audio_test", ok=result["ok"],
+                      failed=[c["name"] for c in result["checks"] if not c["ok"]])
+        return result
 
     def set_muted(self, muted: bool) -> dict:
         self._mic.set_muted(muted)

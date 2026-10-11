@@ -34,6 +34,8 @@ _RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"unmute( the| my)? (mic|microphone|voice)" + _TAIL), "voice.unmute"),
     (re.compile(r"(start|turn on|enable|switch on)( the| my)? wake( word)?( listening)?" + _TAIL), "voice.wake"),
     (re.compile(r"(stop|turn off|disable|switch off)( the| my)? wake( word)?( listening)?" + _TAIL), "voice.wake_off"),
+    (re.compile(r"(test|check)( the| my)? (sound|audio|mic|microphone|speakers?)( and (the )?(sound|audio|mic|microphone|speakers?))?" + _TAIL),
+     "voice.test"),
     (re.compile(r"(pair|connect|add|link)( my| a| the)? phone" + _TAIL), "pairing.start"),
     (re.compile(r"(list|show)( me)?( my| the)?( paired| connected)? phones" + _TAIL), "pairing.list"),
     (re.compile(r"(forget|remove|unpair|disconnect)( my| the)? phone (?P<number>\d{1,3})" + _TAIL), "pairing.revoke"),

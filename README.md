@@ -1,16 +1,35 @@
 # JARVIS — Vincent's personal assistant
 
-Voice assistant running on Gemini Live. Personal use only.
+**There is ONE main build: the glass dashboard** (`server.ts` + `dashboard/static/app.html`).
+It is what AI Studio runs, and what you get with `npm start`. Everything else in this
+repository is an engine room whose features are being merged INTO this build — nothing
+else is "the app".
 
-## Run
-    ~/Jarvis/run.sh          # or double-click the desktop icon
+## Run (the main build)
 
-## Settings
-⚙ in the app → voice (30 Gemini voices), speaking style, wake word, audio devices.
-Config lives in `config/api_keys.json`. Personality in `core/prompt.txt`.
+    npm install     # once
+    npm start       # then open http://localhost:3000
 
-## My changes
-- Voice upgrade: all 30 Gemini voices, speaking-style presets, in-app preview
-- Rebranded as JARVIS V1
+Add your Gemini key to `.env` (copy `.env.example`) for real AI replies and the voice
+transcription fallback.
 
-See CREDITS.md for origin and licence.
+## What the main build does
+
+- Glass HUD, My Hands gesture tracking, camera stage, file browser
+- Chat with Gemini (`gemini-2.5-flash`), with your personality file `core/prompt.txt`
+  and your memory as context; conversation survives restarts
+- **Voice out** 🔊 — JARVIS speaks replies (browser speech synthesis)
+- **Voice in** 🎤 — speak a command (browser speech recognition, with a server-side
+  Gemini transcription fallback)
+- **Wake word** 🎙 — "Hey Jarvis" hands-free, in the browser
+- `remember <fact>` / `what do you remember` — notes kept in `memory/dashboard_memory.json`
+  (your original `memory/long_term.json` is read-only and never touched)
+- Diagnostics button — real measured telemetry, not canned text
+
+## Engine room (not the app)
+
+`backend/` + `web/` is the Python feature source (voice pipeline, skills, self-repair,
+pairing — see `docs/`). Its features are merged into the main build step by step.
+`main.py` / `ui.py` is the retired desktop prototype.
+
+See `CREDITS.md` for origin and licence (CC BY-NC 4.0 — personal use).

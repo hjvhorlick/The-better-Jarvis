@@ -15,6 +15,7 @@
     voice: $("#btn-voice"),
     mute: $("#btn-mute"),
     wake: $("#btn-wake"),
+    test: $("#btn-voicetest"),
     chip: $("#voice-chip"),
   };
   if (!el.voice || !el.mute || !el.wake || !el.chip) return;
@@ -48,6 +49,9 @@
       return { text: s.muted ? "wake word listening · muted" : "wake word listening", bad: false };
     }
     if (s.last_error) return { text: `voice off · ${s.last_error}`, bad: true };
+    if (s.wake && !s.wake.available) {
+      return { text: `voice off · wake word not ready: ${s.wake.reason || "unknown"}`, bad: true };
+    }
     return { text: "voice off", bad: false };
   }
 
@@ -128,6 +132,24 @@
       if (window.SupperCtl) window.SupperCtl.refresh();
     }
   }));
+
+  if (el.test) {
+    el.test.addEventListener("click", () => run(async () => {
+      say("system", "Testing the speaker and the microphone. You should hear a short beep — then speak normally for a few seconds.", "voice");
+      el.test.disabled = true;
+      try {
+        const result = await api("/api/voice/test", { method: "POST", body: {} });
+        const lines = (result && result.checks ? result.checks : [])
+          .map((c) => `${c.ok ? "✓" : "✗"} ${c.name} — ${c.detail}`);
+        const head = result && result.ok
+          ? "Audio test passed."
+          : "Audio test found problems. Fix the lines marked ✗ and test again.";
+        say(result && result.ok ? "system" : "error", [head, ...lines].join("\n"), "voice");
+      } finally {
+        el.test.disabled = false;
+      }
+    }));
+  }
 
   // Events from the shared stream (control.js forwards source === "voice").
   window.SupperVoice = {

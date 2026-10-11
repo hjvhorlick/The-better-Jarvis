@@ -38,6 +38,10 @@ async function waitFor(fn, ms = 3000) {
                 idle_off_s: 60, last_error: "", mic: {}, speaker: {} };
   let startStatus = null;      // override the response to POST /api/voice/start
   let wakeReply = null;        // override the response to POST /api/voice/wake
+  let testReply = { ok: true, checks: [
+    { name: "speaker", ok: true, detail: "played a one-second beep" },
+    { name: "microphone", ok: true, detail: "heard you clearly (loudest level 1800, threshold 600)" },
+  ] };                         // the response to POST /api/voice/test
   let pending = [];
 
   w.fetch = async (url, opts = {}) => {
@@ -56,6 +60,7 @@ async function waitFor(fn, ms = 3000) {
       else { voice = { ...voice, live: true, origin: "button" }; data = voice; }
     } else if (url === "/api/voice/stop") { voice = { ...voice, live: false, origin: "" }; data = voice; }
     else if (url === "/api/voice/mute") { voice = { ...voice, muted: body.muted }; data = voice; }
+    else if (url === "/api/voice/test") data = testReply;
     else if (url === "/api/voice/wake") {
       if (wakeReply) { data = wakeReply; wakeReply = null; }
       else if (!body.enabled) { voice = { ...voice, wake: { ...voice.wake, enabled: false } }; data = voice; }
@@ -118,11 +123,34 @@ async function waitFor(fn, ms = 3000) {
   check("the owner is told to approve it in the panel",
     await waitFor(() => $("#log").textContent.includes("Wake word needs your OK")));
 
-  // 7. Wake word unavailable (no model yet): the button is disabled and says why
+  // 7. Wake word unavailable (no model yet): the button is disabled and says why,
+  //    and the status chip carries the reason too (a tooltip alone is too easy to miss).
   voice = { ...voice, wake: { enabled: false, available: false, reason: "wake word model not downloaded yet" } };
   await sleep(3200);                                   // one poll cycle
   check("wake button is disabled when the model is missing", await waitFor(() => $("#btn-wake").disabled === true));
   check("the wake button explains why", $("#btn-wake").title.includes("not downloaded yet"), $("#btn-wake").title);
+  check("the status chip shows the wake reason",
+    $("#voice-chip").textContent.includes("wake word not ready") &&
+    $("#voice-chip").textContent.includes("not downloaded yet"), $("#voice-chip").textContent);
+
+  // 7b. The audio self-test: the button posts, and the result lines land in the chat
+  await click("#btn-voicetest");
+  check("the test button posts to /api/voice/test",
+    await waitFor(() => posts("/api/voice/test").length === 1));
+  const logText = () => $("#log").textContent;
+  check("a passing test is reported line by line",
+    await waitFor(() => logText().includes("Audio test passed.") && logText().includes("✓ speaker")),
+    logText().slice(-200));
+  testReply = { ok: false, checks: [
+    { name: "speaker", ok: true, detail: "played a one-second beep" },
+    { name: "microphone", ok: false, detail: "no audio arrived from the microphone" },
+  ] };
+  await click("#btn-voicetest");
+  check("a failing test shows the failed line as an error",
+    await waitFor(() => {
+      const errs = d.querySelectorAll("#log .msg.error");
+      return [...errs].some((e) => e.textContent.includes("✗ microphone — no audio arrived"));
+    }), logText().slice(-200));
 
   // 8. Turning wake off is immediate
   voice = { ...voice, wake: { enabled: true, available: true, reason: "ready" } };

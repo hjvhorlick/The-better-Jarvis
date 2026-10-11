@@ -85,6 +85,8 @@ def default_policy() -> PermissionPolicy:
     p.register("voice.mute", Tier.SAFE)
     p.register("voice.unmute", Tier.SAFE)
     p.register("voice.wake_off", Tier.SAFE)
+    # The audio self-test plays a beep and listens on this computer only; nothing leaves it.
+    p.register("voice.test", Tier.SAFE)
     p.register("memory.search_archive", Tier.SAFE)   # read-only, local
     p.register("memory.restore", Tier.CONFIRM)       # changes long_term.json, so it asks each time
     p.register("repair.list", Tier.SAFE)             # read-only list of snapshots

@@ -379,6 +379,7 @@ export default {
         ctx.drawImage(img, (view.width - w) / 2, (view.height - h) / 2, w, h);
         paint();
         URL.revokeObjectURL(url);
+        adaptTo("photo");
         say(`${file.name} placed on ${layers[active].name}.`);
       };
       img.onerror = () => { URL.revokeObjectURL(url); say(`Could not read ${file.name}.`); };
@@ -396,7 +397,8 @@ export default {
       el.playsInline = true;
       el.onloadeddata = () => {
         video.el = el;
-        say(`${file.name} loaded — ${el.videoWidth}×${el.videoHeight}. Use the frame buttons to step through it.`);
+        adaptTo("video");
+        say(`${file.name} loaded — the video frame tools are out. Step through it and place frames.`);
       };
       el.onerror = () => say(`Could not read ${file.name} as a video.`);
     }
@@ -442,8 +444,10 @@ export default {
     }
 
     function newPicture() {
-      const w = Math.max(64, Math.min(4096, Number(prompt("Width in pixels", "1280") || 1280)));
-      const h = Math.max(64, Math.min(4096, Number(prompt("Height in pixels", "720") || 720)));
+      // No pixel questions — a new picture simply fits the window you are in.
+      const host = view.parentElement;
+      const w = Math.max(64, Math.min(4096, Math.round((host && host.clientWidth) || 1280)));
+      const h = Math.max(64, Math.min(4096, Math.round((host && host.clientHeight) || 720)));
       view.width = w;
       view.height = h;
       layers.length = 0;
@@ -474,10 +478,47 @@ export default {
       return b;
     }
 
+    // The bar itself stays almost empty: the real design tools live in a
+    // sub-section (the drawer), and what the drawer shows follows what you
+    // bring in — a video surfaces its frame tools, a photo surfaces the
+    // annotation tools, a blank canvas keeps only the brushes. As you talk
+    // to Jarvis, more can surface here the same way.
+    let adaptTo = () => {};
     const strip = env._tools;
     if (strip) {
+      const slideEl = strip.parentElement;
+      const drawer = document.createElement("div");
+      drawer.className = "flat-drawer";
+      drawer.hidden = true;
+      const bodyEl = slideEl ? slideEl.querySelector(".env-body") : null;
+      if (slideEl && bodyEl) slideEl.insertBefore(drawer, bodyEl);
+      else strip.appendChild(drawer);
+
+      function group(title) {
+        const g = document.createElement("div");
+        g.className = "flat-group";
+        if (title) {
+          const t = document.createElement("span");
+          t.className = "flat-group-title";
+          t.textContent = title;
+          g.appendChild(t);
+        }
+        drawer.appendChild(g);
+        return g;
+      }
+
+      // On the bar: just the way in, and the way out.
+      const toolsBtn = toolButton("tools", "🧰 Tools", "Open the design tools", () => {
+        drawer.hidden = !drawer.hidden;
+        toolsBtn.setAttribute("aria-pressed", drawer.hidden ? "false" : "true");
+      });
+      strip.appendChild(toolsBtn);
+      strip.appendChild(toolButton("save", "Save", "Save the picture", exportPng));
+
+      // In the drawer: the real design tools, grouped.
+      const gDraw = group("Draw");
       for (const name of TOOLS) {
-        strip.appendChild(toolButton(name, LABEL[name], `${LABEL[name]} tool`, null));
+        gDraw.appendChild(toolButton(name, LABEL[name], `${LABEL[name]} tool`, null));
       }
       // Colour, size and text are controls, not buttons, so they get slots.
       const colourSlot = document.createElement("span");
@@ -490,7 +531,7 @@ export default {
       colour.title = "Drawing colour";
       colour.addEventListener("input", () => { state.colour = colour.value; });
       colourSlot.appendChild(colour);
-      strip.appendChild(colourSlot);
+      gDraw.appendChild(colourSlot);
 
       const sizeSlot = document.createElement("span");
       sizeSlot.className = "env-tool env-tool-control";
@@ -504,7 +545,7 @@ export default {
       size.setAttribute("aria-label", "Brush size");
       size.addEventListener("input", () => { state.size = Number(size.value); });
       sizeSlot.appendChild(size);
-      strip.appendChild(sizeSlot);
+      gDraw.appendChild(sizeSlot);
 
       const textSlot = document.createElement("span");
       textSlot.className = "env-tool env-tool-control";
@@ -515,23 +556,156 @@ export default {
       text.setAttribute("aria-label", "Text to place");
       text.addEventListener("input", () => { state.text = text.value; });
       textSlot.appendChild(text);
-      strip.appendChild(textSlot);
+      gDraw.appendChild(textSlot);
 
-      strip.appendChild(toolButton("undo", "Undo", "Step back one stroke", undo));
-      strip.appendChild(toolButton("redo", "Redo", "Step forward again", redo));
-      strip.appendChild(toolButton("image", "Image", "Bring in a picture", () => filePick("image/*", loadImageFile)));
-      strip.appendChild(toolButton("video", "Video", "Bring in a video, frame by frame", () => filePick("video/*", loadVideoFile)));
-      strip.appendChild(toolButton("frame", "Frame", "Place the current video frame", grabFrame));
-      strip.appendChild(toolButton("back", "◀ 1s", "Back one second of video", () => stepVideo(-1)));
-      strip.appendChild(toolButton("fwd", "1s ▶", "Forward one second of video", () => stepVideo(1)));
-      strip.appendChild(toolButton("layer", "+ Layer", "Add a layer", () => {
+      const gHist = group("Steps");
+      gHist.appendChild(toolButton("undo", "Undo", "Step back one stroke", undo));
+      gHist.appendChild(toolButton("redo", "Redo", "Step forward again", redo));
+
+      const gBring = group("Bring in");
+      gBring.appendChild(toolButton("image", "Image", "Bring in a picture", () => filePick("image/*", loadImageFile)));
+      gBring.appendChild(toolButton("video", "Video", "Bring in a video, frame by frame", () => filePick("video/*", loadVideoFile)));
+
+      // The video tools only exist once there IS a video.
+      const gVideo = group("Video frames");
+      gVideo.hidden = true;
+      gVideo.appendChild(toolButton("frame", "Frame", "Place the current video frame", grabFrame));
+      gVideo.appendChild(toolButton("back", "◀ 1s", "Back one second of video", () => stepVideo(-1)));
+      gVideo.appendChild(toolButton("fwd", "1s ▶", "Forward one second of video", () => stepVideo(1)));
+
+      const gPic = group("Picture");
+      gPic.appendChild(toolButton("layer", "+ Layer", "Add a layer", () => {
         makeLayer(`Layer ${layers.length + 1}`);
         active = layers.length - 1;
         mountLayers();
         say(`Added ${layers[active].name}.`);
       }));
-      strip.appendChild(toolButton("save", "Save PNG", "Save the picture", exportPng));
-      strip.appendChild(toolButton("new", "New", "Start a new picture", newPicture));
+      gPic.appendChild(toolButton("new", "New", "Start a new picture", newPicture));
+
+      // Jarvis does the heavy lifting; everything above is the fallback
+      // for minor changes by hand.
+      const gAI = group("Jarvis");
+      gAI.appendChild(toolButton("ai-make", "✨ Make", "Jarvis makes two takes — you pick the one you like", () => {
+        const words = prompt("What should Jarvis make?");
+        if (words && words.trim()) aiMake(words.trim());
+      }));
+      gAI.appendChild(toolButton("ai-change", "🪄 Change", "Jarvis changes this picture as you say", () => {
+        const words = prompt("What should Jarvis change?");
+        if (words && words.trim()) aiChange(words.trim());
+      }));
+
+      // One flat copy of every visible layer, for sending to Jarvis.
+      function flattenPng() {
+        const c = document.createElement("canvas");
+        c.width = view.width;
+        c.height = view.height;
+        const ctx = c.getContext("2d");
+        for (const layer of layers) {
+          if (!layer.visible) continue;
+          ctx.globalAlpha = layer.opacity;
+          ctx.drawImage(layer.canvas, 0, 0);
+        }
+        ctx.globalAlpha = 1;
+        return c.toDataURL("image/png").split(",")[1];
+      }
+
+      async function aiRequest(words, imageB64) {
+        const body = { prompt: words };
+        if (imageB64) body.image = imageB64;
+        const resp = await fetch("/api/ai/image", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
+        return `data:${data.mime || "image/png"};base64,${data.image}`;
+      }
+
+      function placeResult(dataUrl, label) {
+        const img = new Image();
+        img.onload = () => {
+          // The result lands on its own new layer, so the hand tools can
+          // still fix the small things afterwards — and undo still works.
+          makeLayer(label);
+          active = layers.length - 1;
+          snapshot();
+          const ctx = layers[active].ctx;
+          const s = Math.min(view.width / img.width, view.height / img.height);
+          const w = img.width * s, h = img.height * s;
+          ctx.drawImage(img, (view.width - w) / 2, (view.height - h) / 2, w, h);
+          mountLayers();
+          paint();
+          say("Done. It is on its own layer — touch it up by hand if you want.");
+        };
+        img.src = dataUrl;
+      }
+
+      // The AI creates; you choose from what comes in.
+      function chooseBetween(urls, label) {
+        const host = slideEl || document.body;
+        const overlay = document.createElement("div");
+        overlay.className = "flat-choices";
+        const title = document.createElement("p");
+        title.className = "flat-choices-title";
+        title.textContent = "Two takes. Pick one.";
+        overlay.appendChild(title);
+        const row = document.createElement("div");
+        row.className = "flat-choices-row";
+        for (const url of urls) {
+          const pic = document.createElement("img");
+          pic.src = url;
+          pic.alt = "A take from Jarvis";
+          pic.addEventListener("click", () => {
+            overlay.remove();
+            placeResult(url, label);
+          });
+          row.appendChild(pic);
+        }
+        overlay.appendChild(row);
+        const neither = document.createElement("button");
+        neither.type = "button";
+        neither.textContent = "Neither — try different words";
+        neither.addEventListener("click", () => {
+          overlay.remove();
+          say("Fair enough. Say it differently and press Make again.");
+        });
+        overlay.appendChild(neither);
+        host.appendChild(overlay);
+      }
+
+      async function aiMake(words) {
+        say("Jarvis is making two takes — pick the one you like…");
+        const settled = await Promise.allSettled([aiRequest(words), aiRequest(words)]);
+        const takes = settled.filter((r) => r.status === "fulfilled").map((r) => r.value);
+        if (takes.length === 0) {
+          const why = settled[0].status === "rejected" ? settled[0].reason.message : "no result";
+          say(`Jarvis could not do it: ${why}`);
+        } else if (takes.length === 1) {
+          placeResult(takes[0], "Jarvis make");
+        } else {
+          chooseBetween(takes, "Jarvis make");
+        }
+      }
+
+      async function aiChange(words) {
+        say("Jarvis is changing the picture…");
+        try {
+          const result = await aiRequest(words, flattenPng());
+          placeResult(result, "Jarvis change");
+        } catch (err) {
+          say(`Jarvis could not do it: ${err.message}`);
+        }
+      }
+
+      // The room adapts to what you bring in.
+      adaptTo = (kind) => {
+        if (kind === "video") gVideo.hidden = false;
+        if (kind === "photo" || kind === "video") {
+          drawer.hidden = false;
+          toolsBtn.setAttribute("aria-pressed", "true");
+        }
+      };
     }
 
     function filePick(accept, onFile) {

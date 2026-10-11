@@ -4,6 +4,9 @@
   POST /api/voice/start            {} -> status          (the owner's button is the consent)
   POST /api/voice/stop             {} -> status
   POST /api/voice/mute             {"muted": bool} -> status
+  POST /api/voice/test             {} -> {"ok": bool, "checks": [{name, ok, detail}, ...]}
+        plays a short beep, listens to the microphone for a few seconds, and reports each
+        part of the voice path in plain language. 409 while a voice session is running.
   POST /api/voice/wake             {"enabled": bool}
         disable: applied at once -> status
         enable : needs the owner's OK -> {"confirmation": {...}}; the wake listener starts
@@ -56,6 +59,13 @@ def register(app: FastAPI, voice: VoiceController, confirmations) -> None:
     @router.post("/api/voice/mute")
     def mute(body: MuteIn) -> dict:
         return voice.set_muted(body.muted)
+
+    @router.post("/api/voice/test")
+    def audio_test() -> dict:
+        try:
+            return voice.audio_test()
+        except VoiceError as e:
+            raise _http(e)
 
     @router.post("/api/voice/wake")
     def wake(body: WakeIn) -> dict:
