@@ -175,7 +175,7 @@ def test_every_voice_rule_names_a_registered_action():
     actions = router.all_actions()
     voice_actions = {a for a in actions if a.startswith("voice.")}
     assert voice_actions == {"voice.start", "voice.stop", "voice.mute", "voice.unmute",
-                             "voice.wake", "voice.wake_off"}
+                             "voice.wake", "voice.wake_off", "voice.test"}
     p = default_policy()
     assert all(p.tier_of(a) is not Tier.BLOCKED for a in voice_actions)
 

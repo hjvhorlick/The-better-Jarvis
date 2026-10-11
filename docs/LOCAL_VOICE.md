@@ -101,6 +101,38 @@ voice conversation starts. It ends after about a minute with no speech, and list
 - The wake word has been tested on synthesized speech, not on a real microphone. The model itself is bundled and checked by checksum.
 - The microphone is open while wake listening is on, which is the normal state once the model is installed. The status panel shows it.
 
+## If voice does not work: the audio test (added 2026-10-10)
+
+When voice seems dead — nothing happens, no error — run the audio test first. It plays a short
+beep (the speaker must be heard), listens to the microphone for a few seconds (speak normally),
+measures the level against the speech threshold, and reports each part in plain language.
+
+Three ways to run it, all on this computer, nothing sent anywhere:
+
+1. **In the app:** press **Test audio**, next to the Voice button.
+2. **In the chat:** type `test the sound` (also `check the mic`, `test the speakers`).
+3. **Without the app:** from the project folder,
+   `.venv\Scripts\python tools\check_voice.py` (Windows) or
+   `.venv/bin/python tools/check_voice.py` (Linux/macOS).
+
+How to read the result:
+
+- **✗ sound system** — the audio packages are missing. Install
+  `backend/requirements-voice.txt` (on Linux also `libportaudio2`). The starter scripts do
+  this; if it still fails, the install itself failed — run the starter again and read its output.
+- **✗ speaker / no beep heard** — wrong output device or volume. The line names the system
+  default device; change it in the system sound settings.
+- **✗ microphone, "no audio arrived"** — the OS is not giving Python the microphone. On
+  Windows: Settings → Privacy & security → Microphone → allow desktop apps.
+- **✗ microphone, "heard only silence"** — the mic works but is too quiet for speech
+  detection (level shown in the line). Raise the input level in the system sound settings, or
+  pick another microphone with `SUPPER_MIC_DEVICE`.
+- **✗ speech to text / spoken replies / wake word** — the named package or model is missing;
+  the line says which file to install from.
+
+Since the same change, a wake word that cannot start no longer fails silently: the reason shows
+in the voice status chip ("voice off · wake word is not listening: …") and in Diagnostics.
+
 ## Check list for you (about 10 minutes)
 
 1. Install as above. Start the app. Check that the Voice status says the speech engine is ready.

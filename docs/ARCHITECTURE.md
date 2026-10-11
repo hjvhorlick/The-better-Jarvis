@@ -91,7 +91,8 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 | `backend/repair/trial.py` | trial copy of the app used for health checks | none |
 | `backend/voice/__init__.py` | package marker | none |
 | `backend/voice/api.py` | voice routes | `controller` |
-| `backend/voice/controller.py` | voice state rules (one owner per device, budget before hardware for Live only, idle stop, barge-in hook) | `audio`, `vad` |
+| `backend/voice/controller.py` | voice state rules (one owner per device, budget before hardware for Live only, idle stop, barge-in hook, the audio self-test entry) | `audio`, `doctor`, `vad` |
+| `backend/voice/doctor.py` | audio self-test: a beep through the speaker, a microphone level reading, and the readiness of each speech engine, in plain language | `audio`, `stt`, `tts`, `vad`, `wake` |
 | `backend/voice/local.py` | local voice relay: VAD turns, speech to text, the agent (quiet), speech out, barge-in; no Gemini Live | `audio`, `vad` |
 | `backend/voice/stt.py` | speech to text on this computer (faster-whisper: the only importer; model downloaded once) | none |
 | `backend/voice/tts.py` | spoken replies on this computer: Kokoro if its files are present, else the system voice (pyttsx3: the only importer) | `audio`, `config` |

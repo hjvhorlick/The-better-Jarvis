@@ -111,6 +111,7 @@ class Agent:
             "voice.unmute": self._voice_mute,
             "voice.wake": self._voice_wake,
             "voice.wake_off": self._voice_wake_off,
+            "voice.test": self._voice_test,
             "memory.search_archive": self._archive_search,
             "memory.restore": self._archive_restore,
             "repair.rollback_last": self._repair_rollback_last,
@@ -445,6 +446,19 @@ class Agent:
             self._voice.set_wake(False)
         return {"reply": "Wake word listening is off."}
 
+    def _voice_test(self, m, confirmed):
+        """The audio self-test: a beep, a few seconds of listening, and a plain report."""
+        if self._voice is None or not hasattr(self._voice, "audio_test"):
+            return {"reply": "Voice is not available on this server."}
+        try:
+            result = self._voice.audio_test()
+        except Exception as e:                       # VoiceError: a Live session is running
+            return {"reply": f"The audio test did not run: {e}"}
+        lines = [f"{'✓' if c['ok'] else '✗'} {c['name']} — {c['detail']}" for c in result["checks"]]
+        head = ("Audio test passed." if result["ok"]
+                else "Audio test found problems. Fix the lines marked ✗ and run it again.")
+        return {"reply": head + "\n" + "\n".join(lines)}
+
     def _memory_recall(self, m, confirmed):
         """Answer from stored facts when they clearly hold the answer. Otherwise decline, so the
         question goes on to Gemini. Nothing is written."""
@@ -516,7 +530,8 @@ class Agent:
     def _help(self, m, confirmed):
         return {"reply": ("Local commands: what time is it · what's the date · system status · "
                           "show folders · open <folder name> · turn on My Hands (asks first) · "
-                          "turn off My Hands · what is my <thing> (answers from what you told me, if stored) · "
+                          "turn off My Hands · test the sound (beeps and checks the microphone) · "
+                          "what is my <thing> (answers from what you told me, if stored) · "
                           "learn: <question> = <answer> · what have you learned · forget <number> · "
                           "propose a fix for <request> (asks before any change) · roll back the last change (asks first) · list snapshots · search archive for <text> · restore archive entry <number> (asks first) · pair my phone (asks first) · list phones · forget phone <number> · help. Anything else goes to Gemini, "
                           "within today's budget.")}

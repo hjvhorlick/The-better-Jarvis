@@ -42,6 +42,23 @@ def _sounddevice():
     return sd
 
 
+def default_device_names() -> tuple[bool, str]:
+    """(ok, detail): the system's default input and output devices, by name.
+    Used by the audio self-test. This module is the only importer of sounddevice."""
+    try:
+        sd = _sounddevice()
+    except AudioUnavailable as e:
+        return False, str(e)
+    names = []
+    for kind in ("input", "output"):
+        try:
+            info = sd.query_devices(kind=kind)
+            names.append(f"{kind}: {info.get('name', 'unknown')}")
+        except Exception:
+            names.append(f"{kind}: none found")
+    return True, "; ".join(names)
+
+
 def _open_input(device, on_block: Callable[[bytes], None]):
     sd = _sounddevice()
 
@@ -76,6 +93,7 @@ class Microphone:
         self._opener = opener
         self._stream = None
         self._sink: Callable[[bytes], None] | None = None
+        self._taps: tuple[Callable[[bytes], None], ...] = ()
         self._muted = False
         self._lock = threading.Lock()
         self._error = ""
@@ -122,6 +140,17 @@ class Microphone:
     def set_sink(self, sink: Callable[[bytes], None] | None) -> None:
         self._sink = sink
 
+    # audio-test interface: a tap sees the same blocks as the sink, and mute still
+    # applies first, so a muted microphone stays silent for the test too.
+    def add_tap(self, tap: Callable[[bytes], None]) -> None:
+        with self._lock:
+            if tap not in self._taps:
+                self._taps = (*self._taps, tap)
+
+    def remove_tap(self, tap: Callable[[bytes], None]) -> None:
+        with self._lock:
+            self._taps = tuple(t for t in self._taps if t is not tap)
+
     def set_muted(self, muted: bool) -> None:
         self._muted = bool(muted)
 
@@ -137,6 +166,8 @@ class Microphone:
         sink = self._sink
         if sink is not None:
             sink(data)
+        for tap in self._taps:
+            tap(data)
 
 
 class Speaker:
