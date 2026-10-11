@@ -182,6 +182,45 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+// The owner types his key into Settings and it takes effect at once — no restart.
+// The key is written to ./.env, which is git-ignored, so it never reaches a commit.
+const ENV_FILE = path.join(process.cwd(), '.env');
+function setGeminiKey(key: string): void {
+  const cleaned = key.trim();
+  process.env.GEMINI_API_KEY = cleaned;
+  aiClient = null; // drop the cached client; the next call rebuilds it with the new key
+
+  let lines: string[] = [];
+  try {
+    if (fs.existsSync(ENV_FILE)) {
+      lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
+    }
+  } catch (err) {
+    console.error('Could not read .env:', err);
+    throw err;
+  }
+
+  let replaced = false;
+  const out = lines.map((line) => {
+    if (/^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(line)) {
+      replaced = true;
+      return `GEMINI_API_KEY=${cleaned}`;
+    }
+    return line;
+  });
+  if (!replaced) {
+    while (out.length && out[out.length - 1].trim() === '') out.pop(); // keep the file tidy
+    out.push(`GEMINI_API_KEY=${cleaned}`, '');
+  }
+
+  try {
+    fs.writeFileSync(ENV_FILE, out.join('\n'), { mode: 0o600 });
+  } catch (err) {
+    console.error('Could not write .env:', err);
+    throw err;
+  }
+}
+
 // Jarvis's own picture tool. Both the rooms and Jarvis himself use this one
 // path, so what the owner can do, Jarvis can do from a chat line too.
 async function makeAiImage(promptText: string, imageBase64?: string): Promise<{ data: string; mime: string }> {
@@ -324,26 +363,31 @@ async function processCommand(userCommand: string): Promise<string> {
       });
       const reply = response.text?.trim();
       if (reply) return reply;
+      return 'I reached Gemini, sir, but it sent back an empty reply. Try asking again — if it repeats, the model name or quota may be the cause.';
     } catch (err) {
+      // Honest failure: the key is there, the call failed. Say exactly that and why.
       console.error('Gemini error:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      return `I have my key, sir, but the call to Gemini failed: ${message}. Check the internet connection and that the key is valid.`;
     }
   }
 
-  // Built-in fallback when Gemini key is not provided or fails
+  // No key: local, built-in answers only — nothing pretends to be AI, and the
+  // last line tells the owner exactly how to bring the real reasoning online.
   if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('identity')) {
-    return 'I am JARVIS, your automated personal assistant. I monitor systems, process directives, and execute operational workflows.';
+    return 'I am JARVIS, your automated personal assistant. My reasoning core is offline at the moment — no Gemini API key is set — so I am running on my built-in local replies.';
   }
   if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-    return 'Good day, sir. How may I be of service?';
+    return 'Good day, sir. One honest note: my reasoning is offline (no Gemini API key), so I can only give built-in local replies. Open Settings (the gear button) and paste your key under "The Brain" to bring me fully online.';
   }
   if (lower.includes('time') || lower.includes('date')) {
     return `Current server timestamp is ${new Date().toLocaleString()}.`;
   }
   if (lower.includes('wake') || lower.includes('online')) {
-    return 'Systems awake and responsive, sir.';
+    return 'The server is awake, sir, but my reasoning is offline — no Gemini API key is set. Open Settings (the gear button) and paste your key under "The Brain" to bring the AI online.';
   }
 
-  return `Acknowledged: "${trimmed}". Command queued and recorded in system logs.`;
+  return 'My reasoning is offline, sir — no Gemini API key is set, so I can only run the built-in local commands. Open Settings (the gear button) and paste your key under "The Brain" to bring the AI online.';
 }
 
 // Real telemetry for the Diagnostics button — honest readings, no theatre.
@@ -356,7 +400,7 @@ function realStatusReport(): string {
     'Real telemetry, sir — measured, not scripted:',
     `• Server uptime ${Math.floor(up / 60)} min ${up % 60} s · memory ${Math.round(mem.rss / 1048576)} MB`,
     `• Connected interfaces: ${wss.clients.size}`,
-    `• Gemini neural core: ${hasKey ? 'linked (gemini-2.5-flash)' : 'NO API KEY — replies are built-in only. Add GEMINI_API_KEY to the .env file and restart.'}`,
+    `• Gemini neural core: ${hasKey ? 'linked (gemini-2.5-flash)' : 'NO API KEY — my reasoning is offline and only built-in local replies work. Open Settings (the gear button) → "The Brain" and paste your key; it takes effect at once, no restart.'}`,
     `• Conversation log: ${messageHistory.length} entries, kept across restarts in memory/dashboard_history.json`,
     `• Stored notes: ${notes} (say "remember ..." to add one)`,
     '• Voice: speech out 🔊 and speech in 🎤 run in your browser; 🎙 toggles the "Hey Jarvis" wake word.',
@@ -1039,6 +1083,29 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       { name: 'Dual-Channel Telemetry Relay', status: 'connected', icon: '📡' },
     ],
   });
+});
+
+// GET /api/settings/gemini-key -> is a key present, and its last 4 characters
+app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) => {
+  const key = process.env.GEMINI_API_KEY || '';
+  res.json({ present: Boolean(key), tail: key ? key.slice(-4) : null });
+});
+
+// POST /api/settings/gemini-key -> save the owner's key and use it at once
+app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) => {
+  const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
+  if (key.length < 10) {
+    res.status(400).json({ error: 'That does not look like a Gemini API key — it needs at least 10 characters.' });
+    return;
+  }
+  try {
+    setGeminiKey(key);
+  } catch (err) {
+    res.status(500).json({ error: `Could not write the key to .env: ${err instanceof Error ? err.message : String(err)}` });
+    return;
+  }
+  console.log(`[JARVIS] Gemini key updated from Settings (ends in …${key.slice(-4)}) — now live, no restart needed.`);
+  res.json({ ok: true, tail: key.slice(-4) });
 });
 
 // Fallback route handler

@@ -1136,6 +1136,21 @@
         </div>
       </div>
       <div class="window-body settings-body">
+        <!-- THE BRAIN: the owner's Gemini key. Saved into ./.env (git-ignored) and
+             live at once — the server drops its cached client, so no restart. -->
+        <div>
+          <div class="settings-section-title">The Brain — Gemini API key</div>
+          <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+            <span class="settings-desc">Paste your Gemini API key. It is stored only in the local .env file on this machine and is used immediately — no restart.</span>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="AIza… (your Gemini API key)"
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:#fff; border-radius:8px; padding:8px 10px; font-size:12px;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey()">Save</button>
+            </div>
+            <span class="settings-desc" id="gemini-key-status">Checking…</span>
+          </div>
+        </div>
+
         <div>
           <div class="settings-section-title">Spatial Interaction Presets</div>
           <div class="preset-grid">
@@ -1334,6 +1349,64 @@
     }
     const _encReady = _initCrypto(_sessionKey);
 
+    // ── THE BRAIN: the Gemini key, typed into Settings ─────────────────────
+    // The key travels straight to the server, which stores it in the local
+    // git-ignored .env and starts using it for the very next reply.
+    async function refreshGeminiKeyStatus() {
+      const el = document.getElementById('gemini-key-status');
+      if (!el) return;
+      el.textContent = 'Checking…';
+      el.style.color = '';
+      try {
+        const res = await _authFetch('/api/settings/gemini-key');
+        if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
+        const info = await res.json();
+        if (info.present) {
+          el.textContent = `● key ending in …${info.tail} is active — real AI replies and voice transcription work`;
+          el.style.color = 'var(--emerald)';
+        } else {
+          el.textContent = '○ no key set — my reasoning is offline; paste a key and press Save';
+          el.style.color = '#ffb86b';
+        }
+      } catch (err) {
+        el.textContent = `Could not ask the server: ${err.message} — is it running on port 3000?`;
+        el.style.color = '#ff6b6b';
+      }
+    }
+
+    async function saveGeminiKey() {
+      const input = document.getElementById('gemini-key-input');
+      const el = document.getElementById('gemini-key-status');
+      const key = ((input && input.value) || '').trim();
+      if (key.length < 10) {
+        el.textContent = 'That key is too short — a Gemini API key is at least 10 characters.';
+        el.style.color = '#ff6b6b';
+        return;
+      }
+      el.textContent = 'Saving…';
+      el.style.color = '';
+      try {
+        const res = await _authFetch('/api/settings/gemini-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          el.textContent = `Save failed: ${info.error || `the server answered HTTP ${res.status}`}`;
+          el.style.color = '#ff6b6b';
+          return;
+        }
+        if (input) input.value = '';
+        toast(`Gemini key saved (ends in …${info.tail}) — the brain is live now`);
+      } catch (err) {
+        el.textContent = `Save failed: ${err.message} — is the server running on port 3000?`;
+        el.style.color = '#ff6b6b';
+        return;
+      }
+      refreshGeminiKeyStatus();
+    }
+
     // ── Toast Utility ─────────────────────────────────────────────────────────
     let _toastTimer;
     function toast(msg) {
@@ -1500,7 +1573,49 @@
       } catch (err) {
         lines.push(`Mic open test: FAILED — ${err.name}: ${err.message}`);
       }
-      appendChat('system', 'Voice check:\n' + lines.join('\n'));
+
+      // ── The senses around the browser: server, brain, replies channel, cameras ──
+      // "voice test" checks the whole body, not just the mouth and ears, and every
+      // line says what the reading MEANS — a failure is never a mystery.
+      try {
+        const res = await _authFetch('/api/system-status');
+        if (res.ok) {
+          lines.push('JARVIS server: reachable — commands, files and telemetry are live');
+        } else {
+          lines.push(`JARVIS server: answered HTTP ${res.status} — the page is open but its API is refusing; restart the server with npm run dev`);
+        }
+      } catch (err) {
+        lines.push('JARVIS server: UNREACHABLE — the page is running without its server, so no command, file or AI feature can work. Start it with npm run dev (or the launcher)');
+      }
+      try {
+        const res = await _authFetch('/api/settings/gemini-key');
+        const info = await res.json();
+        if (info.present) {
+          lines.push(`Brain (Gemini key): set, ending in …${info.tail} — real AI replies and voice transcription are live`);
+        } else {
+          lines.push('Brain (Gemini key): NO KEY — my reasoning is offline; open Settings (the gear button) and paste the key under "The Brain"');
+        }
+      } catch (err) {
+        lines.push(`Brain (Gemini key): could not ask the server (${err.message}) — treat the brain as offline until the server answers`);
+      }
+      if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
+        lines.push('Replies channel (websocket): OPEN — JARVIS can push replies into this window');
+      } else {
+        lines.push('Replies channel (websocket): NOT OPEN — replies cannot arrive; wait for it to reconnect (or reload the page) before expecting answers');
+      }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cams = devices.filter((d) => d.kind === 'videoinput').length;
+        if (cams > 0) {
+          lines.push(`Cameras found: ${cams} — My Hands gesture tracking can see you`);
+        } else {
+          lines.push('Cameras found: NONE — My Hands has no eye; use Mouse Hand (press V) and everything still works by mouse');
+        }
+      } catch (err) {
+        lines.push(`Cameras found: could not list devices (${err.message}) — if My Hands cannot see a camera, use Mouse Hand (press V)`);
+      }
+
+      appendChat('system', 'Senses check:\n' + lines.join('\n'));
       // Finally, the proof: speak one line out loud.
       try {
         const u = new SpeechSynthesisUtterance('Voice check. If you hear this, my speakers work.');
@@ -1926,6 +2041,8 @@
         win.style.display = 'flex';
         bringToFront(win);
         FoleyAudio.grab();
+        // Settings must show the truth about the brain key every time it opens.
+        if (winId === 'win-settings') refreshGeminiKeyStatus();
       } else {
         win.style.display = 'none';
         FoleyAudio.place();
@@ -2265,6 +2382,14 @@
       } else {
         if (!cameraStream) {
           await enableCameraBackground();
+        }
+        // No camera? The Mouse Hand is the honest fallback: it feeds the same
+        // synthetic landmarks through processHandLandmarks, so sweeps, rooms and
+        // drawing all keep working — and we never start a camera loop with no camera.
+        if (!cameraStream) {
+          enableMouseHand();
+          toast('No camera — Mouse Hand active: move the mouse, click = pinch, Shift+click = fist, V to toggle');
+          return;
         }
         handTrackingActive = true;
         ensureHandsBus();
