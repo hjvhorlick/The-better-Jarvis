@@ -397,7 +397,7 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(22, 23, 27, 0.34);
+  background: rgba(18, 20, 24, var(--jg-room-alpha, 0.14));
   border: 1px solid var(--glass-edge);
   border-radius: var(--radius);
   overflow: hidden;
@@ -407,7 +407,7 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   position: absolute; inset: 0;
   display: grid; place-items: center;
   color: var(--dim); font-size: 13px;
-  background: rgba(18, 19, 23, 0.6);
+  background: rgba(18, 20, 24, var(--jg-panel-alpha, 0.34));
 }
 .env-error { color: var(--bad); font-size: 13px; padding: 14px; margin: 0; }
 
@@ -420,7 +420,7 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   touch-action: none;         /* let the orbit control own the gesture */
 }
 .d3-drop {
-  position: absolute; left: 50%; top: 50%;
+  position: absolute; z-index: 2; left: 50%; top: 50%;
   transform: translate(-50%, -50%);
   padding: 18px 26px;
   border: 1px dashed var(--glass-edge);
@@ -433,6 +433,28 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   max-width: 80%;
 }
 .d3.is-over .d3-drop { border-color: var(--accent); color: var(--ink); }
+.d3.has-model .d3-drop { display: none; }
+.d3-hand-cursor {
+  position: absolute; z-index: 3; left: 0; top: 0;
+  width: 22px; height: 22px;
+  border: 2px solid rgba(110, 225, 255, 0.9);
+  border-radius: 50%;
+  background: rgba(35, 175, 220, 0.12);
+  box-shadow: 0 0 12px rgba(65, 205, 255, 0.42);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  transition: border-color 100ms ease, background 100ms ease, box-shadow 100ms ease, scale 100ms ease;
+}
+.d3-hand-cursor[hidden] { display: none; }
+.d3-hand-cursor.is-grabbing {
+  border-color: #ffd45a;
+  background: rgba(255, 203, 66, 0.28);
+  box-shadow: 0 0 16px rgba(255, 203, 66, 0.6);
+  scale: 1.18;
+}
+.d3-hand-cursor.is-turning { border-color: #c9a2ff; }
+.d3-hand-cursor.is-scaling { border-color: #73f3ac; scale: 1.18; }
+.d3-hand-cursor.is-pulling { border-color: #ff9f72; }
 /* A clap lights the status line, so the gesture is felt and not just heard. */
 .d3-readout.is-flash {
   color: #ffd98a;
@@ -441,7 +463,7 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 }
 
 .d3-readout {
-  position: absolute; left: 12px; bottom: 12px;
+  position: absolute; z-index: 4; left: 12px; bottom: 12px;
   margin: 0;
   font-size: 12px;
   color: var(--dim);
@@ -591,9 +613,28 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas: "brief library" "script library";
 }
-.studio-brief { grid-area: brief; display: flex; flex-direction: column; gap: 7px; }
-.studio-script { grid-area: script; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.studio-library { grid-area: library; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.studio-brief { grid-area: brief; display: flex; flex-direction: column; gap: 7px; min-height: 0; max-height: 44vh; overflow-y: auto; padding-right: 3px; }
+.studio-script { grid-area: script; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.studio-library { grid-area: library; min-height: 0; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.studio-project-shelf { display: flex; flex: 0 0 auto; flex-direction: column; gap: 6px; max-height: 58%; overflow-y: auto; padding: 6px; }
+.studio-project-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio-project-actions .studio-button { padding: 5px 8px; font-size: 11px; }
+.studio-button { cursor: pointer; }
+.studio-project-list { display: flex; flex-direction: column; gap: 5px; max-height: 150px; overflow-y: auto; }
+.studio-project-row { padding: 6px 8px; border: 1px solid var(--glass-edge); border-radius: 8px; background: rgba(24, 25, 30, 0.42); }
+.studio-project-row p { margin: 4px 0 0; color: var(--dim); font-size: 11px; line-height: 1.35; }
+.studio-project-open { width: 100%; text-align: left; padding: 4px 6px; font-size: 12px; }
+.studio-project-meta, .studio-note, .studio-citations { margin: 2px 0; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.studio-research-picker, .studio-research-card, .studio-creative-details { padding: 6px; border: 1px solid var(--glass-edge); border-radius: 8px; background: rgba(18, 19, 23, 0.35); }
+.studio-research-picker .studio-row select { flex: 1; min-width: 180px; }
+.studio-research-card { max-height: 180px; overflow: auto; font-size: 12px; line-height: 1.4; }
+.studio-research-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.studio-research-card ol { padding-left: 22px; }
+.studio-research-card a { color: var(--accent); overflow-wrap: anywhere; }
+.studio-research-report { white-space: pre-wrap; }
+.studio-creative-details textarea, .studio-brief textarea { width: 100%; padding: 6px 8px; font: inherit; font-size: 12px; border-radius: 8px; }
+.studio-copy-fallback { width: 100%; min-height: 110px; max-height: 180px; font-family: ui-monospace, monospace; font-size: 11px; }
+.studio-citations { color: var(--accent); }
 
 .studio-label { font-size: 12px; color: var(--dim); }
 .studio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -704,9 +745,12 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 @media (max-width: 900px) {
   .studio {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr) minmax(0, 0.9fr);
     grid-template-areas: "brief" "script" "library";
   }
+  .studio-brief { max-height: none; }
+  .studio-project-shelf { max-height: 48%; }
+  .studio-research-card { max-height: 120px; }
 }
 
 
@@ -730,15 +774,15 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   --radius: var(--jg-radius, 3px);
 }
 
+html, body {
+  background: transparent !important;
+}
 body {
   font-family: var(--jg-font);
   color: var(--ink);
   /* A dark halo on the words: clear glass over a camera picture must still be
-     readable. */
+     readable. The iframe body itself is clear, so the dashboard remains visible. */
   text-shadow: 0 1px 2px rgba(0, 0, 0, 0.7);
-  /* The dark grey room. When the camera is on, the picture layer sits over
-     this and the clear glass above is what you look through. */
-  background: #14151a;
 }
 
 /* The picture the glass is in front of. It is a plain layer behind every
@@ -765,10 +809,11 @@ body.env-cam-on #env-camera-mirror:not([hidden]) { display: block; }
   inset: 0;
   z-index: 1;
   pointer-events: none;
-  background: radial-gradient(circle at 50% 6%, rgba(38, 39, 44, 0.72) 0%, rgba(16, 17, 20, 0.94) 72%);
+  background: radial-gradient(circle at 50% 6%, rgba(38, 39, 44, 0.48) 0%, rgba(16, 17, 20, 0.62) 72%);
+  opacity: 0;
   transition: opacity 0.5s ease;
 }
-body.env-cam-on #env-camera-scrim { opacity: 0.40; }
+body.env-cam-on #env-camera-scrim { opacity: 0.18; }
 
 body > .rooms-top, body > .env-rail { position: relative; z-index: 2; }
 
@@ -776,7 +821,7 @@ body > .rooms-top, body > .env-rail { position: relative; z-index: 2; }
 .env-rail {
   border: var(--jg-line-width) solid var(--jg-line);
   border-radius: var(--jg-radius);
-  background: rgba(18, 20, 24, calc(var(--jg-room-alpha) * 0.45));
+  background: rgba(18, 20, 24, var(--jg-room-alpha));
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 0 var(--jg-glow-size) var(--jg-glow),
               0 24px 50px -22px rgba(0, 0, 0, 0.9);
 }
@@ -792,10 +837,10 @@ button {
   border-radius: var(--jg-radius);
 }
 button:hover:not(:disabled) { background: rgba(255, 214, 10, 0.18); box-shadow: 0 0 14px var(--jg-glow); }
-input, select, textarea {
+input[type="text"], input[type="search"], input[type="number"], select, textarea {
   font-family: var(--jg-font);
   color: var(--jg-gold-bright) !important;
-  background: rgba(0, 0, 0, 0.35) !important;
+  background: rgba(18, 20, 24, var(--jg-panel-alpha, 0.34)) !important;
   border: var(--jg-line-width) solid var(--jg-line-soft) !important;
   border-radius: var(--jg-radius) !important;
 }
@@ -807,8 +852,9 @@ select option { background: #191a1e; color: var(--jg-gold-bright); }
 .d3-drop, .d3-readout,
 .flat-layers, .flat-readout,
 .studio-brief, .studio-script, .studio-library,
-.studio-shot, .studio-cell,
-.topbar, .sidebar, .panel, .confirm-tray {
+.studio-shot, .studio-cell, .studio-cell-kind, .studio-raw,
+.topbar, .sidebar, .panel, .confirm-tray,
+.surface, .preview, .tile, .flat-group, .flat-choices {
   background-color: rgba(18, 20, 24, var(--jg-panel-alpha));
   backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
   -webkit-backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
@@ -820,9 +866,8 @@ select option { background: #191a1e; color: var(--jg-gold-bright); }
               0 18px 36px -22px rgba(0, 0, 0, 0.9);
 }
 
-/* ── The rooms stay open: the tools are there when they are asked for ──
-   Simplicity first. Every room shows its workspace and nothing else; the
-   tool strip appears with the Tools switch (or by saying "tools"). */
+/* The room tools are visible on first open, so the environment is usable
+   straight away. The Tools switch only hides or restores their strip. */
 body:not(.show-tools) .env-tools { display: none; }
 body:not(.show-tools) .flat-drawer { display: none; }
 .env-tool { padding: 7px 12px; font-size: 13px; }
@@ -830,6 +875,8 @@ body:not(.show-tools) .flat-drawer { display: none; }
 /* A thin yellow line around a room's own frames, and a long shadow for depth. */
 .flat-canvas-wrap, .d3-canvas { border: var(--jg-line-width) solid var(--jg-line-soft); border-radius: var(--jg-radius); }
 .env-track { padding: 2px; }
+.flat-canvas-wrap { background-color: rgba(18, 20, 24, var(--jg-room-alpha)); }
+.studio-shot-img { background: transparent; }
 
 /* The switcher: one pill per room, the live one filled with yellow. */
 .env-switcher { gap: 6px; }

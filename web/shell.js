@@ -146,8 +146,13 @@
   async function open(id) {
     const index = registry.findIndex((e) => e.id === id);
     if (index < 0) return;
-    // Already on screen and already loaded: nothing to do.
-    if (index === current && loaded.has(id)) return;
+    // Already on screen: let the workspace refresh any external changes without
+    // recreating its editor or discarding the current selection.
+    if (index === current && loaded.has(id)) {
+      const live = loaded.get(id);
+      if (live && typeof live.resume === "function") await live.resume();
+      return;
+    }
 
     const env = registry[index];
     const first = !loaded.has(env.id);

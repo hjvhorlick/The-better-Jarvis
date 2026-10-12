@@ -22,6 +22,35 @@
   const body = document.body;
   const video = document.getElementById("env-camera");
   const mirror = document.getElementById("env-camera-mirror");   // the server's frame, if any
+  const GLASS_KEY = "jarvis.glass.v2";
+  const GLASS_DEFAULTS = {
+    win: { alpha: 18, sand: 8 },
+    panel: { alpha: 34, sand: 6 },
+    room: { alpha: 14, sand: 6 },
+    line: 62,
+    bloom: 100,
+  };
+
+  function glassNumber(value, fallback, min, max) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
+  }
+
+  function loadSavedGlass() {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(GLASS_KEY) || "{}") || {}; } catch (_) { saved = {}; }
+    const glass = JSON.parse(JSON.stringify(GLASS_DEFAULTS));
+    for (const kind of ["win", "panel", "room"]) {
+      const source = saved[kind] || {};
+      glass[kind] = {
+        alpha: glassNumber(source.alpha, GLASS_DEFAULTS[kind].alpha, 0, 90),
+        sand: glassNumber(source.sand, GLASS_DEFAULTS[kind].sand, 0, 100),
+      };
+    }
+    glass.line = glassNumber(saved.line, GLASS_DEFAULTS.line, 0, 100);
+    glass.bloom = glassNumber(saved.bloom, GLASS_DEFAULTS.bloom, 0, 150);
+    return glass;
+  }
 
   const st = {
     on: false,
@@ -34,6 +63,16 @@
   function show(on) {
     st.on = Boolean(on);
     body.classList.toggle("env-cam-on", st.on);
+  }
+
+  function setTools(open) {
+    const visible = Boolean(open);
+    body.classList.toggle("show-tools", visible);
+    if (toolsToggle) {
+      toolsToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      toolsToggle.textContent = visible ? "✕ Tools" : "🧰 Tools";
+      toolsToggle.title = visible ? "Hide this room's tools" : "Show this room's tools";
+    }
   }
 
   function stopOwn() {
@@ -127,7 +166,7 @@
     }
 
     if (msg.type === "jarvis-rooms-tools") {
-      body.classList.toggle("show-tools", Boolean(msg.open));
+      setTools(msg.open);
       return;
     }
 
@@ -144,26 +183,28 @@
 
   /* ---------- the glass numbers, from the dashboard's sliders ---------- */
   function applyGlass(glass) {
+    if (!glass || typeof glass !== "object") return;
     const root = document.documentElement.style;
     const kinds = ["win", "panel", "room"];
     for (const kind of kinds) {
-      const g = glass[kind];
-      if (!g) continue;
-      root.setProperty(`--jg-${kind}-alpha`, (g.alpha / 100).toFixed(3));
-      root.setProperty(`--jg-${kind}-sand`, (g.sand / 100).toFixed(3));
-      root.setProperty(`--jg-${kind}-frost`, `${Math.round((g.sand / 100) * 40)}px`);
+      const g = glass[kind] || {};
+      const alpha = glassNumber(g.alpha, GLASS_DEFAULTS[kind].alpha, 0, 90);
+      const sand = glassNumber(g.sand, GLASS_DEFAULTS[kind].sand, 0, 100);
+      root.setProperty(`--jg-${kind}-alpha`, (alpha / 100).toFixed(3));
+      root.setProperty(`--jg-${kind}-sand`, (sand / 100).toFixed(3));
+      root.setProperty(`--jg-${kind}-frost`, `${Math.round((sand / 100) * 40)}px`);
     }
-    if (typeof glass.line === "number") {
-      const line = glass.line / 100;
-      root.setProperty("--jg-line", `rgba(255, 210, 74, ${(0.18 + line * 0.77).toFixed(3)})`);
-      root.setProperty("--jg-line-soft", `rgba(255, 210, 74, ${(0.05 + line * 0.33).toFixed(3)})`);
-    }
-    if (typeof glass.bloom === "number") {
-      const bloom = glass.bloom / 100;
-      root.setProperty("--jg-glow", `rgba(255, 208, 74, ${(0.30 * bloom).toFixed(3)})`);
-      root.setProperty("--jg-glow-size", `${Math.round(22 * bloom)}px`);
-    }
+    const line = glassNumber(glass.line, GLASS_DEFAULTS.line, 0, 100) / 100;
+    root.setProperty("--jg-line", `rgba(255, 210, 74, ${(0.18 + line * 0.77).toFixed(3)})`);
+    root.setProperty("--jg-line-soft", `rgba(255, 210, 74, ${(0.05 + line * 0.33).toFixed(3)})`);
+    const bloom = glassNumber(glass.bloom, GLASS_DEFAULTS.bloom, 0, 150) / 100;
+    root.setProperty("--jg-glow", `rgba(255, 208, 74, ${(0.30 * bloom).toFixed(3)})`);
+    root.setProperty("--jg-glow-size", `${Math.round(22 * bloom)}px`);
   }
+
+  // The rooms can be opened on their own too; start from the same saved glass
+  // values before the parent dashboard sends its authoritative live settings.
+  applyGlass(loadSavedGlass());
 
   /* ---------- turning the camera on from inside a room ----------
      There is no camera button in a room: the one switch is on the main screen.
@@ -182,11 +223,9 @@
   const toolsToggle = document.getElementById("env-tools-toggle");
   if (toolsToggle) {
     toolsToggle.addEventListener("click", () => {
-      const open = !body.classList.contains("show-tools");
-      body.classList.toggle("show-tools", open);
-      toolsToggle.setAttribute("aria-pressed", open ? "true" : "false");
-      toolsToggle.textContent = open ? "✕ Tools" : "🧰 Tools";
+      setTools(!body.classList.contains("show-tools"));
     });
+    setTools(body.classList.contains("show-tools"));
   }
 
   /* ---------- say hello: ask the dashboard for the glass and the picture ---- */

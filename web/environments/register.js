@@ -22,9 +22,9 @@ window.Shell.register({
 window.Shell.register({
   id: "design",
   name: "Design",
-  hint: "The 3D room: bring in a Blender model and move it with your hand",
+  hint: "Import .OBJ or .STL models, include OBJ materials, then manipulate them with My Hands",
   tools: [
-    { id: "import", name: "Import", hint: "Bring in a model you made" },
+    { id: "import", name: "Import", hint: "Select OBJ and its MTL/textures together, or import STL, glTF, FBX or 3MF" },
     { id: "frame", name: "Frame", hint: "Fit the model to the window" },
     { id: "wireframe", name: "Wireframe", hint: "Show the mesh instead of the surfaces" },
     { id: "opacity", name: "See-through", control: true,
@@ -55,6 +55,20 @@ window.Shell.register({
   tools: [
     { id: "up", name: "Up", hint: "Back up one folder" },
   ],
+});
+
+window.Shell.register({
+  id: "email",
+  name: "Email",
+  hint: "Compose and manage local email drafts; nothing is sent",
+  tools: [],
+});
+
+window.Shell.register({
+  id: "research",
+  name: "Research",
+  hint: "Search the public web, inspect sources and keep cited reports locally",
+  tools: [],
 });
 
 // Start on Coding: it is the lightest room, so the app is usable immediately.

@@ -31,7 +31,22 @@ export interface Draft {
   text: string;
   file: string;
   created: string;
+  /** Added for the structured Email workspace; older drafts remain valid. */
+  cc?: string;
+  bcc?: string;
+  body?: string;
+  updated?: string;
 }
+
+export interface EmailDraftFields {
+  to: string;
+  cc: string;
+  bcc: string;
+  subject: string;
+  body: string;
+}
+
+export type EmailDraftPatch = Partial<EmailDraftFields>;
 
 export interface DraftRequest {
   kind: DraftKind;
@@ -295,82 +310,412 @@ export function composeDraft(req: DraftRequest, userName: string, now: Date = ne
   return `${parts.join('\n\n')}\n`;
 }
 
+const EMAIL_FIELD_LIMITS: Record<keyof EmailDraftFields, number> = {
+  to: 2000, cc: 2000, bcc: 2000, subject: 998, body: 100_000,
+};
+const EMAIL_HEADER_FIELDS: Array<keyof EmailDraftFields> = ['to', 'cc', 'bcc', 'subject'];
+const DRAFT_KINDS: DraftKind[] = ['email', 'letter', 'note', 'memo'];
+
+function validDraftId(id: number): boolean {
+  return Number.isSafeInteger(id) && id > 0;
+}
+
+/** Keep the author's body intact; remove only the old local desk's own headers. */
+export function emailFieldsFromDraft(draft: Draft): EmailDraftFields {
+  return {
+    to: typeof draft.to === 'string' ? draft.to : '',
+    cc: typeof draft.cc === 'string' ? draft.cc : '',
+    bcc: typeof draft.bcc === 'string' ? draft.bcc : '',
+    subject: typeof draft.subject === 'string' ? draft.subject : '',
+    body: typeof draft.body === 'string' ? draft.body : extractLegacyEmailBody(draft.text),
+  };
+}
+
+function extractLegacyEmailBody(text: string): string {
+  const normalized = String(text || '').replace(/\r\n/g, '\n');
+  const divider = normalized.indexOf('\n\n');
+  if (divider < 0) return normalized;
+  const heading = normalized.slice(0, divider).split('\n');
+  const onlyOldHeaders = heading.length > 0 && heading.every((line) => /^(?:to|cc|bcc|subject):\s*/i.test(line));
+  return onlyOldHeaders ? normalized.slice(divider + 2) : normalized;
+}
+
+/** Render the plain-text companion file without changing the structured body. */
+export function renderEmailDraftText(fields: EmailDraftFields): string {
+  const headers: string[] = [];
+  if (fields.to) headers.push(`To: ${fields.to}`);
+  if (fields.cc) headers.push(`Cc: ${fields.cc}`);
+  if (fields.bcc) headers.push(`Bcc: ${fields.bcc}`);
+  if (fields.subject) headers.push(`Subject: ${fields.subject}`);
+  return `${headers.length ? `${headers.join('\n')}\n\n` : ''}${fields.body}`;
+}
+
+function normalizeEmailFields(fields: EmailDraftFields): EmailDraftFields {
+  const clean = { ...fields };
+  for (const field of Object.keys(EMAIL_FIELD_LIMITS) as Array<keyof EmailDraftFields>) {
+    const value = clean[field];
+    if (typeof value !== 'string') throw new TypeError(`${field} must be text`);
+    if (value.length > EMAIL_FIELD_LIMITS[field]) throw new RangeError(`${field} is too long`);
+    if (value.includes('\0')) throw new TypeError(`${field} contains an invalid character`);
+    if (EMAIL_HEADER_FIELDS.includes(field)) {
+      if (/[\r\n]/.test(value)) throw new TypeError(`${field} must be a single line`);
+      clean[field] = value.trim();
+    }
+  }
+  return clean;
+}
+
+export interface ParsedEmailDraftEdit {
+  id: number;
+  field: keyof EmailDraftFields;
+  value: string;
+  mode: 'set' | 'append';
+}
+
+/** A deliberately explicit, local-only voice/typed edit; never guesses an ID or field. */
+export function parseEmailDraftEdit(text: string): ParsedEmailDraftEdit | null {
+  const trimmed = text.trim();
+  const direct = trimmed.match(
+    /^(?:please\s+)?(?:change|set|update|edit|replace)\s+(?:the\s+)?(recipient|to|cc|bcc|subject|body)\s+(?:field\s+)?(?:of\s+)?draft\s*(?:number\s*)?#?(\d+)\s+(?:to|as|with)\s+([\s\S]+)$/i
+  ) || trimmed.match(
+    /^(?:please\s+)?(?:change|set|update|edit|replace)\s+draft\s*(?:number\s*)?#?(\d+)\s+(recipient|to|cc|bcc|subject|body)\s+(?:to|as|with)\s+([\s\S]+)$/i
+  );
+  if (direct) {
+    const reverse = /^\s*(?:please\s+)?(?:change|set|update|edit|replace)\s+draft\b/i.test(trimmed);
+    const fieldWord = (reverse ? direct[2] : direct[1]).toLowerCase();
+    const id = Number(reverse ? direct[1] : direct[2]);
+    const value = direct[3];
+    const field: keyof EmailDraftFields = fieldWord === 'recipient' ? 'to' : fieldWord as keyof EmailDraftFields;
+    if (!validDraftId(id) || !value.trim()) return null;
+    return { id, field, value, mode: 'set' };
+  }
+
+  const append = trimmed.match(
+    /^(?:please\s+)?append\s+([\s\S]+?)\s+to\s+(?:the\s+)?body\s+of\s+draft\s*(?:number\s*)?#?(\d+)$/i
+  );
+  if (append) {
+    const id = Number(append[2]);
+    if (!validDraftId(id) || !append[1].trim()) return null;
+    return { id, field: 'body', value: append[1], mode: 'append' };
+  }
+  return null;
+}
+
 export class DraftDesk {
   private readonly dir: string;
   private readonly file: string;
   private drafts: Draft[] = [];
+  private indexUnsafe = false;
 
   constructor(dir: string) {
-    this.dir = dir;
-    this.file = path.join(dir, 'index.json');
+    this.dir = path.resolve(dir);
+    this.file = path.join(this.dir, 'index.json');
   }
 
-  /** Read the index; a damaged file is kept (renamed) and the desk starts empty. */
+  /**
+   * Read old and new indexes. Invalid JSON is moved aside, and invalid rows are
+   * backed up before being skipped, so a later save cannot silently erase them.
+   */
   load(): Draft[] {
+    this.drafts = [];
+    if (!fs.existsSync(this.file)) return this.list();
+
     try {
-      if (!fs.existsSync(this.file)) { this.drafts = []; return this.drafts; }
+      if (fs.lstatSync(this.file).isSymbolicLink()) throw new Error('index may not be a symbolic link');
       const raw = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      const list: Draft[] = Array.isArray(raw) ? raw : Array.isArray(raw?.drafts) ? raw.drafts : [];
-      this.drafts = list
-        .filter((d) => d && typeof d === 'object' && typeof d.text === 'string')
-        .map((d) => ({ ...d, id: Number(d.id) || 0 }));
-      return this.drafts;
+      const list: unknown = Array.isArray(raw) ? raw : Array.isArray(raw?.drafts) ? raw.drafts : null;
+      if (!Array.isArray(list)) throw new Error('index must be an array of drafts');
+
+      const valid: Draft[] = [];
+      const ids = new Set<number>();
+      let skipped = false;
+      for (const value of list) {
+        const draft = this.normalizeLoadedDraft(value);
+        if (!draft || ids.has(draft.id)) { skipped = true; continue; }
+        ids.add(draft.id);
+        valid.push(draft);
+      }
+      if (skipped && !this.backupIndex('recovered')) this.indexUnsafe = true;
+      this.drafts = valid;
+      return this.list();
     } catch (err) {
-      try { fs.renameSync(this.file, `${this.file}.bad-${Date.now()}`); } catch (_) { /* nothing to do */ }
-      console.warn('[JARVIS] drafts index could not be read, starting a fresh one:', (err as Error).message);
+      const preserved = this.quarantineIndex();
+      if (!preserved) this.indexUnsafe = true;
+      console.warn('[JARVIS] drafts index could not be read; its original was preserved' +
+        (preserved ? ' and the desk starts empty:' : ' (backup could not be made; writes are disabled):'), (err as Error).message);
       this.drafts = [];
-      return this.drafts;
+      return this.list();
     }
   }
 
   list(): Draft[] {
-    return this.drafts;
+    return this.drafts.map((draft) => ({ ...draft }));
+  }
+
+  get(id: number): Draft | null {
+    if (!validDraftId(id)) return null;
+    const draft = this.drafts.find((item) => item.id === id);
+    return draft ? { ...draft } : null;
+  }
+
+  getEmail(id: number): Draft | null {
+    const draft = this.get(id);
+    return draft?.kind === 'email' ? draft : null;
+  }
+
+  searchEmailDrafts(query = ''): Draft[] {
+    const needle = String(query).trim().toLocaleLowerCase();
+    return this.drafts
+      .filter((draft) => draft.kind === 'email')
+      .filter((draft) => !needle || [draft.to, draft.cc, draft.bcc, draft.subject,
+        typeof draft.body === 'string' ? draft.body : extractLegacyEmailBody(draft.text)]
+        .join('\n').toLocaleLowerCase().includes(needle))
+      .map((draft) => ({ ...draft }));
   }
 
   nextId(): number {
-    return this.drafts.reduce((max, d) => Math.max(max, d.id), 0) + 1;
+    const next = this.drafts.reduce((max, draft) => Math.max(max, draft.id), 0) + 1;
+    if (!validDraftId(next)) throw new RangeError('No safe draft IDs remain');
+    return next;
   }
 
-  /** Write one draft: the file itself, and the index beside it. */
+  /** Existing plain-text desk API: keeps letters, notes and memos compatible. */
   keep(req: DraftRequest, text: string, userName: string, now: Date = new Date()): Draft {
-    fs.mkdirSync(this.dir, { recursive: true });
-    const id = this.nextId();
-    const stamp = now.toISOString().slice(0, 19).replace(/[:T]/g, '-');
-    const name = `${stamp}-${req.kind}-${slugify(req.to || req.subject)}.txt`;
-    const file = path.join(this.dir, name);
-    const header = `JARVIS local drafting desk — no AI was used to write this.\nKind: ${req.kind}\nTo: ${req.to || '(nobody named)'}\nSubject: ${req.subject || '(none)'}\nDrafted: ${now.toISOString()}\nOwner: ${userName || '(not set)'}\n${'-'.repeat(64)}\n\n`;
-    fs.writeFileSync(file, header + text);
+    const stamp = now.toISOString();
     const draft: Draft = {
-      id,
+      id: this.nextId(),
       kind: req.kind,
-      to: req.to,
-      subject: req.subject,
+      to: req.to || '',
+      subject: req.subject || '',
       text,
-      file: path.relative(process.cwd(), file),
-      created: now.toISOString(),
+      file: '',
+      created: stamp,
+      updated: stamp,
     };
-    this.drafts.push(draft);
-    this.save();
+    if (req.kind === 'email') {
+      const fields = normalizeEmailFields({
+        to: req.to || '', cc: '', bcc: '', subject: req.subject || '', body: extractLegacyEmailBody(text),
+      });
+      Object.assign(draft, fields);
+    }
+    return this.persistNewDraft(draft, userName, now);
+  }
+
+  createEmail(fields: EmailDraftFields, userName = '', now: Date = new Date()): Draft {
+    const clean = normalizeEmailFields(fields);
+    const stamp = now.toISOString();
+    const draft: Draft = {
+      id: this.nextId(), kind: 'email', ...clean,
+      text: renderEmailDraftText(clean), file: '', created: stamp, updated: stamp,
+    };
+    return this.persistNewDraft(draft, userName, now);
+  }
+
+  updateEmailDraft(id: number, patch: EmailDraftPatch, userName = '', now: Date = new Date()): Draft | null {
+    const current = this.getEmail(id);
+    if (!current) return null;
+    const allowed = new Set<keyof EmailDraftFields>(['to', 'cc', 'bcc', 'subject', 'body']);
+    for (const key of Object.keys(patch) as Array<keyof EmailDraftPatch>) {
+      if (!allowed.has(key) || typeof patch[key] !== 'string') throw new TypeError(`Invalid email draft field: ${key}`);
+    }
+    const clean = normalizeEmailFields({ ...emailFieldsFromDraft(current), ...patch });
+    const stamp = now.toISOString();
+    const nextDraft: Draft = {
+      ...current, ...clean, text: renderEmailDraftText(clean), updated: stamp,
+    };
+    let target = current.file ? this.safeDraftFilePath(current.file) : null;
+    if (current.file && !target) throw new Error('Draft file path is outside the local drafts folder; it was not changed.');
+    if (!target) {
+      fs.mkdirSync(this.dir, { recursive: true });
+      target = this.newDraftFilePath(current.id, current.kind, current.to || current.subject, now);
+      nextDraft.file = path.relative(process.cwd(), target);
+    }
+
+    const priorContents = this.readRegularDraftFile(target);
+    this.writeAtomic(target, this.fileContents(nextDraft, userName));
+    const nextDrafts = this.drafts.map((draft) => draft.id === id ? nextDraft : draft);
+    try {
+      this.writeIndex(nextDrafts);
+    } catch (err) {
+      try {
+        if (priorContents === null) fs.unlinkSync(target);
+        else this.writeAtomic(target, priorContents);
+      } catch (rollbackError) {
+        console.error('[JARVIS] draft file rollback failed after an index save error:', (rollbackError as Error).message);
+      }
+      throw err;
+    }
+    this.drafts = nextDrafts;
+    return { ...nextDraft };
+  }
+
+  duplicateEmail(id: number, userName = '', now: Date = new Date()): Draft | null {
+    const source = this.getEmail(id);
+    if (!source) return null;
+    return this.createEmail(emailFieldsFromDraft(source), userName, now);
+  }
+
+  /** Remove the index entry and its file as one recoverable operation. */
+  forget(id: number): Draft | null {
+    if (!validDraftId(id)) return null;
+    const index = this.drafts.findIndex((draft) => draft.id === id);
+    if (index < 0) return null;
+    const gone = this.drafts[index];
+    const source = gone.file ? this.safeDraftFilePath(gone.file) : null;
+    if (gone.file && !source) throw new Error('Draft file path is outside the local drafts folder; nothing was deleted.');
+
+    let tombstone: string | null = null;
+    if (source && fs.existsSync(source)) {
+      this.readRegularDraftFile(source); // reject directories and symbolic links
+      tombstone = path.join(this.dir, `.delete-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}.tmp`);
+      fs.renameSync(source, tombstone);
+    }
+
+    const nextDrafts = this.drafts.filter((draft) => draft.id !== id);
+    try {
+      this.writeIndex(nextDrafts);
+    } catch (err) {
+      if (tombstone) {
+        try { fs.renameSync(tombstone, source!); }
+        catch (rollbackError) { console.error('[JARVIS] draft deletion rollback failed:', (rollbackError as Error).message); }
+      }
+      throw err;
+    }
+    this.drafts = nextDrafts;
+    if (tombstone) {
+      try { fs.unlinkSync(tombstone); }
+      catch (err) { console.warn('[JARVIS] deleted draft left a cleanup file:', (err as Error).message); }
+    }
+    return { ...gone };
+  }
+
+  private normalizeLoadedDraft(value: unknown): Draft | null {
+    if (!value || typeof value !== 'object') return null;
+    const item = value as Record<string, unknown>;
+    const id = item.id;
+    if (typeof id !== 'number' || !validDraftId(id) || !DRAFT_KINDS.includes(item.kind as DraftKind) || typeof item.text !== 'string') return null;
+    const draft: Draft = {
+      ...item,
+      id,
+      kind: item.kind as DraftKind,
+      to: typeof item.to === 'string' ? item.to : '',
+      subject: typeof item.subject === 'string' ? item.subject : '',
+      text: item.text,
+      file: typeof item.file === 'string' ? item.file : '',
+      created: typeof item.created === 'string' ? item.created : new Date(0).toISOString(),
+    } as Draft;
+    if (typeof item.cc === 'string') draft.cc = item.cc;
+    if (typeof item.bcc === 'string') draft.bcc = item.bcc;
+    if (typeof item.body === 'string') draft.body = item.body;
+    if (typeof item.updated === 'string') draft.updated = item.updated;
     return draft;
   }
 
-  forget(id: number): Draft | null {
-    const index = this.drafts.findIndex((d) => d.id === id);
-    if (index < 0) return null;
-    const [gone] = this.drafts.splice(index, 1);
-    try { fs.unlinkSync(path.join(process.cwd(), gone.file)); } catch (_) { /* already gone */ }
-    this.save();
-    return gone;
+  private persistNewDraft(draft: Draft, userName: string, now: Date): Draft {
+    fs.mkdirSync(this.dir, { recursive: true });
+    const target = this.newDraftFilePath(draft.id, draft.kind, draft.to || draft.subject, now);
+    draft.file = path.relative(process.cwd(), target);
+    this.writeAtomic(target, this.fileContents(draft, userName));
+    const nextDrafts = [...this.drafts, draft];
+    try {
+      this.writeIndex(nextDrafts);
+    } catch (err) {
+      try { fs.unlinkSync(target); } catch (_) { /* the original save error is more useful */ }
+      throw err;
+    }
+    this.drafts = nextDrafts;
+    return { ...draft };
   }
 
-  private save(): void {
+  private fileContents(draft: Draft, userName: string): string {
+    const fields = draft.kind === 'email' ? emailFieldsFromDraft(draft) : null;
+    const header = [
+      'JARVIS local drafting desk — no AI was used to write this.',
+      `Kind: ${draft.kind}`,
+      `To: ${draft.to || '(nobody named)'}`,
+      ...(fields?.cc ? [`Cc: ${fields.cc}`] : []),
+      ...(fields?.bcc ? [`Bcc: ${fields.bcc}`] : []),
+      `Subject: ${draft.subject || '(none)'}`,
+      `Drafted: ${draft.created}`,
+      `Last edited: ${draft.updated || draft.created}`,
+      `Owner: ${userName || '(not set)'}`,
+      '-'.repeat(64),
+      '',
+    ].join('\n');
+    return header + draft.text;
+  }
+
+  private newDraftFilePath(id: number, kind: DraftKind, label: string, now: Date): string {
+    const stamp = now.toISOString().replace(/[:.]/g, '-');
+    const unique = `${process.pid}-${Math.random().toString(36).slice(2, 9)}`;
+    return path.join(this.dir, `${id}-${stamp}-${kind}-${slugify(label)}-${unique}.txt`);
+  }
+
+  private safeDraftFilePath(file: string): string | null {
+    if (typeof file !== 'string' || !file || file.includes('\0')) return null;
+    const resolved = path.resolve(path.isAbsolute(file) ? file : path.resolve(process.cwd(), file));
+    const relative = path.relative(this.dir, resolved);
+    // The existing desk writes one generated .txt file directly in its storage
+    // directory. Reject nested paths too, so a symlinked child directory cannot
+    // make a lexically-contained path escape to another location.
+    if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) ||
+        path.isAbsolute(relative) || relative.includes(path.sep)) return null;
+    return resolved;
+  }
+
+  private readRegularDraftFile(file: string): string | null {
     try {
-      fs.mkdirSync(this.dir, { recursive: true });
-      const tmp = `${this.file}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(this.drafts, null, 2));
+      const stat = fs.lstatSync(file);
+      if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('Draft storage path is not a regular file.');
+      return fs.readFileSync(file, 'utf8');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
+  private writeAtomic(target: string, content: string): void {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    const tmp = path.join(path.dirname(target), `.${path.basename(target)}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
+    try {
+      fs.writeFileSync(tmp, content, { encoding: 'utf8', flag: 'wx' });
+      fs.renameSync(tmp, target);
+    } catch (err) {
+      try { fs.unlinkSync(tmp); } catch (_) { /* nothing to clean up */ }
+      throw err;
+    }
+  }
+
+  private writeIndex(drafts: Draft[]): void {
+    if (this.indexUnsafe) throw new Error('Draft index could not be backed up safely; no changes were written.');
+    fs.mkdirSync(this.dir, { recursive: true });
+    const tmp = path.join(this.dir, `.index.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`);
+    try {
+      fs.writeFileSync(tmp, JSON.stringify(drafts, null, 2), { encoding: 'utf8', flag: 'wx' });
       fs.renameSync(tmp, this.file);
     } catch (err) {
-      console.warn('[JARVIS] drafts index could not be saved:', (err as Error).message);
+      try { fs.unlinkSync(tmp); } catch (_) { /* nothing to clean up */ }
+      throw err;
+    }
+  }
+
+  private quarantineIndex(): boolean {
+    try {
+      fs.renameSync(this.file, `${this.file}.bad-${Date.now()}`);
+      return true;
+    } catch (_) {
+      return this.backupIndex('bad');
+    }
+  }
+
+  private backupIndex(label: string): boolean {
+    try {
+      const backup = `${this.file}.${label}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      fs.copyFileSync(this.file, backup, fs.constants.COPYFILE_EXCL);
+      return true;
+    } catch (err) {
+      console.warn('[JARVIS] could not make a backup of the original drafts index:', (err as Error).message);
+      return false;
     }
   }
 }

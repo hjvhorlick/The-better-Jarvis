@@ -44,20 +44,16 @@
       border-color: var(--jg-gold-bright);
     }
 
-    /* Technical clutter, hidden: the fps readout, the Studio's aspect-ratio and
-       picture-model pickers, the 3D room's wireframe switch and see-through
-       slider. Their defaults carry on underneath. */
+    /* Keep the supported 16:9 / 9:16 Studio aspect selector visible. */
     #env-fps { display: none !important; }
-    label[for="studio-aspect"], #studio-aspect,
     label[for="studio-model"], #studio-model { display: none !important; }
-    #tool-design-wireframe, #tool-design-opacity { display: none !important; }
 
     /* The Flat room's tool drawer: the real design tools live in this
        sub-section, and they are out of the way until Tools is pressed. */
     .flat-drawer {
       display: flex; flex-wrap: wrap; gap: 8px;
       padding: 8px 12px; flex: 0 0 auto;
-      background: rgba(18, 20, 24, var(--jg-panel-alpha));
+      background: rgba(18, 20, 24, var(--jg-room-alpha));
       border: var(--jg-line-width) solid var(--jg-line);
       border-radius: var(--jg-radius);
       box-shadow: 0 0 var(--jg-glow-size) var(--jg-glow);
@@ -65,7 +61,7 @@
     .flat-group {
       display: flex; align-items: center; gap: 6px;
       padding: 5px 9px; border-radius: var(--jg-radius);
-      background: rgba(255, 255, 255, 0.04);
+      background: rgba(18, 20, 24, var(--jg-panel-alpha, 0.34));
       border: var(--jg-line-width) solid var(--jg-line-soft);
     }
     .flat-group-title {
@@ -77,7 +73,7 @@
     .flat-choices {
       position: absolute; inset: 0; z-index: 40;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 16px; background: rgba(12, 13, 16, 0.86);
+      gap: 16px; background: rgba(18, 20, 24, var(--jg-panel-alpha, 0.34));
       border: var(--jg-line-width) solid var(--jg-line);
     }
     .flat-choices-title { margin: 0; font: 700 16px/1.4 var(--jg-font); color: var(--jg-gold-bright); letter-spacing: 0.04em; }
@@ -104,7 +100,7 @@
     .env-tool-control input[type="color"] { width: 42px; height: 34px; }
   </style>
 </head>
-<body>
+<body class="show-tools">
   <!-- The picture behind the glass: the dashboard's live camera, handed over
        (see /rooms-src/camera.js). When it is off, the dark grey room shows. -->
   <video id="env-camera" class="jg-cam" autoplay playsinline muted></video>
@@ -113,8 +109,8 @@
 
   <div class="rooms-top">
     <nav id="env-switcher" class="env-switcher" aria-label="Rooms"></nav>
-    <button type="button" id="env-tools-toggle" class="rooms-switch" aria-pressed="false"
-            title="Show this room's tools — the room itself stays clear">🧰 Tools</button>
+    <button type="button" id="env-tools-toggle" class="rooms-switch" aria-pressed="true"
+            title="Hide this room's tools">✕ Tools</button>
   </div>
 
   <!-- The windowing environment: one rail, sliding left and right. -->
