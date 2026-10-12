@@ -48,6 +48,28 @@ const ok = (name, cond, extra = '') => {
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** A real 24 kHz mono 16-bit WAV: 0.1 s of 440 Hz, so it is a playable file. */
+function wavBytes(rate = 24000) {
+  const frames = Math.round(rate * 0.1);
+  const data = Buffer.alloc(frames * 2);
+  for (let i = 0; i < frames; i++) data.writeInt16LE(Math.round(6000 * Math.sin((2 * Math.PI * 440 * i) / rate)), i * 2);
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + data.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(rate, 24);
+  header.writeUInt32LE(rate * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(data.length, 40);
+  return Buffer.concat([header, data]);
+}
+
 /* ── the stub Gemini ─────────────────────────────────────────────────────────
  * Same HTTP contract as Google: POST /v1beta/models/<model>:generateContent
  * with an x-goog-api-key header, and GET /v1beta/models for discovery. Each
@@ -133,6 +155,12 @@ function startStub(models) {
         send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/L16;codec=pcm;rate=24000', data: pcm.toString('base64') } }] } }] });
         return;
       }
+      if (script.wav) {
+        // What the CURRENT TTS models return: a complete WAV file (audio/wav), not
+        // headerless PCM. Wrapping this in a second WAV header is silence.
+        send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'audio/wav', data: wavBytes(24000).toString('base64') } }] } }] });
+        return;
+      }
       if (script.picture) {
         const png = Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64');
         send(200, { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: png } }] } }] });
@@ -159,7 +187,10 @@ async function startDashboard({ models, env = {}, name = 'harness', files = {}, 
       user_name: 'Mr Owner',
     }, null, 2));
   }
-  for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(cwd, name), text);
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(cwd, name)), { recursive: true });
+    fs.writeFileSync(path.join(cwd, name), text);
+  }
   for (const link of ['dashboard', 'barehands', 'core', 'knowledge', 'web']) {
     try { fs.symlinkSync(path.join(REPO, link), path.join(cwd, link), 'dir'); } catch { /* optional */ }
   }
@@ -880,6 +911,123 @@ function freePort() {
     ok('…and go away again', /Tools away, sir/.test(String(toolsAway.body.reply)), String(toolsAway.body.reply).slice(0, 60));
     ok('…and none of those four cost a call', srv.stub.calls.length === beforeVoice, `calls=${srv.stub.calls.length - beforeVoice}`);
   } finally { await srv.stop(); }
+}
+
+/* ── 13. THE VOICE'S CURRENT MODEL, AND WHEN IT MAY MOVE ON ──────────────────
+ * The app ships with Gemini 3.8 Flash TTS. What must never happen: a refused key, a
+ * spent quota or a dead connection being treated as "the voice model retired" and
+ * quietly answered by a different model. Only a withdrawn NAME moves on.           */
+{
+  // (a) nothing configured: the current model is used, and a complete WAV is played
+  const fresh = await startDashboard({ models: { 'gemini-3.8-flash-tts': { wav: true } }, name: 'voice-current' });
+  try {
+    const said = await post(fresh, '/api/voice/speak', { text: 'Good evening, sir. The reactor is stable.' });
+    ok('voice model: the current model (gemini-3.8-flash-tts) is the default',
+       said.body.ok === true && said.body.model === 'gemini-3.8-flash-tts', String(said.body.model));
+    const bytes = Buffer.from(String(said.body.audio || ''), 'base64');
+    ok('voice model: a complete WAV from the model is passed through, not re-wrapped',
+       bytes.subarray(0, 4).toString() === 'RIFF' && bytes.readUInt32LE(24) === 24000,
+       `${bytes.subarray(0, 4).toString()} ${bytes.length} bytes, rate=${bytes.readUInt32LE(24)}`);
+    const settings = await get(fresh, '/api/settings/gemini-key');
+    ok('voice model: …and Settings names it, with no retirement note',
+       settings.body.voiceModel === 'gemini-3.8-flash-tts' && !String(settings.body.voiceModelNote || '').trim(),
+       `${settings.body.voiceModel} — ${settings.body.voiceModelSource}`);
+  } finally { await fresh.stop(); }
+
+  // (b) the owner pinned a name Google is switching off: reported, and moved on from
+  const retiredPin = await startDashboard({
+    models: { 'gemini-2.5-flash-preview-tts': { retire: true }, 'gemini-3.8-flash-tts': { wav: true } },
+    env: { SUPPER_VOICE_MODEL: 'gemini-2.5-flash-preview-tts' }, name: 'voice-retired-pin',
+  });
+  try {
+    const settings = await get(retiredPin, '/api/settings/gemini-key');
+    ok('voice model: a setting that Google is switching off is named with its date',
+       /17 November 2026/.test(String(settings.body.voiceModelNote || '')),
+       String(settings.body.voiceModelNote).slice(0, 120));
+    const said = await post(retiredPin, '/api/voice/speak', { text: 'Standing by, sir.' });
+    ok('voice model: a withdrawn name falls through to the current model',
+       said.body.ok === true && said.body.model === 'gemini-3.8-flash-tts', JSON.stringify({ ok: said.body.ok, model: said.body.model }));
+  } finally { await retiredPin.stop(); }
+
+  // (c) a spent quota is NOT a retirement: no other model is tried
+  const spent = await startDashboard({
+    models: { 'gemini-2.5-flash-preview-tts': { rateLimited: true }, 'gemini-3.8-flash-tts': { wav: true } },
+    env: { SUPPER_VOICE_MODEL: 'gemini-2.5-flash-preview-tts' }, name: 'voice-quota',
+  });
+  try {
+    const said = await post(spent, '/api/voice/speak', { text: 'One more sentence, sir.' });
+    ok('voice model: a spent quota is reported, not papered over with another model',
+       said.body.ok === false && said.body.code === 'rate-limited', JSON.stringify({ ok: said.body.ok, code: said.body.code }));
+    ok('voice model: …and the current model was never called behind the owner\'s back',
+       !spent.stub.calls.some((c) => c.model === 'gemini-3.8-flash-tts'),
+       spent.stub.calls.map((c) => c.model).join(','));
+    ok('voice model: …and the answer offers the free browser voice meanwhile',
+       /this computer/i.test(String(said.body.message)) || /browser/i.test(String(said.body.message)),
+       String(said.body.message).slice(-90));
+  } finally { await spent.stop(); }
+}
+
+/* ── 14. A STORED ANSWER FROM ANOTHER MODEL NEVER ANSWERS SILENTLY ───────────
+ * Every Gemini answer is kept with the model that produced it. An entry with no
+ * record of its model (everything written before that existed) or from a different
+ * model is stale: the model is asked first, and only if it cannot be reached are the
+ * stored words used — said plainly to be out of date. Replacing one archives it.  */
+{
+  const question = 'what is a bloom filter';
+  const legacy = (answer) => JSON.stringify({
+    version: 1, next_id: 2,
+    entries: [{ id: 1, kind: 'gemini', key: '', question, keywords: ['bloom', 'filter'], answer,
+      created: '2026-01-01T00:00:00', last_used: '', uses: 0, expires: '' }],
+    archive: [],
+  });
+
+  // (a) an answer kept from the model IN USE still answers directly, with no call
+  const freshStore = JSON.stringify({
+    version: 2, next_id: 2,
+    entries: [{ id: 1, kind: 'gemini', key: '', question, keywords: ['bloom', 'filter'],
+      answer: 'A space-saving set test, kept from the current model.', created: '2026-10-01T00:00:00',
+      last_used: '', uses: 0, expires: '',
+      provenance: { schema: 2, source: 'gemini', model: 'harness-text-model', recorded: '2026-10-01T00:00:00' } }],
+    archive: [],
+  });
+  const fresh = await startDashboard({ models: { 'harness-text-model': {} },
+    env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'knowledge-fresh',
+    files: { 'runtime/knowledge.json': freshStore } });
+  try {
+    const before = fresh.stub.calls.length;
+    const reply = String((await post(fresh, '/api/command', { text: question })).body.reply);
+    ok('fresh stored answer: still answered locally, with no Gemini call',
+       /kept from the current model/.test(reply) && fresh.stub.calls.length === before, `calls=${fresh.stub.calls.length - before}`);
+  } finally { await fresh.stop(); }
+
+  // (b) a version 1 entry (no provenance): the current model answers, and the store is updated
+  const stale = await startDashboard({ models: { 'harness-text-model': {} },
+    env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'knowledge-stale',
+    files: { 'runtime/knowledge.json': legacy('An old answer, kept before models were recorded.') } });
+  try {
+    const reply = String((await post(stale, '/api/command', { text: question })).body.reply);
+    ok('stale stored answer: the current model is asked, not the old answer',
+       /answered by harness-text-model/.test(reply), reply.slice(0, 90));
+    const store = JSON.parse(fs.readFileSync(path.join(stale.cwd, 'runtime', 'knowledge.json'), 'utf-8'));
+    const gemini = store.entries.filter((e) => e.kind === 'gemini');
+    ok('stale stored answer: the fresh one records the model that made it',
+       store.version === 2 && gemini.length === 1 && gemini[0].provenance && gemini[0].provenance.model === 'harness-text-model',
+       JSON.stringify({ version: store.version, model: gemini[0] && gemini[0].provenance && gemini[0].provenance.model }));
+    ok('stale stored answer: the superseded words are archived, not deleted',
+       store.archive.length === 1 && /superseded by harness-text-model/.test(String(store.archive[0].archive_reason)),
+       JSON.stringify(store.archive.map((a) => [a.answer.slice(0, 30), a.archive_reason])));
+  } finally { await stale.stop(); }
+
+  // (c) with no key the stored words ARE used — and labelled as not re-checked
+  const offline = await startDashboard({ models: { 'harness-text-model': {} }, writeConfigFile: false,
+    name: 'knowledge-offline', files: { 'runtime/knowledge.json': legacy('An old answer, kept before models were recorded.') } });
+  try {
+    const reply = String((await post(offline, '/api/command', { text: question })).body.reply);
+    ok('offline stored answer: the saved words still help with no key',
+       /An old answer, kept before models were recorded\./.test(reply), reply.slice(0, 90));
+    ok('offline stored answer: …and are labelled out of date, with the model that made them named as unrecorded',
+       /could not be reached just now/.test(reply) && /no longer records/.test(reply), reply.slice(-140));
+  } finally { await offline.stop(); }
 }
 
 /* ── summary ─────────────────────────────────────────────────────────────── */

@@ -265,13 +265,35 @@ def test_default_config_carries_model_voice_instruction_and_resumption():
     assert cfg.input_audio_transcription is not None and cfg.output_audio_transcription is not None
 
 
+def test_the_session_asks_for_nothing_3_8_live_has_removed():
+    """gemini-3.8-live rejects the settings the 3.1 preview accepted.
+
+    Google's migration notes for 3.8 Live: thinking levels are not supported (leave
+    thinking_level / thinking_config out), affective dialogue must not be sent, and
+    proactive audio is built into the model — asking for it to be OFF is an error.
+    The SDK still defines these fields, so only the request itself can prove they
+    are absent. Source: ai.google.dev/gemini-api/docs/models/gemini-3.8-live, read 2026-10-12.
+    """
+    cfg = live.default_config("be JARVIS", "Charon", None)
+    assert getattr(cfg, "thinking_config", None) is None
+    assert getattr(cfg, "enable_affective_dialog", None) is None
+    assert getattr(cfg, "proactivity", None) is None
+
+
 def test_default_blob_is_16_bit_pcm_mime_type():
     blob = live.default_blob(b"\x00\x01")
     assert blob.data == b"\x00\x01" and blob.mime_type == "audio/pcm"
 
 
 def test_live_model_comes_from_config():
-    assert config.LIVE_MODEL == "models/gemini-3.1-flash-live-preview"
+    """The current stable Live model.
+
+    The name this app used before, models/gemini-3.1-flash-live-preview, is shut
+    down on 17 November 2026; gemini-3.8-live is Google's recommended replacement
+    and has no shutdown date. Source: ai.google.dev/gemini-api/docs/deprecations,
+    read 2026-10-12.
+    """
+    assert config.LIVE_MODEL == "models/gemini-3.8-live"
 
 
 def test_a_full_audio_queue_keeps_the_newest_audio():

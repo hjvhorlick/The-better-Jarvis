@@ -18,10 +18,18 @@ RUNTIME_DIR = REPO_ROOT / "runtime"            # git-ignored: quota counter and 
 
 # Text model used by the browser chat. The desktop app uses a Live model for voice;
 # text chat uses a standard model. Override with SUPPER_TEXT_MODEL.
-DEFAULT_TEXT_MODEL = "gemini-flash-latest"
+# gemini-3.8-flash: Google's current stable Flash model (GA 2 September 2026, no
+# shutdown announced). It replaced the moving alias `gemini-flash-latest`, which was
+# last re-pointed on 19 May 2026 and would quietly leave this app on a superseded
+# generation. Source: ai.google.dev/gemini-api/docs/models, read 2026-10-12.
+DEFAULT_TEXT_MODEL = "gemini-3.8-flash"
 
 # Live (voice) model. Same model the desktop app uses (main.py LIVE_MODEL).
-LIVE_MODEL = "models/gemini-3.1-flash-live-preview"
+# gemini-3.8-live: stable, released 15 September 2026, no shutdown announced. The
+# previous name, models/gemini-3.1-flash-live-preview, is shut down on 17 November
+# 2026 and gemini-3.8-live is Google's recommended replacement.
+# Source: ai.google.dev/gemini-api/docs/deprecations (Live API models), read 2026-10-12.
+LIVE_MODEL = "models/gemini-3.8-live"
 
 HOST = os.environ.get("SUPPER_HOST", "127.0.0.1")
 PORT = int(os.environ.get("SUPPER_PORT", "8765"))

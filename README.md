@@ -102,6 +102,15 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   never paid for twice — time-sensitive and personal questions are never kept).
   `what have you learned`, `forget <number>`. Both halves of the project read and
   write this one file, so an answer taught in either is known to both.
+  **Every kept Gemini answer records the model that wrote it.** An answer from an
+  older model (or from before the app recorded one) is never used silently: the
+  current model is asked first, and only if it cannot be reached is the old answer
+  given — labelled with its model and date, and "not re-checked". Superseded
+  answers are archived, never deleted.
+- **No internet?** Local commands, saved answers, and *this computer's voice* (and
+  the browser's own voice) all still work. Fresh open-ended answers do not — those
+  are written by Gemini and need a connection. Nothing pretends otherwise, and
+  nothing pretends an old answer is a new one.
 - **Personality** — `core/prompt.txt` is used **in full** (repeated blocks are
   collapsed), plus a short conversation section: opinions that can be defended,
   one good follow-up question, interest in your family and your projects.

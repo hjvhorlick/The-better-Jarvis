@@ -28,3 +28,8 @@ models/
 
 # Test scratch (generated; never commit)
 .pytest_cache/
+.coverage
+htmlcov/
+
+# Test/build output (npm run build)
+dist/

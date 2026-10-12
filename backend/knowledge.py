@@ -9,6 +9,14 @@ Four kinds of entry, all in one file (runtime/knowledge.json, git-ignored):
            Set SUPPER_KNOWLEDGE_LEARN=off to stop keeping them (existing entries still work).
            Expires after KNOWLEDGE_DAYS (default 30). Time-sensitive questions are never kept,
            and neither are questions about the owner ("my ...") or very long ones.
+           Each new gemini entry records WHICH MODEL produced it, in `provenance`
+           ({schema, source, model, recorded}). An entry written before that field existed
+           has no record of its model, so it can never silently stand in for an answer from
+           the current model: it is STALE. A stale entry does not answer on its own — the
+           app asks the current model first, and only if the model cannot be reached does it
+           fall back to the stored words, said plainly to be out of date. When a fresh answer
+           replaces a stale one, the old entry moves to the archive with the reason; nothing
+           is deleted, and the same model's existing answer is never paid for twice.
 
 Matching: the meaningful words of the question must mostly appear in a stored question
 (Jaccard overlap of at least 0.75, and at least two words unless the stored question is the
@@ -33,6 +41,11 @@ from . import config
 from .recall import _STOP, _stem, _words
 
 KNOWLEDGE_DAYS = 30
+# The file's schema version. 1 = entries as first written; 2 = gemini entries may
+# carry `provenance` (which model produced the answer). Readers accept both, and an
+# entry with no provenance is treated as stale rather than trusted.
+KNOWLEDGE_VERSION = 2
+PROVENANCE_SCHEMA = 2
 MAX_QUESTION_CHARS = 200
 MAX_ANSWER_CHARS = 2000
 MIN_OVERLAP = 0.75
@@ -61,6 +74,12 @@ _STARTER_NOTE = " [starter answer written by the assistant: please check]"
 def keywords(text: str) -> list[str]:
     """Meaningful words of a question: recall's rules plus the filler words above, checked before stemming."""
     return [_stem(w) for w in _words(text) if len(w) > 1 and w not in _STOP and w not in _FILLER]
+
+
+def _newer_of(mine: dict, theirs: dict) -> dict:
+    """Which of two copies of the same entry is the one to keep: the one used most recently."""
+    return mine if str(mine.get("last_used") or mine.get("created") or "") >= \
+        str(theirs.get("last_used") or theirs.get("created") or "") else theirs
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
@@ -92,7 +111,9 @@ class KnowledgeStore:
         self._archive: list[dict] = []
         self._next_id = 1
         self._loaded = False
+        self._stamp = ""            # mtime_ns:size of the file as this copy last saw it
         self.last_problem = ""
+        self.last_backup = ""       # the verified copy made before the version 2 upgrade
 
     # ----- reading -----
 
@@ -103,6 +124,7 @@ class KnowledgeStore:
             return None
         with self._lock:
             self._ensure_loaded()
+            self._reload_if_changed()
             self._expire()
             best, best_score = None, 0.0
             for entry in self._entries:
@@ -124,22 +146,73 @@ class KnowledgeStore:
     def list_entries(self) -> list[dict]:
         with self._lock:
             self._ensure_loaded()
+            self._reload_if_changed()
             self._expire()
             return [dict(e) for e in self._entries]
 
     def describe(self, entry: dict) -> str:
-        """The reply text for a stored entry."""
+        """The reply text for a stored entry that may be answered directly."""
         if entry["kind"] == "starter":
             return entry["answer"] + _STARTER_NOTE
         if entry["kind"] == "gemini":
             return entry["answer"] + f" (saved from an earlier Gemini answer, {entry['created'][:10]})"
         return entry["answer"]
 
+    # ----- provenance -----
+
+    @staticmethod
+    def provenance_of(entry: dict) -> dict:
+        """The recorded model information for an entry, or {} when there is none."""
+        provenance = entry.get("provenance") if isinstance(entry, dict) else None
+        return provenance if isinstance(provenance, dict) else {}
+
+    def is_stale(self, entry: dict, current_model: str) -> bool:
+        """True when a stored GEMINI answer must not answer in place of the current model.
+
+        Starter and taught answers are the owner's (or the assistant's) own words and are
+        never stale — no model made them. A Gemini answer is stale when it does not record
+        which model produced it (every entry written before provenance existed) or when it
+        records a different model from the one this app now uses.
+        """
+        if entry.get("kind") != "gemini":
+            return False
+        made_by = str(self.provenance_of(entry).get("model") or "").strip()
+        if not made_by:
+            return True                        # no record of its model: never trusted silently
+        now = (current_model or "").strip()
+        if not now:
+            return False                       # nothing to compare with; cannot call it out of date
+        return made_by != now
+
+    def describe_stale(self, entry: dict, current_model: str = "") -> str:
+        """The reply for a stored Gemini answer used only because the model could not be reached.
+
+        It says exactly what it is: an answer from an earlier model (or from a time when the
+        app did not record the model), not re-checked just now, so possibly out of date.
+        """
+        provenance = self.provenance_of(entry)
+        made_by = str(provenance.get("model") or "").strip() or "a model this app no longer records"
+        made_on = str(entry.get("created") or "")[:10]
+        now = (current_model or "").strip()
+        rechecked = f"not re-checked with {now}" if now else "not re-checked"
+        return (f"{entry['answer']} (saved from an earlier Gemini answer on {made_on}, made by "
+                f"{made_by}; {rechecked} — the AI could not be reached just now, so please check "
+                f"anything that may have changed since)")
+
     # ----- writing -----
 
-    def learn(self, question: str, answer: str) -> dict | None:
+    def learn(self, question: str, answer: str, model: str = "") -> dict | None:
         """Keep a Gemini answer for the same question later. Returns None if it should not be kept.
-        Off when SUPPER_KNOWLEDGE_LEARN=off: then Gemini answers are used once and not stored."""
+
+        `model` is the model that produced the answer; it is recorded with the entry so a
+        later question can tell whether the stored answer came from the model in use now.
+        Off when SUPPER_KNOWLEDGE_LEARN=off: then Gemini answers are used once and not stored.
+
+        Nothing is overwritten blindly: an entry the owner taught, or a starter answer, is
+        never replaced; the same model's existing answer is not paid for twice; and a STALE
+        Gemini entry is moved to the archive (with the reason) as the fresh answer takes its
+        place.
+        """
         if not learning_enabled():
             return None
         question, answer = (question or "").strip(), (answer or "").strip()
@@ -147,10 +220,28 @@ class KnowledgeStore:
             return None
         with self._lock:
             self._ensure_loaded()
-            if self._find_exact(question):
-                return None
+            existing = self._find_exact(question)
+            if existing is not None:
+                if existing.get("kind") != "gemini":
+                    return None                       # the owner's or the assistant's own answer wins
+                if not self._must_supersede(existing, model):
+                    return None                       # already kept from this model
+                self._move_to_archive(existing, f"superseded by {model or 'a newer Gemini answer'}")
             expires = (self._clock() + timedelta(days=self._days)).isoformat(timespec="seconds")
-            return self._add("gemini", question, answer, expires=expires)
+            return self._add("gemini", question, answer, expires=expires, model=model)
+
+    def _must_supersede(self, entry: dict, model: str) -> bool:
+        """True when the stored Gemini answer must give way to the one just received."""
+        if not (model or "").strip():
+            return False                              # no model named: nothing says the new answer is newer
+        return self.is_stale(entry, model)
+
+    def _move_to_archive(self, entry: dict, reason: str) -> None:
+        """Move one entry to the archive. Nothing is ever deleted."""
+        self._entries.remove(entry)
+        entry["archived_at"] = self._now_iso()
+        entry["archive_reason"] = reason
+        self._archive.append(entry)
 
     def teach(self, question: str, answer: str) -> dict:
         question, answer = (question or "").strip(), (answer or "").strip()
@@ -180,12 +271,20 @@ class KnowledgeStore:
 
     # ----- internals -----
 
-    def _add(self, kind: str, question: str, answer: str, *, expires: str, key: str = "") -> dict:
+    def _add(self, kind: str, question: str, answer: str, *, expires: str, key: str = "",
+             model: str = "") -> dict:
         entry = {
             "id": self._next_id, "kind": kind, "key": key,
             "question": question, "keywords": keywords(question), "answer": answer,
             "created": self._now_iso(), "last_used": "", "uses": 0, "expires": expires,
         }
+        if kind == "gemini":
+            # Which model produced this answer. An empty name is recorded honestly: the
+            # entry is then treated as stale next time rather than trusted silently.
+            entry["provenance"] = {
+                "schema": PROVENANCE_SCHEMA, "source": "gemini",
+                "model": (model or "").strip(), "recorded": self._now_iso(),
+            }
         self._next_id += 1
         self._entries.append(entry)
         self._save()
@@ -223,7 +322,29 @@ class KnowledgeStore:
             self._entries = list(data.get("entries", []))
             self._archive = list(data.get("archive", []))
             self._next_id = int(data.get("next_id", 1))
+        self._stamp = self._file_stamp()
         self._add_missing_starters()
+
+    def _file_stamp(self) -> str:
+        """mtime_ns and size of the store on disk, or '' when there is no readable file."""
+        try:
+            stat = self._path.stat()
+        except OSError:
+            return ""
+        return f"{stat.st_mtime_ns}:{stat.st_size}"
+
+    def _reload_if_changed(self) -> None:
+        """Pick up entries the other half wrote, without needing a restart.
+
+        The dashboard's Node store does the same (mtime+size, merge by id). Only the
+        entries are picked up: what this half has archived is not brought back, and
+        the numbering moves past the highest id on disk.
+        """
+        stamp = self._file_stamp()
+        if stamp == self._stamp:
+            return
+        self._stamp = stamp
+        self._merge_with_disk(self._quiet_read())
 
     def _add_missing_starters(self) -> None:
         known = {e.get("key") for e in self._entries + self._archive if e.get("key")}
@@ -270,12 +391,98 @@ class KnowledgeStore:
             return None
 
     def _save(self) -> None:
+        """Write the store, first picking up anything written since this copy was loaded.
+
+        Two halves of JARVIS share this one file: this desktop app and the dashboard's
+        Node store. A plain overwrite would silently drop an answer the other half added
+        (or an archive it made). Before writing, the file is read again and merged:
+        entries this half does not know about are kept, entries it has archived are not
+        brought back, and the numbering moves past the highest id either half has used.
+        An unreadable file is left exactly as it is — the question of a damaged store is
+        answered by _read_file at load time, not by a save.
+        """
         self._path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"version": 1, "next_id": self._next_id,
+        on_disk = self._quiet_read()
+        if on_disk is not None and int(on_disk.get("version", 1) or 1) < KNOWLEDGE_VERSION:
+            self._backup_before_upgrade()          # the Brain store's rule: verify, then write
+        self._merge_with_disk(on_disk)
+        payload = {"version": KNOWLEDGE_VERSION, "next_id": self._next_id,
                    "entries": self._entries, "archive": self._archive}
         tmp = self._path.with_name(self._path.name + ".tmp")
         tmp.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, self._path)
+        self._stamp = self._file_stamp()
+
+    def _backup_before_upgrade(self) -> None:
+        """A hash-verified copy of the older file, taken before the first version 2 write.
+
+        This is the Persistent Brain's rule applied to the knowledge file: before a file
+        is rewritten in a newer shape, a copy is made, its sha256 is checked against the
+        source, and a manifest records what was copied and why. The upgrade itself only
+        ADDS a field — every entry and archive row is carried over exactly as it was — so
+        a backup that cannot be made is recorded in `last_problem` and the save continues
+        rather than leaving the owner without an answer.
+        """
+        try:
+            import hashlib
+            import shutil
+            import uuid
+            stamp = self._clock().strftime("%Y%m%dT%H%M%SZ")
+            backup_dir = self._path.parent / "backups"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            before = hashlib.sha256(self._path.read_bytes()).hexdigest()
+            name = f"{self._path.stem}.v1-{stamp}-{uuid.uuid4().hex[:8]}{self._path.suffix}"
+            copy = backup_dir / name
+            shutil.copy2(self._path, copy)
+            copied = hashlib.sha256(copy.read_bytes()).hexdigest()
+            after = hashlib.sha256(self._path.read_bytes()).hexdigest()
+            if before != copied or before != after:
+                copy.unlink(missing_ok=True)
+                self.last_problem = ("the knowledge file changed while its backup was being checked; "
+                                     "the backup was removed and nothing was thrown away")
+                return
+            manifest = backup_dir / f"{self._path.stem}.v1-{stamp}.manifest.json"
+            manifest.write_text(json.dumps({
+                "created": stamp, "source": self._path.name, "backup": name, "sha256": copied,
+                "size_bytes": copy.stat().st_size,
+                "reason": "taken before the knowledge file was first written in schema version 2",
+            }, indent=2), encoding="utf-8")
+            self.last_backup = str(copy)
+        except Exception as exc:                    # the upgrade is additive; do not block the answer
+            self.last_problem = f"could not make a verified backup before the version 2 upgrade: {exc}"
+
+    def _quiet_read(self) -> dict | None:
+        """The file on disk, or None. Never moves a damaged file aside (that is load-time work)."""
+        try:
+            data = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _merge_with_disk(self, data: dict | None) -> None:
+        """Fold the other half's entries, numbering and archive into this copy."""
+        if not data:
+            return
+        theirs = [e for e in data.get("entries", []) if isinstance(e, dict) and "id" in e]
+        if theirs:
+            ours = {e.get("id"): e for e in self._entries}
+            archived = {e.get("id") for e in self._archive}
+            merged: list[dict] = []
+            for entry in theirs:
+                if entry.get("id") in archived:
+                    continue                       # superseded here: never re-activated
+                mine = ours.pop(entry.get("id"), None)
+                if mine is None:
+                    merged.append(entry)           # written by the other half: keep it
+                else:
+                    merged.append(_newer_of(mine, entry))
+            merged.extend(ours.values())           # anything written here that is not on disk yet
+            self._entries = merged
+        self._next_id = max(self._next_id, int(data.get("next_id", 1) or 1))
+        seen = {(e.get("id"), e.get("archived_at", "")) for e in self._archive}
+        for entry in data.get("archive", []):
+            if isinstance(entry, dict) and (entry.get("id"), entry.get("archived_at", "")) not in seen:
+                self._archive.append(entry)
 
     def _now_iso(self) -> str:
         return self._clock().isoformat(timespec="seconds")

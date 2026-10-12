@@ -897,10 +897,20 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     return chat + brainDownNote();
   }
 
+  // A stored answer is used straight away — unless it is a Gemini answer from another
+  // model (or from before the app recorded which model made it). Those must not silently
+  // stand in for the current model: the model is asked first, and the stored words are
+  // kept only for the case where it cannot be reached at all (said to be out of date).
   const known = knowledge.lookup(trimmed);
+  let staleKnown: typeof known = null;
   if (known) {
-    console.log(`[JARVIS] answered locally from the knowledge base (${known.kind}, entry ${known.id}) — no Gemini call`);
-    return knowledge.describe(known);
+    if (knowledge.isStale(known, resolveTextModel().model)) {
+      staleKnown = known;
+      console.log(`[JARVIS] stored answer ${known.id} was made by ${String(knowledge.provenanceOf(known).model || 'an unrecorded model')} — asking ${resolveTextModel().model} instead`);
+    } else {
+      console.log(`[JARVIS] answered locally from the knowledge base (${known.kind}, entry ${known.id}) — no Gemini call`);
+      return knowledge.describe(known);
+    }
   }
 
   const arithmetic = localArithmeticAnswer(trimmed);
@@ -1092,8 +1102,10 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       // Keep the answer (when it is safe to keep) so the same question costs
       // nothing next time — the same rule the desktop app follows, same file.
       noteBrainHealth(true);
-      const kept = knowledge.learn(trimmed, run.value);
-      if (kept) console.log(`[JARVIS] kept the answer as entry ${kept.id} — asking again costs nothing`);
+      // The model that ACTUALLY answered is recorded with the answer, so a later question
+      // can tell whether the stored words are still from the model in use.
+      const kept = knowledge.learn(trimmed, run.value, run.model);
+      if (kept) console.log(`[JARVIS] kept the answer as entry ${kept.id} (${run.model}) — asking again costs nothing`);
       return run.value;
     } catch (err) {
       // Honest failure, naming the real cause: a 404 means the model name was
@@ -1102,11 +1114,15 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       if (err instanceof BrainError) {
         console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
         noteBrainHealth(false);
+        // A stored answer from an earlier model, said plainly to be out of date, beats
+        // silence — but it never replaces a call that could have been made.
+        if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
         return err.message;
       }
       console.error('Gemini error:', err);
       const message = err instanceof Error ? err.message : String(err);
       noteBrainHealth(false);
+      if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
       return `I reached for Gemini, sir, but the call failed in a way I cannot classify: ${message}. The key is set and the model is ${resolveTextModel().model}; the server log has the full error.`;
     }
   }
@@ -1114,6 +1130,10 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   // No key: local, built-in answers only — nothing pretends to be AI, and the
   // last line tells the owner exactly where a key is looked for.
   const keyHelp = KEY_HELP;
+  // A stored answer (even one from an earlier model, which could not be re-checked) is
+  // more use than a built-in brush-off — and it is labelled with its date and model so
+  // nothing pretends to be current.
+  if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
   if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('identity')) {
     return `I am ${NAMES.assistant}, your automated personal assistant. My reasoning core is offline at the moment — no Gemini key is set — so I am running on my built-in local replies. ${keyHelp}`;
   }
@@ -1164,6 +1184,7 @@ function writeReminders(list: Array<{ text: string; at: string }>): void {
 
 // Real telemetry for the Diagnostics button — honest readings, no theatre.
 function realStatusReport(): string {
+  const voice = resolveVoiceModel();
   const mem = process.memoryUsage();
   const up = Math.round(process.uptime());
   const key = resolveGeminiKey();
@@ -1188,6 +1209,7 @@ function realStatusReport(): string {
     `• Daily Gemini budget: ${budgetLine}`,
     `• Conversation log: ${messageHistory.length} visible entries; durable turns use memory/recent_dialogue.json with overflow in memory/dialogue_archive.jsonl`,
     `• Stored memories: ${notes} in memory/long_term.json; migration ${brainStatus.migration?.state || 'unknown'}${brainStatus.storage_error ? ` (${brainStatus.storage_error})` : ''}`,
+    `• Voice model: ${voice.model} (from ${voice.source})${voice.note}`,
     '• Voice: speech out 🔊 and speech in 🎤 run in your browser; 🎙 toggles the "Hey Jarvis" wake word.',
   ].join('\n');
 }
@@ -2202,42 +2224,67 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
 // played by the page as an ordinary sound file — no dependence on what the
 // computer happens to have installed.
 /**
- * The app's own voice model — UNCHANGED. This is the name the owner's voice is
- * working with today, so it stays the default and is only ever replaced when
- * Google stops serving it (see FALLBACK_VOICE_MODELS, tried on a 404).
+ * The app's own voice model — the CURRENT one.
  *
- * For the record: `gemini-2.5-flash-preview-tts` has a shutdown date of
- * 17 November 2026 and its replacement is `gemini-3.8-flash-tts`, so this name
- * will have to move — but it moves when it stops answering, not before.
+ * `gemini-3.8-flash-tts`: Google's flagship TTS model (released 22 September 2026,
+ * no shutdown announced). It is the recommended replacement for every voice model
+ * this app used before — `gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`
+ * and `gemini-3.1-flash-tts-preview` all shut down on 17 November 2026.
+ * Source: ai.google.dev/gemini-api/docs/deprecations (Audio models) and
+ * ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts, read 2026-10-12.
+ *
+ * The voice is its own model and its own setting: the text model is never asked to
+ * speak. An owner who pinned a name keeps it (their setting always goes first) and
+ * only moves on if that name stops answering — see voiceModelCandidates().
  */
-const DEFAULT_VOICE_MODEL = 'gemini-2.5-flash-preview-tts';
-/** Tried in order when the name above is withdrawn — never at the same time. */
-const FALLBACK_VOICE_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
+const DEFAULT_VOICE_MODEL = 'gemini-3.8-flash-tts';
+/** Tried in order when a name is WITHDRAWN — never at the same time. */
+const FALLBACK_VOICE_MODELS = ['gemini-3.8-flash-lite-tts'];
+/**
+ * Voice models this app used before, with the shutdown Google has announced. Kept so
+ * the owner can be told plainly that a configured name is about to stop answering
+ * rather than finding out from silence.
+ */
+const RETIRED_VOICE_MODELS: Record<string, string> = {
+  'gemini-2.5-flash-preview-tts': '17 November 2026',
+  'gemini-2.5-pro-preview-tts': '17 November 2026',
+  'gemini-3.1-flash-tts-preview': '17 November 2026',
+};
+
+/** A plain-language note when a voice name is due to be switched off, else ''. */
+function voiceRetirementNote(model: string): string {
+  const when = RETIRED_VOICE_MODELS[String(model || '').trim()];
+  if (!when) return '';
+  return ` ${model} is switched off on ${when}; the app uses ${DEFAULT_VOICE_MODEL} instead, `
+    + `and moves on to it by itself if ${model} stops answering.`;
+}
 const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
 
-function resolveVoiceModel(): { model: string; source: string } {
+function resolveVoiceModel(): { model: string; source: string; note: string } {
   const model = (process.env.SUPPER_VOICE_MODEL || process.env.GEMINI_TTS_MODEL || '').trim();
   return {
     model: model || DEFAULT_VOICE_MODEL,
     source: model ? 'SUPPER_VOICE_MODEL' : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
+    note: voiceRetirementNote(model || DEFAULT_VOICE_MODEL),
   };
 }
 
 /**
- * The models the mouth may use, in order. The owner's own setting always wins
- * and is never second-guessed; the app's default comes next, then the names
- * Google lists as still served. Only a withdrawal (404 / "no longer available")
- * moves on to the next one — a refused key or a dead connection is final,
- * because another model cannot mend either.
+ * The models the mouth may use, in order. The owner's own setting always wins and is
+ * never second-guessed; the current names follow it. Only a withdrawal (404 /
+ * "no longer available") moves on to the next one — a refused key, an exhausted
+ * quota or a dead connection is final, because another model cannot mend any of them
+ * (see synthesizeVoice, which checks the classified code before trying the next name).
+ *
+ * The fallbacks are offered even when the owner pinned a name: if their pin is one of
+ * the models Google switches off, the app keeps speaking instead of going silent.
  */
 function voiceModelCandidates(): Array<{ model: string; source: string }> {
   const configured = resolveVoiceModel();
-  const pinned = (process.env.SUPPER_VOICE_MODEL || process.env.GEMINI_TTS_MODEL || '').trim();
   const list = [{ model: configured.model, source: configured.source }];
-  if (!pinned) {
-    for (const name of FALLBACK_VOICE_MODELS) {
-      if (!list.some((c) => c.model === name)) list.push({ model: name, source: `the app's fallback voice model (${name})` });
-    }
+  for (const name of [DEFAULT_VOICE_MODEL, ...FALLBACK_VOICE_MODELS]) {
+    if (name === configured.model || list.some((c) => c.model === name)) continue;
+    list.push({ model: name, source: `the app's current voice model (${name})` });
   }
   return list;
 }
@@ -2311,7 +2358,8 @@ async function speakOnce(
     });
     if (classified.code === 'model-unavailable') {
       // The brain's message names the brain's settings; the mouth has its own.
-      message += ` The voice model is its own setting: SUPPER_VOICE_MODEL (the app's default is ${DEFAULT_VOICE_MODEL}).`;
+      message += ` The voice model is its own setting: SUPPER_VOICE_MODEL (the app's current voice model is ${DEFAULT_VOICE_MODEL}).`;
+      message += voiceRetirementNote(model);
     }
     if (classified.code === 'rate-limited') {
       message += ' The browser\'s own voice (Settings → Voice → "This computer\'s voice") costs nothing and still works meanwhile.';
@@ -2359,7 +2407,10 @@ async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: stri
   }
 
   let lastError: (Error & { code?: string }) | null = null;
+  let withdrawal: (Error & { code?: string }) | null = null;   // the root cause: a name is gone
+  const tried: string[] = [];
   for (const candidate of candidates) {
+    tried.push(candidate.model);
     try {
       const result = await speakOnce(client, candidate.model, candidate.source, spoken);
       voiceCache.set(cacheKey, { wav: result.wav, model: result.model });
@@ -2368,12 +2419,19 @@ async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: stri
     } catch (err) {
       const failure = err as Error & { code?: string };
       lastError = failure;
-      // Only a WITHDRAWN NAME is worth another model. A refused key or a dead
-      // connection fails the same way everywhere, and retrying those would just
-      // spend the voice's budget twice for the same silence.
+      // Only a WITHDRAWN NAME is worth another model. A refused key, a spent quota
+      // or a dead connection fails the same way everywhere, and retrying those
+      // would just spend the voice's budget twice for the same silence.
       if (failure.code !== 'model-unavailable') break;
-      console.warn(`[voice] ${candidate.model} is unavailable (${failure.message.slice(0, 120)}) — trying the next voice model.`);
+      if (!withdrawal) withdrawal = failure;
+      console.warn(`[voice] ${candidate.model} is unavailable (${failure.message.slice(0, 120)}) — trying the next voice model.${voiceRetirementNote(candidate.model)}`);
     }
+  }
+  // The root cause is reported, not the last thing that happened to fail: if the
+  // owner's own voice name has been withdrawn, the message must say so (and where
+  // to change it) even when every current name after it also failed.
+  if (withdrawal) {
+    throw Object.assign(new Error(`${withdrawal.message} Tried: ${tried.join(', ')}.`), { code: 'model-unavailable' });
   }
   throw lastError || Object.assign(new Error('the voice model could not be reached'), { code: 'failed' });
 }
@@ -2685,6 +2743,7 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
 
 // GET /api/system-status -> Real-time telemetry & capabilities
 app.get('/api/system-status', (_req: Request, res: Response) => {
+  const voice = resolveVoiceModel();
   const mem = process.memoryUsage();
   res.json({
     ok: true,
@@ -2707,6 +2766,7 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
             : 'key configured; provider not recently tested', icon: '🧠' },
       { name: 'Autonomous Self-Repair Sandbox', status: 'ready', icon: '🔧' },
       { name: 'Dual-Channel Telemetry Relay', status: 'connected', icon: '📡' },
+      { name: `Server voice model (${voice.model})`, status: voice.note.trim() ? 'changed by a setting' : 'current', icon: '🔊' },
       { name: `Local knowledge base (${knowledge.count()} answers, shared with the desktop app)`, status: 'ready', icon: '📚' },
       { name: `Local drafting desk (${drafts.list().length} draft(s) written here, no AI)`, status: 'ready', icon: '✍️' },
     ],
@@ -2723,6 +2783,7 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
 // The key itself is never returned, only its last four characters and its source.
 app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) => {
   const status = configStatus();
+  const voiceModel = resolveVoiceModel();       // the mouth's own model, reported beside the brain's
   res.json({
     present: status.key.present,
     tail: status.key.tail,
@@ -2734,6 +2795,9 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
     drafts: { count: drafts.list().length, dir: 'runtime/drafts' },
     voice: voiceQuotaSnapshot(),
+    voiceModel: voiceModel.model,
+    voiceModelSource: voiceModel.source,
+    voiceModelNote: voiceModel.note,
     modelSource: status.model.textSource,
     imageModel: status.model.image,
     imageModelSource: status.model.imageSource,
