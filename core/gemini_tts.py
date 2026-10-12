@@ -8,9 +8,9 @@ preview needs to be right, so the rules can be tested without a screen or a spea
     2026-10-12: `gemini-3.8-flash-tts` is the flagship and `gemini-3.8-flash-lite-tts`
     the fast, cheaper one (both released 22 September 2026, no shutdown announced).
     The names this app used before — `gemini-2.5-flash-preview-tts`,
-    `gemini-2.5-pro-preview-tts` and `gemini-3.1-flash-tts-preview` — all shut down on
-    17 November 2026, and Google's recommended replacement for every one of them is the
-    3.8 pair. Source: ai.google.dev/gemini-api/docs/deprecations (Audio models table)
+    `gemini-2.5-pro-preview-tts` and `gemini-3.1-flash-tts-preview` — are scheduled to
+    shut down on 17 November 2026, and Google's recommended replacement for every one
+    of them is the 3.8 pair. Source: ai.google.dev/gemini-api/docs/deprecations (Audio models table)
     and ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts.
 
   * where a style direction belongs. Google's speech-generation guide is explicit: the
@@ -68,22 +68,31 @@ _MODEL_GONE_WORDS = (
 _MODEL_GONE_STATUSES = {"NOT_FOUND", "MODEL_NOT_FOUND", "UNIMPLEMENTED"}
 
 
+def _current_voice_model(model: str) -> str:
+    """Move a known legacy preview TTS setting to the current stable model."""
+    value = (model or "").strip()
+    normalized = value.removeprefix("models/")
+    if normalized in RETIRED_VOICE_MODELS:
+        return DEFAULT_VOICE_MODEL
+    return value or DEFAULT_VOICE_MODEL
+
+
 def configured_voice_model() -> str:
-    """The voice model the app should use: the owner's setting first, then the default."""
+    """Resolve the voice setting, migrating known legacy preview names."""
     for name in ("SUPPER_VOICE_MODEL", "GEMINI_TTS_MODEL"):
         value = (os.environ.get(name) or "").strip()
         if value:
-            return value
+            return _current_voice_model(value)
     return DEFAULT_VOICE_MODEL
 
 
 def voice_model_candidates(configured: str | None = None) -> list[str]:
-    """The names to try, in order: the configured one, then the current fallbacks.
+    """The current configured model first, then stable fallbacks.
 
-    The owner's setting always goes first. The fallbacks are only ever reached after a
-    withdrawn name (see is_model_unavailable), so a working setting is never replaced.
+    Known legacy preview TTS settings are migrated before a request can use them.
+    Only an actually withdrawn name is allowed to move on to a fallback.
     """
-    first = (configured or configured_voice_model()).strip() or DEFAULT_VOICE_MODEL
+    first = _current_voice_model((configured or configured_voice_model()).strip())
     order = [first]
     for name in (DEFAULT_VOICE_MODEL,) + FALLBACK_VOICE_MODELS:
         if name not in order:
@@ -149,6 +158,23 @@ def is_model_unavailable(exc: BaseException) -> bool:
 
     if numeric == 404 or status in _MODEL_GONE_STATUSES:
         return True
+
+    # A 403 can mean the key is valid but cannot access this specific model. That
+    # should permit a fallback; a generic key/project permission failure must not.
+    key_specific_denial = any(word in message for word in (
+        "api key", "api_key", "permission denied for this key",
+        "invalid api key", "key not valid", "unauthenticated",
+    ))
+    model_scoped_denial = (
+        any(word in message for word in ("model", "models/", "gemini-"))
+        and any(word in message for word in (
+            "permission to access", "access denied", "not authorized",
+            "not allowed", "restricted", "unavailable to your account",
+        ))
+    )
+    if not key_specific_denial and model_scoped_denial and (numeric == 403 or status == "PERMISSION_DENIED"):
+        return True
+
     if numeric in (400, 401, 403, 429, 500, 503):
         # A named status that is NOT a missing model. 400 is included on purpose:
         # "invalid argument" is a request problem, not a withdrawn model.
