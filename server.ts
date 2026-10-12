@@ -204,6 +204,10 @@ interface LogMessage {
   replay?: boolean;
 }
 
+/** Where a Gemini key is looked for, named in full so the owner is never left guessing. */
+const KEY_HELP = `I looked for one in the environment (GEMINI_API_KEY, including ./.env) and in config/api_keys.json (gemini_api_key). `
+  + `Settings → "The Brain" writes it to config/api_keys.json, where the desktop app and every action read it.`;
+
 const greetingName = NAMES.user ? `, ${NAMES.user}` : ', sir';
 const messageHistory: LogMessage[] = [
   {
@@ -517,6 +521,129 @@ async function generateStudioScript(request: import('./studio/projects.js').Stud
 // `onDelta` — when the caller wants a live answer — receives the whole reply so
 // far, every time more of it exists, so the page can print (and speak) the first
 // sentence while the model is still writing the last one.
+/**
+ * What the last real contact with the reasoning core said.
+ *
+ * Small talk does not spend a call, so it cannot discover a broken brain for
+ * itself — it reads this instead. Without it, "hello" would answer cheerfully
+ * while the reasoning core was unreachable, which is exactly the pretence this
+ * app is not allowed to make: fast must not mean dishonest.
+ */
+let brainHealth: { ok: boolean; at: number } | null = null;
+const BRAIN_HEALTH_STALE_MS = 15 * 60 * 1000;
+function noteBrainHealth(ok: boolean): void {
+  // Keep only the state, not Google's raw diagnostics. Error details are shown
+  // in the full reply / Brain Check; a greeting must stay short and speakable.
+  brainHealth = { ok, at: Date.now() };
+}
+/** A short, honest aside for small talk when the brain is known to be down. */
+function brainDownNote(): string {
+  if (!brainHealth || brainHealth.ok) return '';
+  if (Date.now() - brainHealth.at > BRAIN_HEALTH_STALE_MS) return '';
+  return ' My reasoning core did not answer its last check.';
+}
+
+/**
+ * The things a person says to an assistant that are not questions and need no
+ * intelligence at all: hello, thank you, who are you, goodnight.
+ *
+ * Deliberately strict, so a real command is never swallowed:
+ * The phrases must match exactly (with only a name, "Jarvis", "sir" or "there" appended), so
+ * "hello, open the 3D room" is never swallowed as a greeting.
+ * Anything it does not recognise returns null and goes on to the brain.
+ */
+function localSmallTalk(lower: string): string | null {
+  const words = lower.replace(/[^a-z0-9'\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!words) return null;
+  const userName = NAMES.user.toLowerCase().replace(/[^a-z0-9'\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const addressed = (phrases: string[]) => {
+    if (phrases.includes(words)) return true;
+    if (userName && phrases.some((phrase) => words === `${phrase} ${userName}`)) return true;
+    const match = words.match(/^(.*?)\s+(?:jarvis|sir|there)$/);
+    return !!match && phrases.includes(match[1]);
+  };
+
+  if (addressed(['hello', 'hi', 'hey', 'hiya', 'howdy', 'greetings', 'good morning', 'good afternoon', 'good evening', 'good day', 'morning', 'afternoon', 'evening', "what's up", 'sup'])) {
+    return `Good day${greetingName}.`;
+  }
+  if (addressed(['how are you', 'how are you doing', 'how are you today', 'how is it going', "how's it going", 'how do you do'])) {
+    return `All systems nominal${greetingName}.`;
+  }
+  if (addressed(['who are you', 'what are you', 'what is your name', 'who am i talking to', 'identify yourself'])) {
+    return `I am ${NAMES.assistant}, your assistant.`;
+  }
+  if (addressed(['are you there', 'are you online', 'are you awake'])) {
+    return `I am here${greetingName}.`;
+  }
+  if (addressed(['thank you', 'thanks', 'thanks very much', 'thank you very much', 'ta', 'cheers', 'much obliged', 'appreciate it'])) {
+    return `A pleasure${greetingName}.`;
+  }
+  if (addressed(['goodbye', 'good bye', 'bye', 'bye bye', 'see you', 'see you later', 'see you soon', 'goodnight', 'good night', 'night', 'farewell'])) {
+    return `Until next time${greetingName}.`;
+  }
+  if (addressed(['good', 'excellent', 'well done', 'nice one', 'perfect', 'brilliant', 'nice work'])) {
+    return `Thank you${greetingName}.`;
+  }
+  return null;
+}
+
+/** Evaluate a plain arithmetic expression without eval(), network or model. */
+function localArithmeticAnswer(input: string): string | null {
+  let expression = String(input || '').toLowerCase().trim()
+    .replace(/^(?:jarvis[, ]+)?/, '')
+    .replace(/^(?:what(?:'s| is)|calculate|compute|work out|how much is)\s+/, '')
+    .replace(/(\d+(?:\.\d+)?)\s*(?:percent|%)\s+of\s+(\d+(?:\.\d+)?)/g, '(($1 / 100) * $2)')
+    .replace(/\bmultiplied by\b|\btimes\b|\bmultiplied\b/g, '*')
+    .replace(/\bdivided by\b|\bdivided\b|\bover\b/g, '/')
+    .replace(/\bplus\b/g, '+')
+    .replace(/\bminus\b/g, '-')
+    .replace(/\?/g, '')
+    .replace(/\s+/g, '');
+  const tokens = expression.match(/(?:\d+(?:\.\d+)?|\.\d+|[()+*/-])/g) || [];
+  if (!tokens.length || tokens.join('') !== expression || !/[+*/-]/.test(expression) || tokens.length > 80) return null;
+
+  let i = 0;
+  const atom = (): number => {
+    const token = tokens[i++];
+    if (token === '+') return atom();
+    if (token === '-') return -atom();
+    if (token === '(') {
+      const value = sum();
+      if (tokens[i++] !== ')') throw new Error('unclosed');
+      return value;
+    }
+    if (!token || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(token)) throw new Error('number expected');
+    return Number(token);
+  };
+  const product = (): number => {
+    let value = atom();
+    while (tokens[i] === '*' || tokens[i] === '/') {
+      const op = tokens[i++];
+      const rhs = atom();
+      if (op === '/' && rhs === 0) throw new Error('division by zero');
+      value = op === '*' ? value * rhs : value / rhs;
+    }
+    return value;
+  };
+  const sum = (): number => {
+    let value = product();
+    while (tokens[i] === '+' || tokens[i] === '-') {
+      const op = tokens[i++];
+      const rhs = product();
+      value = op === '+' ? value + rhs : value - rhs;
+    }
+    return value;
+  };
+  try {
+    const value = sum();
+    if (i !== tokens.length || !Number.isFinite(value) || Math.abs(value) > 1e15) return null;
+    const neat = Number(value.toPrecision(12));
+    return `${Object.is(neat, -0) ? 0 : neat}.`;
+  } catch {
+    return null;
+  }
+}
+
 async function processCommand(userCommand: string, onDelta?: (textSoFar: string) => void): Promise<string> {
   const trimmed = userCommand.trim();
   if (!trimmed) return 'Awaiting your command, sir.';
@@ -717,10 +844,24 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     }
   }
 
+  // Small talk is a first-class local response, even if an older release
+  // happened to cache a long Gemini answer for "hello" or "thanks".
+  const chat = localSmallTalk(lower);
+  if (chat) {
+    if (!resolveGeminiKey().key) return `${chat} My reasoning core is offline because no Gemini key is set.`;
+    return chat + brainDownNote();
+  }
+
   const known = knowledge.lookup(trimmed);
   if (known) {
     console.log(`[JARVIS] answered locally from the knowledge base (${known.kind}, entry ${known.id}) — no Gemini call`);
     return knowledge.describe(known);
+  }
+
+  const arithmetic = localArithmeticAnswer(trimmed);
+  if (arithmetic !== null) {
+    console.log('[JARVIS] answered local arithmetic — no Gemini call');
+    return arithmetic;
   }
 
   // ── Local everyday things, before the AI ─────────────────────────────────
@@ -874,20 +1015,34 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   }
 
   const ai = brainCaller();
+
   if (ai) {
     try {
-      // The last few turns give Gemini real conversation context instead of a blank slate.
-      const turns = messageHistory.slice(-10).map((m) => ({
+      // The latest user command is already appended to messageHistory by the
+      // request handler; exclude it here because it is added below alongside
+      // the assistant instructions. Otherwise every question is sent twice.
+      const latest = messageHistory[messageHistory.length - 1];
+      const priorHistory = latest?.speaker === 'user' && latest.text === trimmed
+        ? messageHistory.slice(0, -1)
+        : messageHistory;
+      // A few recent turns preserve the thread without sending a long transcript
+      // back to the model on every ordinary question.
+      const turns = priorHistory.slice(-6).map((m) => ({
         role: m.speaker === 'jarvis' ? ('model' as const) : ('user' as const),
-        parts: [{ text: m.text.slice(0, 2000) }],
+        parts: [{ text: m.text.slice(0, 1000) }],
       }));
+      const asksForDetail = /\b(?:in detail|detailed|step[- ]by[- ]step|comprehensive|deep dive|full analysis|long explanation|explain fully)\b/i.test(trimmed);
+      const replyStyle = asksForDetail
+        ? ''
+        : '\n\nFor this ordinary reply, answer directly in one or two short sentences, aiming for 35 words or fewer. No preamble, recap, or filler.';
       const run = await runBrainStream(ai, {
         kind: 'text',
+        config: { maxOutputTokens: asksForDetail ? 900 : 128 },
         contents: [
           ...turns,
           {
             role: 'user',
-            parts: [{ text: `${jarvisSystemPrompt}${memoryBlock()}\n\nUser command: "${trimmed}"` }],
+            parts: [{ text: `${jarvisSystemPrompt}${memoryBlock()}${replyStyle}\n\nUser command: "${trimmed}"` }],
           },
         ],
         onDelta,
@@ -898,6 +1053,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       }
       // Keep the answer (when it is safe to keep) so the same question costs
       // nothing next time — the same rule the desktop app follows, same file.
+      noteBrainHealth(true);
       const kept = knowledge.learn(trimmed, run.value);
       if (kept) console.log(`[JARVIS] kept the answer as entry ${kept.id} — asking again costs nothing`);
       return run.value;
@@ -907,18 +1063,19 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       // and only a genuine connection error blames the connection.
       if (err instanceof BrainError) {
         console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
+        noteBrainHealth(false);
         return err.message;
       }
       console.error('Gemini error:', err);
       const message = err instanceof Error ? err.message : String(err);
+      noteBrainHealth(false);
       return `I reached for Gemini, sir, but the call failed in a way I cannot classify: ${message}. The key is set and the model is ${resolveTextModel().model}; the server log has the full error.`;
     }
   }
 
   // No key: local, built-in answers only — nothing pretends to be AI, and the
   // last line tells the owner exactly where a key is looked for.
-  const keyHelp = `I looked for one in the environment (GEMINI_API_KEY, including ./.env) and in config/api_keys.json (gemini_api_key). ` +
-    `Settings → "The Brain" writes it to config/api_keys.json, where the desktop app and every action read it.`;
+  const keyHelp = KEY_HELP;
   if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('identity')) {
     return `I am ${NAMES.assistant}, your automated personal assistant. My reasoning core is offline at the moment — no Gemini key is set — so I am running on my built-in local replies. ${keyHelp}`;
   }
@@ -2272,6 +2429,9 @@ app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) 
   }
   try {
     const saved = saveGeminiKey(key);
+    // A previous "no key" brain check must not make a fresh greeting sound
+    // broken after the owner has just connected the brain.
+    brainHealth = null;
     console.log(`[JARVIS] Gemini key updated from Settings (ends in …${key.slice(-4)}) — saved to ${saved.savedTo.join(', ')}; in force from ${saved.source ?? 'nowhere yet'}.`);
     res.json({ ok: true, tail: key.slice(-4), source: saved.source, savedTo: saved.savedTo, detail: saved.detail });
   } catch (err) {
@@ -2286,6 +2446,7 @@ app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) 
 // came from, how long it took and what is left of the day's budget.
 app.get('/api/brain-check', requireAuth, async (_req: Request, res: Response) => {
   const result = await brainCheck(brainCaller());
+  noteBrainHealth(result.ok);
   if (result.ok) {
     console.log(`[JARVIS] brain check OK — ${result.model} (${result.modelSource}) in ${result.latencyMs} ms`);
   } else {

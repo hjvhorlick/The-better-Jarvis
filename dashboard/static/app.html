@@ -1931,6 +1931,9 @@
       {
         try {
           if (m.type === 'stream') {
+            // The HTTP response may win the race. If it already completed this
+            // id, a late stream frame is a duplicate, not a new answer.
+            if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) return;
             // The answer is arriving piece by piece: show it as it is written and
             // read the finished sentences out loud while the rest is still coming.
             updateStreamBubble(m.id, m.text, m.done !== false);
@@ -1942,7 +1945,8 @@
             if (m.speaker === 'user' && m.id && localEchoes.has(m.id)) {
               localEchoes.delete(m.id);          // our own command, already on screen
             } else if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) {
-              renderedReplies.delete(m.id);      // already shown (and spoken) from the HTTP answer
+              // Keep the id claimed for its whole dedupe window; the same reply
+              // can have a stream frame, final log and HTTP body in any order.
             } else {
             const live = liveStreamBubble(m.id);
             if (live) {
@@ -1952,12 +1956,16 @@
               renderBubbleBody(live, m.text);
               if (m.speaker === 'jarvis') finishStreamed(m.id, m.text);
               liveStreams.delete(m.id);
+              if (m.speaker === 'jarvis' && m.id) renderedReplies.set(m.id, Date.now());
             } else {
               const bubble = appendChat(m.speaker, m.text, m.image, m.replay === true);
               // Every fresh reply is spoken. Only the history replayed to a page
               // that has just opened is silent — the server says which is which,
               // so a slow answer can never be mistaken for old history again.
-              if (m.speaker === 'jarvis' && m.replay !== true) speakReply(m.text);
+              if (m.speaker === 'jarvis' && m.replay !== true) {
+                speakReply(m.text, m.id);
+                if (m.id) renderedReplies.set(m.id, Date.now());
+              }
               else if (m.speaker === 'jarvis') console.log('[speech] replay, not spoken:', String(m.text).slice(0, 60));
               void bubble;
             }
@@ -2017,9 +2025,8 @@
     // Commands this page sent itself, by id: the server echoes them back to every
     // client, and the sender must not print its own words twice.
     const localEchoes = new Map();
-    // Replies this page has already put on screen through the HTTP answer, by id:
-    // the websocket copy of the same reply must not print it a second time (the
-    // two paths race, and either may arrive first).
+    // Reply ids already rendered from either path. Keep the id claimed through
+    // the short dedupe window because stream, log and HTTP may arrive in any order.
     const renderedReplies = new Map();
     setInterval(() => {
       const cutoff = Date.now() - 20000;
@@ -2128,23 +2135,39 @@
         if (!data || !data.reply) return;
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
+        if (renderedReplies.has(id)) return;        // the socket already completed it
         if (live) {
+          // The live stream owns the bubble, but HTTP can beat the final stream
+          // frame. Read any tail not yet queued before claiming the id.
           live.classList.remove('streaming');
           renderBubbleBody(live, data.reply);
+          finishStreamed(id, data.reply);
           liveStreams.delete(id);
-          renderedReplies.set(id, Date.now());   // shown here: the socket's copy is a duplicate
+          renderedReplies.set(id, Date.now());
         } else if (!socketWasUp) {
-          // This reply was delivered by HTTP, so it is shown and spoken HERE —
-          // and only now is it recorded as done.
+          // No socket was available when sent: HTTP is the owner of this reply.
           appendChat('jarvis', data.reply);
           renderedReplies.set(id, Date.now());
-          speakReply(data.reply);
+          speakReply(data.reply, id);
+        } else {
+          // The socket was open when sent, but a proxy/reconnect can still drop
+          // its frames. Give it a brief chance; if nothing claimed the id, HTTP
+          // becomes the fallback instead of silently losing the answer.
+          setTimeout(() => {
+            if (renderedReplies.has(id)) return;
+            const lateLive = liveStreamBubble(id);
+            if (lateLive) {
+              lateLive.classList.remove('streaming');
+              renderBubbleBody(lateLive, data.reply);
+              finishStreamed(id, data.reply);
+              liveStreams.delete(id);
+            } else {
+              appendChat('jarvis', data.reply);
+              speakReply(data.reply, id);
+            }
+            renderedReplies.set(id, Date.now());
+          }, 700);
         }
-        // When the socket is up we record nothing: the socket owns the reply, and
-        // recording it here would make the frame below look like a duplicate and
-        // be swallowed — the reply then appears on screen but is never spoken,
-        // which is exactly how "he can talk but will not" looks from outside.
-        // The two paths race: measured 1-8 ms apart on a loopback server.
       }).catch(() => {
         if (!socketWasUp) {
           const id = requestId;
@@ -4911,7 +4934,25 @@
       streams: {},        // streamId -> { spoken: characters already queued }
       watchdog: 0,
       resumeTimer: 0,
+      /** The sound file playing right now, so it can be stopped on purpose. */
+      audio: null,
+      /** In-flight TTS requests are invalidated when the owner silences JARVIS. */
+      requestController: null,
+      generation: 0,
     };
+
+    /**
+     * Replies this page has already read out. The same reply can arrive twice —
+     * the socket frame and the HTTP answer both carry it — and two voices saying
+     * the same sentence at once is worse than one of them saying nothing, so the
+     * second copy is dropped whatever path it comes in on.
+     */
+    const spokenReplies = new Set();
+    function rememberSpokenReply(replyId) {
+      if (!replyId) return;
+      spokenReplies.add(replyId);
+      while (spokenReplies.size > 200) spokenReplies.delete(spokenReplies.values().next().value);
+    }
 
     // Both halves are required to say anything: the synthesiser itself and the
     // utterance class. A webview with one but not the other is honestly silent.
@@ -5052,8 +5093,25 @@
     function stopSpeaking() {
       Speech.queue.length = 0;
       Speech.streams = {};
+      // Invalidate first: even a fetch implementation that ignores abort must
+      // not start playing an old reply after the user has silenced it.
+      Speech.generation++;
+      if (Speech.requestController) {
+        const request = Speech.requestController;
+        Speech.requestController = null;
+        try { request.abort(); } catch (_) {}
+      }
       try { window.speechSynthesis.cancel(); } catch (_) {}
       try { window.speechSynthesis.resume(); } catch (_) {}
+      // The server voice is a sound file, and forgetting about it is not the
+      // same as stopping it: leave it running and the next sentence starts on
+      // top of it, which is two voices talking over each other.
+      if (Speech.audio) {
+        const el = Speech.audio;
+        el.onended = null; el.onerror = null;
+        try { el.pause(); } catch (_) {}
+        Speech.audio = null;
+      }
       Speech.speaking = false;
       Speech.engine = null;
       resumeListeningAfterSpeech();
@@ -5062,10 +5120,12 @@
 
     /* Speak one whole reply (a reply that arrived in one piece, or an
        acknowledgement such as "Microphone on, sir."). */
-    function speakReply(text) {
+    function speakReply(text, replyId) {
       if (!_speakOn || !canSpeak() || !text) return;
+      if (replyId && spokenReplies.has(replyId)) return;
       const pieces = chunkForSpeech(text);
       if (!pieces.length) return;
+      rememberSpokenReply(replyId);
       _lastSpokenText = cleanForSpeech(text);
       Speech.queue.push(...pieces);
       pumpSpeech();
@@ -5076,7 +5136,13 @@
        the next piece of the answer. */
     function speakStreamed(id, textSoFar) {
       if (!_speakOn || !canSpeak() || !textSoFar) return;
-      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const existing = Speech.streams[id];
+      // If HTTP already spoke this id, a late stream is not a new instruction.
+      if (id && spokenReplies.has(id) && !existing) return;
+      // Mark the id at the first stream frame too: the eventual log/HTTP copy is
+      // the same answer, not a second instruction to read it from the start.
+      rememberSpokenReply(id);
+      const entry = existing || (Speech.streams[id] = { spoken: 0 });
       const clean = cleanForSpeech(textSoFar);
       if (clean.length <= entry.spoken) return;
       _lastSpokenText = clean;
@@ -5092,7 +5158,10 @@
     /* The answer is complete: read out whatever tail was still waiting. */
     function finishStreamed(id, fullText) {
       if (!_speakOn || !canSpeak() || !fullText) return;
-      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const existing = Speech.streams[id];
+      if (id && spokenReplies.has(id) && !existing) return;
+      rememberSpokenReply(id);
+      const entry = existing || (Speech.streams[id] = { spoken: 0 });
       const clean = cleanForSpeech(fullText);
       const tail = clean.slice(entry.spoken);
       entry.spoken = clean.length;
@@ -5122,28 +5191,40 @@
         console.warn('[speech] the server voice refused again:', message);
       }
     }
-    async function speakViaServer(text) {
+    async function speakViaServer(text, generation) {
       const sentence = String(text || '').slice(0, 1200);
+      if (generation !== Speech.generation) return false;
       const remembered = _serverVoiceCache.get(sentence);
       if (remembered) {
         try {
           const el = new Audio(remembered);
-          el.onended = () => finishUtterance('end');
-          el.onerror = () => finishUtterance('error');
+          Speech.audio = el;
+          el.onended = () => finishUtterance('end', generation);
+          el.onerror = () => finishUtterance('error', generation);
           await el.play();
+          if (generation !== Speech.generation) { try { el.pause(); } catch (_) {} return false; }
           return true;
-        } catch (_) { /* the remembered copy would not play: ask for it again below */ }
+        } catch (_) {
+          if (generation !== Speech.generation) return false;
+          /* the remembered copy would not play: ask for it again below */
+        }
       }
       const body = JSON.stringify({ text: sentence });
+      const controller = new AbortController();
+      Speech.requestController = controller;
       let res, data;
       try {
-        res = await _authFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        res = await _authFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal });
         data = await res.json();
       } catch (err) {
+        if (generation !== Speech.generation || controller.signal.aborted || (err && err.name === 'AbortError')) return false;
         toast('🔇 The server voice could not be reached');
         console.warn('[speech] the server voice could not be reached:', err && err.message);
         return false;
+      } finally {
+        if (Speech.requestController === controller) Speech.requestController = null;
       }
+      if (generation !== Speech.generation) return false;
       if (!data || !data.ok || !data.audio) {
         console.warn('[speech] the server voice refused:', data && data.message);
         reportServerVoiceFailure((data && data.message) || 'no reason given');
@@ -5159,12 +5240,15 @@
           _serverVoiceCache.delete(oldest);
         }
         const el = new Audio(url);
-        el.onended = () => finishUtterance('end');       // the URL is kept for the cache
-        el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error'); };
+        Speech.audio = el;                               // so stopSpeaking can silence it
+        el.onended = () => finishUtterance('end', generation); // the URL is kept for the cache
+        el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error', generation); };
         await el.play();
+        if (generation !== Speech.generation) { try { el.pause(); } catch (_) {} return false; }
         _serverVoiceReportAt = 0;                        // it spoke: the next failure is news again
         return true;
       } catch (err) {
+        if (generation !== Speech.generation) return false;
         toast('🔇 The browser refused to play the audio — click the page once, then try again');
         console.warn('[speech] playback refused:', err && err.message);
         return false;
@@ -5213,12 +5297,16 @@
       if (!next) { onSpeechQueueEmpty(); return; }
 
       pauseListeningForSpeech();                          // never listen to our own voice
+      const generation = Speech.generation;
 
       if (engineUsesServer()) {
         Speech.speaking = true;                           // the file's own end continues the queue
         Speech.engine = 'server';                         // so the watchdog above leaves it alone
         Speech.startedAt = performance.now();
-        speakViaServer(next).then((played) => { if (!played) finishUtterance('server-failed'); });
+        speakViaServer(next, generation).then((played) => {
+          if (generation !== Speech.generation) return;
+          if (!played) finishUtterance('server-failed', generation);
+        });
         return;
       }
 
@@ -5232,10 +5320,10 @@
       Speech.engine = 'browser';                          // the watchdog below owns this one
       Speech.startedAt = performance.now();
       u.onstart = () => { Speech.startedAt = performance.now(); };
-      u.onend = () => finishUtterance('end');
+      u.onend = () => finishUtterance('end', generation);
       u.onerror = (e) => {
         if (e && e.error && e.error !== 'interrupted' && e.error !== 'canceled') console.warn('[speech] utterance error:', e.error);
-        finishUtterance('error');
+        finishUtterance('error', generation);
       };
       // A cancel() in the same tick as speak() makes Chrome drop the utterance,
       // so the two are never in the same tick — and when nothing was playing
@@ -5243,20 +5331,22 @@
       const wasBusy = !!(synth.speaking || synth.pending);
       if (wasBusy) { try { synth.cancel(); } catch (_) {} }
       setTimeout(() => {
+        if (generation !== Speech.generation) return;
         try {
           if (synth.paused) synth.resume();
           synth.speak(u);
         } catch (err) {
           console.warn('[speech] could not speak:', err && err.message);
-          finishUtterance('refused');
+          finishUtterance('refused', generation);
         }
       }, wasBusy ? 90 : 0);
     }
 
-    function finishUtterance(reason) {
-      if (!Speech.speaking) return;
+    function finishUtterance(reason, generation = Speech.generation) {
+      if (generation !== Speech.generation || !Speech.speaking) return;
       Speech.speaking = false;
       Speech.engine = null;
+      Speech.audio = null;
       void reason;
       setTimeout(pumpSpeech, 30);
     }
