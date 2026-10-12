@@ -971,7 +971,7 @@ function freePort() {
 /* ── 13. THE VOICE'S CURRENT MODEL, AND WHEN IT MAY MOVE ON ──────────────────
  * The app ships with Gemini 3.8 Flash TTS. What must never happen: a refused key, a
  * spent quota or a dead connection being treated as "the voice model retired" and
- * quietly answered by a different model. Only a withdrawn NAME moves on.           */
+ * quietly answered by a different model. Only a withdrawn NAME or model-specific access denial moves on; key, quota and connection errors remain final.           */
 {
   // (a) nothing configured: the current model is used, and a complete WAV is played
   const fresh = await startDashboard({ models: { 'gemini-3.8-flash-tts': { wav: true } }, name: 'voice-current' });
