@@ -11,7 +11,7 @@ a speaker or a network call:
     are spoken (a directive in the transcript can be read aloud);
   * BOTH output shapes are decoded: the complete WAV the current models return, and the
     headerless PCM the older preview models returned — a WAV must never be re-wrapped;
-  * only a WITHDRAWN MODEL NAME moves on to the next model. A refused key, an exhausted
+  * only a withdrawn model name or explicit model-scoped access denial moves on. A refused key, an exhausted
     quota or a dead connection is not a retirement and must be reported as itself.
 """
 import io
