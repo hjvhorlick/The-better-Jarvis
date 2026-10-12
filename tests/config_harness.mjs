@@ -103,6 +103,7 @@ function startStub(models) {
       if (method === 'streamGenerateContent') {
         const script0 = models[model] || {};
         if (script0.retire) { res.writeHead(404).end(JSON.stringify({ error: { code: 404, status: 'NOT_FOUND', message: `This model models/${model} is no longer available to new users.` } })); return; }
+        if (script0.modelAccessDenied) { res.writeHead(403).end(JSON.stringify({ error: { code: 403, status: 'PERMISSION_DENIED', message: `Your account does not have permission to access model ${model}.` } })); return; }
         if (script0.boom) { res.writeHead(500).end(JSON.stringify({ error: { code: 500, status: 'INTERNAL', message: `the model ${model} fell over` } })); return; }
         if (script0.rateLimited) { res.writeHead(429).end(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } })); return; }
         if (script0.noStream) { res.writeHead(400).end(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'streaming is not supported here' } })); return; }
@@ -138,6 +139,10 @@ function startStub(models) {
       };
       if (script.retire) {
         send(404, { error: { code: 404, status: 'NOT_FOUND', message: `This model models/${model} is no longer available to new users. Please update your code to use models/gemini-4.2-flash` } });
+        return;
+      }
+      if (script.modelAccessDenied) {
+        send(403, { error: { code: 403, status: 'PERMISSION_DENIED', message: `Your account does not have permission to access model ${model}.` } });
         return;
       }
       if (script.boom) { send(500, { error: { code: 500, status: 'INTERNAL', message: `the model ${model} fell over` } }); return; }
@@ -198,7 +203,7 @@ async function startDashboard({ models, env = {}, name = 'harness', files = {}, 
   const port = await freePort();
   const childEnv = { ...process.env, ...env };
   delete childEnv.GEMINI_API_KEY;          // the key must come from the file, not the environment
-  for (const k of ['SUPPER_TEXT_MODEL', 'GEMINI_MODEL', 'SUPPER_IMAGE_MODEL', 'SUPPER_GEMINI_DAILY_BUDGET', 'SUPPER_GEMINI_BASE_URL']) {
+  for (const k of ['SUPPER_TEXT_MODEL', 'GEMINI_MODEL', 'SUPPER_IMAGE_MODEL', 'SUPPER_VOICE_MODEL', 'GEMINI_TTS_MODEL', 'SUPPER_GEMINI_DAILY_BUDGET', 'SUPPER_GEMINI_VOICE_BUDGET', 'SUPPER_GEMINI_BASE_URL']) {
     if (!(k in env)) delete childEnv[k];
   }
   childEnv.SUPPER_DASHBOARD_PORT = String(port);
@@ -342,14 +347,62 @@ function freePort() {
   }
 }
 
+/* ── 2b. stale Gemini 2.5 text overrides migrate to the current stable model ── */
+{
+  for (const setting of ['SUPPER_TEXT_MODEL', 'GEMINI_MODEL']) {
+    const srv = await startDashboard({
+      models: { 'gemini-3.8-flash': {}, 'gemini-flash-latest': {} },
+      env: { [setting]: 'gemini-2.5-flash' },
+      name: `legacy-text-model-${setting}`,
+      files: { 'runtime/dashboard_models.json': JSON.stringify({ text: { model: 'gemini-2.5-flash', at: '2026-10-12T00:00:00.000Z' } }) },
+    });
+    try {
+      const brain = await get(srv, '/api/brain-check');
+      const called = srv.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').map((c) => c.model);
+      ok(`legacy Gemini 2.5 setting ${setting} is upgraded to Gemini 3.8 Flash`,
+        brain.body.ok === true && brain.body.model === 'gemini-3.8-flash',
+        `${brain.body.model} (${brain.body.modelSource})`);
+      ok(`legacy Gemini 2.5 is never called for ${setting}`,
+        !called.includes('gemini-2.5-flash') && called.every((m) => m === 'gemini-3.8-flash'),
+        called.join(',') || 'none');
+      ok(`Settings explains the ${setting} migration`,
+        new RegExp(`legacy ${setting}.*automatically upgraded`).test(String(brain.body.modelSource)),
+        String(brain.body.modelSource));
+      const remembered = JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'dashboard_models.json'), 'utf8'));
+      ok(`stale remembered Gemini 2.5 is replaced for ${setting}`,
+        remembered.text?.model === 'gemini-3.8-flash',
+        JSON.stringify(remembered.text));
+    } finally { await srv.stop(); }
+  }
+}
+
+/* ── 2c. model-scoped 403 access denial falls back to current stable model ──── */
+{
+  const srv = await startDashboard({
+    models: { 'harness-restricted-model': { modelAccessDenied: true }, 'gemini-3.8-flash': {} },
+    env: { SUPPER_TEXT_MODEL: 'harness-restricted-model' },
+    name: 'model-access-denied',
+  });
+  try {
+    const brain = await get(srv, '/api/brain-check');
+    const calls = srv.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').map((c) => c.model);
+    ok('model-specific 403 does not incorrectly blame the API key',
+      brain.body.ok === true && brain.body.model === 'gemini-3.8-flash',
+      `${brain.body.model} (${brain.body.modelSource})`);
+    ok('the denied model is followed by the current stable model',
+      calls[0] === 'harness-restricted-model' && calls.includes('gemini-3.8-flash'),
+      calls.join(',') || 'none');
+  } finally { await srv.stop(); }
+}
+
 /* ── 3. a retired model name falls through ────────────────────────────────── */
 {
-  const MODELS = { 'harness-retired-model': { retire: true }, 'gemini-flash-latest': { } };
+  const MODELS = { 'harness-retired-model': { retire: true }, 'gemini-3.8-flash': {}, 'gemini-flash-latest': { } };
   const srv = await startDashboard({ models: MODELS, env: { SUPPER_TEXT_MODEL: 'harness-retired-model' }, name: 'retired' });
   try {
     const brain = await get(srv, '/api/brain-check');
-    ok('a retired model falls through to the next candidate', brain.body.ok === true && brain.body.model === 'gemini-flash-latest', `${brain.body.model} (${brain.body.modelSource})`);
-    ok('…and the fall-through is reported, not hidden', brain.body.modelSource && /current model|moving alias/.test(String(brain.body.modelSource)), String(brain.body.modelSource));
+    ok('a retired model falls through to the current stable model', brain.body.ok === true && brain.body.model === 'gemini-3.8-flash', `${brain.body.model} (${brain.body.modelSource})`);
+    ok('…and the fall-through is reported, not hidden', brain.body.modelSource && /current stable text model|current model|moving alias/.test(String(brain.body.modelSource)), String(brain.body.modelSource));
     // A real question (not a greeting — greetings never reach Gemini now).
     const chat = await post(srv, '/api/command', { text: 'explain what a flyback diode does' });
     ok('…and a chat reply still arrives', typeof chat.body.reply === 'string' && chat.body.reply.startsWith('answered by'), String(chat.body.reply).slice(0, 60));
@@ -357,7 +410,7 @@ function freePort() {
 
   // Every candidate retired: the message must name the withdrawal — never the
   // connection, and never the key.
-  const dead = { 'harness-retired-model': { retire: true }, 'gemini-flash-latest': { retire: true }, 'harness-image-model': { retire: true } };
+  const dead = { 'harness-retired-model': { retire: true }, 'gemini-3.8-flash': { retire: true }, 'gemini-flash-latest': { retire: true }, 'harness-image-model': { retire: true } };
   const srv2 = await startDashboard({ models: dead, env: { SUPPER_TEXT_MODEL: 'harness-retired-model' }, name: 'all-retired' });
   try {
     const brain = await get(srv2, '/api/brain-check');
@@ -572,15 +625,17 @@ function freePort() {
       ok('speed: …after one refusal, retried without the setting', refused.length >= 2, `${refused.length} attempts`);
     } finally { await picky.stop(); }
 
-    // The OLD generation still wants the OLD parameter. Writing 'gemini-3.8'
-    // into the defaults must not quietly break a Gemini 2.5 model, which is the
-    // whole reason the preference is read from the model name.
-    const old25 = await startDashboard({ models: { 'gemini-2.5-flash': { streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'gemini-2.5-flash' }, name: 'old-2.5' });
+    // A stale Gemini 2.5 setting must be migrated before thinking options are
+    // selected. The replacement is Gemini 3.8 Flash, which uses thinkingLevel.
+    const old25 = await startDashboard({ models: { 'gemini-3.8-flash': { streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'gemini-2.5-flash' }, name: 'old-2.5' });
     try {
       await post(old25, '/api/command', { text: 'explain what a flyback diode does' });
       const call25 = old25.stub.calls.filter((c) => c.kind === 'stream').pop();
-      ok('speed: a Gemini 2.5 model still gets the numeric thinkingBudget it understands',
-         call25 && call25.thinkingBudget === 0 && call25.thinkingLevel === undefined,
+      ok('speed: a legacy Gemini 2.5 setting is migrated before the request',
+         call25 && call25.model === 'gemini-3.8-flash',
+         call25 ? `model=${call25.model}` : 'no call');
+      ok('speed: the migrated Gemini 3.8 request uses thinkingLevel, not thinkingBudget',
+         call25 && call25.thinkingLevel === 'LOW' && call25.thinkingBudget === undefined,
          call25 ? `thinkingBudget=${call25.thinkingBudget} thinkingLevel=${call25.thinkingLevel}` : 'no call');
       ok('speed: …and it is answered on the FIRST attempt, with nothing refused',
          old25.stub.calls.filter((c) => c.kind === 'stream').length === 1,
@@ -945,21 +1000,23 @@ function freePort() {
        /17 November 2026/.test(String(settings.body.voiceModelNote || '')),
        String(settings.body.voiceModelNote).slice(0, 120));
     const said = await post(retiredPin, '/api/voice/speak', { text: 'Standing by, sir.' });
-    ok('voice model: a withdrawn name falls through to the current model',
-       said.body.ok === true && said.body.model === 'gemini-3.8-flash-tts', JSON.stringify({ ok: said.body.ok, model: said.body.model }));
+    ok('voice model: a legacy setting is migrated directly to the current model',
+       said.body.ok === true && said.body.model === 'gemini-3.8-flash-tts' &&
+         !retiredPin.stub.calls.some((c) => c.model === 'gemini-2.5-flash-preview-tts'),
+       JSON.stringify({ ok: said.body.ok, model: said.body.model, calledLegacy: retiredPin.stub.calls.some((c) => c.model === 'gemini-2.5-flash-preview-tts') }));
   } finally { await retiredPin.stop(); }
 
   // (c) a spent quota is NOT a retirement: no other model is tried
   const spent = await startDashboard({
-    models: { 'gemini-2.5-flash-preview-tts': { rateLimited: true }, 'gemini-3.8-flash-tts': { wav: true } },
-    env: { SUPPER_VOICE_MODEL: 'gemini-2.5-flash-preview-tts' }, name: 'voice-quota',
+    models: { 'gemini-3.8-flash-tts': { rateLimited: true }, 'gemini-3.8-flash-lite-tts': { wav: true } },
+    env: { SUPPER_VOICE_MODEL: 'gemini-3.8-flash-tts' }, name: 'voice-quota',
   });
   try {
     const said = await post(spent, '/api/voice/speak', { text: 'One more sentence, sir.' });
     ok('voice model: a spent quota is reported, not papered over with another model',
        said.body.ok === false && said.body.code === 'rate-limited', JSON.stringify({ ok: said.body.ok, code: said.body.code }));
-    ok('voice model: …and the current model was never called behind the owner\'s back',
-       !spent.stub.calls.some((c) => c.model === 'gemini-3.8-flash-tts'),
+    ok('voice model: …and the Lite fallback was never called behind the owner\'s back',
+       !spent.stub.calls.some((c) => c.model === 'gemini-3.8-flash-lite-tts'),
        spent.stub.calls.map((c) => c.model).join(','));
     ok('voice model: …and the answer offers the free browser voice meanwhile',
        /this computer/i.test(String(said.body.message)) || /browser/i.test(String(said.body.message)),

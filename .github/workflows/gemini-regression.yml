@@ -1,0 +1,38 @@
+name: Gemini regression checks
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  node-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Type-check the server and configuration
+        run: npm run lint
+
+      - name: Build the server bundle
+        run: npm run build
+
+      - name: Test persistent memory and knowledge stores
+        run: npm run test:node
+
+      - name: Test Gemini configuration, model fallback, and voice with a local stub
+        run: node tests/config_harness.mjs --http-only

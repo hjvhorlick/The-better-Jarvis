@@ -2234,8 +2234,8 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
  * ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts, read 2026-10-12.
  *
  * The voice is its own model and its own setting: the text model is never asked to
- * speak. An owner who pinned a name keeps it (their setting always goes first) and
- * only moves on if that name stops answering — see voiceModelCandidates().
+ * speak. Valid owner-selected models are respected. Known legacy preview TTS model
+ * settings are migrated to the current stable model before a request is sent.
  */
 const DEFAULT_VOICE_MODEL = 'gemini-3.8-flash-tts';
 /** Tried in order when a name is WITHDRAWN — never at the same time. */
@@ -2261,11 +2261,28 @@ function voiceRetirementNote(model: string): string {
 const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
 
 function resolveVoiceModel(): { model: string; source: string; note: string } {
-  const model = (process.env.SUPPER_VOICE_MODEL || process.env.GEMINI_TTS_MODEL || '').trim();
+  const appSetting = (process.env.SUPPER_VOICE_MODEL || '').trim();
+  const legacySetting = (process.env.GEMINI_TTS_MODEL || '').trim();
+  const configured = appSetting || legacySetting;
+  const sourceName = appSetting ? 'SUPPER_VOICE_MODEL' : legacySetting ? 'GEMINI_TTS_MODEL' : '';
+  const normalized = configured.replace(/^models\//, '');
+  const retirementDate = RETIRED_VOICE_MODELS[normalized];
+
+  // Migrate legacy preview TTS settings immediately. Leaving these overrides in
+  // place until Google's shutdown date can keep the voice on an old model even
+  // though the current stable TTS model is available.
+  if (configured && retirementDate) {
+    return {
+      model: DEFAULT_VOICE_MODEL,
+      source: `legacy ${sourceName} (${normalized}) automatically upgraded to ${DEFAULT_VOICE_MODEL}`,
+      note: `${normalized} is scheduled to be switched off on ${retirementDate}; the app automatically uses ${DEFAULT_VOICE_MODEL} instead.`,
+    };
+  }
+
   return {
-    model: model || DEFAULT_VOICE_MODEL,
-    source: model ? 'SUPPER_VOICE_MODEL' : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
-    note: voiceRetirementNote(model || DEFAULT_VOICE_MODEL),
+    model: configured || DEFAULT_VOICE_MODEL,
+    source: configured ? sourceName : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
+    note: voiceRetirementNote(configured || DEFAULT_VOICE_MODEL),
   };
 }
 
