@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -16,8 +17,10 @@ PROMPT_PATH = REPO_ROOT / "core" / "prompt.txt"
 WEB_DIR = REPO_ROOT / "web"
 RUNTIME_DIR = REPO_ROOT / "runtime"            # git-ignored: quota counter and other small state
 
-# Text model used by the browser chat. The desktop app uses a Live model for voice;
-# text chat uses a standard model. Override with SUPPER_TEXT_MODEL.
+# Text model used by the browser chat. The desktop app uses a Live model for voice.
+# SUPPER_TEXT_MODEL is the primary override; GEMINI_MODEL is also accepted for
+# compatibility with the dashboard. Legacy Gemini 2.5 text values are upgraded
+# to the current stable model rather than pinning the app to restricted access.
 # gemini-3.8-flash: Google's current stable Flash model (GA 2 September 2026, no
 # shutdown announced). It replaced the moving alias `gemini-flash-latest`, which was
 # last re-pointed on 19 May 2026 and would quietly leave this app on a superseded
@@ -59,8 +62,19 @@ def get_user_name() -> str:
     return (load_config_file().get("user_name") or "").strip()
 
 
+_LEGACY_TEXT_MODEL = re.compile(r"^(?:models/)?gemini-2\.5-(?:flash|pro)(?:-|$)", re.IGNORECASE)
+
+
 def get_text_model() -> str:
-    return os.environ.get("SUPPER_TEXT_MODEL", "").strip() or DEFAULT_TEXT_MODEL
+    """Resolve the main text model and migrate stale Gemini 2.5 settings."""
+    for setting in ("SUPPER_TEXT_MODEL", "GEMINI_MODEL"):
+        model = (os.environ.get(setting) or "").strip()
+        if not model:
+            continue
+        if _LEGACY_TEXT_MODEL.match(model):
+            return DEFAULT_TEXT_MODEL
+        return model
+    return DEFAULT_TEXT_MODEL
 
 
 DEFAULT_DAILY_BUDGET = 20
