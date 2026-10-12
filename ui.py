@@ -1633,9 +1633,8 @@ class CustomizeOverlay(QWidget):
                         break
                     except Exception as _e:
                         last_error = _e
-                        # Only a WITHDRAWN model name is worth another model: a refused
-                        # key, a spent quota or a dead connection fails the same way
-                        # everywhere and is reported as itself.
+                        # Only a withdrawn name or model-specific access denial is worth another model;
+                        # key, quota and connection errors remain final.
                         if not _tts.is_model_unavailable(_e):
                             raise
                 if resp is None:
