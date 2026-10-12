@@ -2234,8 +2234,8 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
  * ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts, read 2026-10-12.
  *
  * The voice is its own model and its own setting: the text model is never asked to
- * speak. An owner who pinned a name keeps it (their setting always goes first) and
- * only moves on if that name stops answering — see voiceModelCandidates().
+ * speak. Valid owner-selected models are respected. Known legacy preview TTS model
+ * settings are migrated to the current stable model before a request is sent.
  */
 const DEFAULT_VOICE_MODEL = 'gemini-3.8-flash-tts';
 /** Tried in order when a name is WITHDRAWN — never at the same time. */
