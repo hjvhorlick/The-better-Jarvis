@@ -24,8 +24,7 @@ preview needs to be right, so the rules can be tested without a screen or a spea
     (`audio/L16;codec=pcm;rate=24000`). Both are decoded here; a WAV wrapped in a
     second WAV header is silence, so the two are never confused.
 
-  * when to try another model. ONLY a withdrawn model name (404 / NOT_FOUND /
-    "no longer available") moves on to the next name. A refused key, an exhausted
+  * when to try another model. a withdrawn model name or explicit model-scoped access denial may move to the next name. A refused key, an exhausted
     quota or a dead connection fails the same way on every model, and pretending
     otherwise just spends the owner's budget twice for the same silence.
 
@@ -140,11 +139,11 @@ def preview_config(voice: str) -> dict:
 
 
 def is_model_unavailable(exc: BaseException) -> bool:
-    """True only when the model NAME is the problem (withdrawn/unknown).
+    """True for a withdrawn/unknown model or explicit model-scoped access denial.
 
     False for a refused key, an exhausted quota, a dead connection, or anything the
-    error does not clearly identify as a missing model — so those are reported to the
-    owner instead of being papered over with another model.
+    error does not clearly identify as a model availability problem — those are reported
+    to the owner instead of being papered over with another model.
     """
     code = getattr(exc, "code", None)
     if code is None:
