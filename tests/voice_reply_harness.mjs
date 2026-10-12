@@ -344,8 +344,9 @@ if (!JSDOM) {
    * EXISTS. That is what arms the 800 ms watchdog, and it is the one thing jsdom
    * does not give us by default — which is why the defect survived every test.
    */
-  function makeDom({ audioMs = 2500, speakOk = true, browserVoiceStarts = false } = {}) {
-    const state = { voiceRequests: [], utterances: [], played: [], live: 0, maxLive: 0, ended: 0, t0: Date.now() };
+  function makeDom({ audioMs = 2500, speakOk = true, browserVoiceStarts = false,
+                     wsOpen = false, commandReply = '', commandDelayMs = 0 } = {}) {
+    const state = { voiceRequests: [], utterances: [], played: [], live: 0, maxLive: 0, ended: 0, sockets: [], commandIds: [], t0: Date.now() };
     const dom = new JSDOM(pageHtml, {
       url: 'https://jarvis.test/', runScripts: 'dangerously', pretendToBeVisual: false,
       beforeParse(window) {
@@ -366,12 +367,25 @@ if (!JSDOM) {
             const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(36), Buffer.from('WAVE'), Buffer.alloc(1600)]);
             return { ok: true, status: 200, json: async () => ({ ok: true, audio: wav.toString('base64'), mime: 'audio/wav', model: 'harness-tts', ms: 40 }) };
           }
+          if (p.includes('/api/command')) {
+            const sent = JSON.parse(opts.body || '{}');
+            if (sent.requestId) state.commandIds.push(sent.requestId);
+            if (commandDelayMs) await new Promise((r) => setTimeout(r, commandDelayMs));
+            return { ok: true, status: 200, json: async () => ({ ok: true, reply: commandReply, id: sent.requestId }) };
+          }
           if (p.includes('/api/settings/gemini-key')) {
             return { ok: true, status: 200, json: async () => ({ present: true, tail: 'cdef', source: 'config/api_keys.json', model: 'harness-text', modelSource: 'SUPPER_TEXT_MODEL', quota: { used: 1, limit: 20 }, voice: { used: 1, limit: 400 }, assistantName: 'JARVIS', userName: '', build: '2026-10-12-voice-fix-1', configRoot: '/tmp/jarvis' }) };
           }
           return { ok: true, status: 200, json: async () => ({}) };
         };
-        window.WebSocket = class { constructor() { this.readyState = 3; } send() {} close() {} };
+        window.WebSocket = class {
+          // The page compares readyState against WebSocket.OPEN, so the constant
+          // has to exist or "is the socket up?" is never true in these checks.
+          static OPEN = 1; static CLOSED = 3;
+          constructor() { this.readyState = wsOpen ? 1 : 3; this.onmessage = null; state.sockets.push(this); }
+          send() {} close() {}
+          deliver(frame) { if (this.onmessage) this.onmessage({ data: JSON.stringify(frame) }); }
+        };
         window.scrollTo = () => {};
         window.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
           get: (_t, k) => (k === 'canvas' ? null : (() => new Proxy({}, { get: () => () => {} }))), set: () => true,
@@ -416,6 +430,88 @@ if (!JSDOM) {
     ok('…and the page does not claim the BROWSER voice failed when it was never used',
       !bubbles.some((t) => /computer’s own voice|computer's own voice/.test(t)), JSON.stringify(bubbles.map((b) => b.slice(0, 60))));
     ok('…and the browser synthesiser was not used at all', state.utterances.length === 0, JSON.stringify(state.utterances));
+    dom_close(window);
+  }
+
+  /* — the owner's report: "he talks when he connects, and that is it." —
+     A reply the brain could NOT answer is still a reply, and it is still
+     spoken. The offline message is exactly the one that must be heard, because
+     it is the one that says something is wrong. */
+  {
+    const OFFLINE = 'Good day, sir. One honest note: my reasoning is offline (no Gemini key), so I can only give built-in local replies.';
+    const CONNECTION = 'My reasoning is offline, sir. The Gemini service could not be reached, so I can only run the built-in local commands.';
+
+    // 1. The ordinary path: the answer arrives in pieces over the socket.
+    const { window, state } = makeDom({ audioMs: 300 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.__jarvisWs({ type: 'stream', id: 'r1', speaker: 'jarvis', text: 'Good day, sir. ', done: false, timestamp: Date.now() });
+    await sleep(200);
+    window.__jarvisWs({ type: 'stream', id: 'r1', speaker: 'jarvis', text: 'Good day, sir. The reactor is nominal.', done: true, timestamp: Date.now() });
+    await sleep(1200);
+    const streamedSpoken = state.voiceRequests.length;
+    ok('a reply the brain DID answer is spoken', streamedSpoken >= 1, `${streamedSpoken} sentence(s)`);
+
+    // 2. The same page, the next reply — and this one the brain could not answer.
+    window.__jarvisWs({ type: 'log', id: 'r2', speaker: 'jarvis', text: OFFLINE, timestamp: Date.now() });
+    await sleep(1200);
+    ok('…and the NEXT reply is spoken too — he does not go quiet after the first',
+       state.voiceRequests.length > streamedSpoken, JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 30))));
+
+    // 3. The reply that says the connection failed must be HEARD, not just printed.
+    window.__jarvisWs({ type: 'log', id: 'r3', speaker: 'jarvis', text: CONNECTION, timestamp: Date.now() });
+    await sleep(1200);
+    const spoken = state.voiceRequests.map((r) => r.text).join(' ');
+    ok('the message that says the brain is offline is spoken, not only printed',
+       /reasoning is offline/i.test(spoken), JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 40))));
+    dom_close(window);
+  }
+
+  /* — the race that makes him look unwilling: the reply travels BOTH ways. —
+     The server answers the POST and broadcasts the same reply on the socket. If
+     the HTTP answer is handled first, the page files the id as "already shown
+     and spoken" — and then the websocket frame, which is the only copy that ever
+     gets spoken, is thrown away as a duplicate. Measured 1-8 ms apart on a
+     loopback server, so which one wins is a coin toss: he talks, or he does not,
+     for no visible reason. */
+  {
+    const REPLY = 'The call to Gemini failed for a reason I cannot classify (model gemini-3.8-flash, key from environment). The key is fine; check the internet connection or a proxy, then try again.';
+    const { window, state, doc } = makeDom({ audioMs: 200, wsOpen: true, commandReply: REPLY });
+    await sleep(150);
+    state.t0 = Date.now();
+    // The socket is UP, so the page will wait for the frame. Deliver the HTTP
+    // answer first and the frame second — the ordering that used to silence him.
+    window.sendCommand('how is the reactor holding up');
+    await sleep(400);                       // the HTTP answer has been handled by now
+    ok('while the socket is up, the HTTP answer alone does not speak — the socket owns the reply',
+       state.voiceRequests.length === 0, `${state.voiceRequests.length} spoken`);
+    // …and it must NOT file the id as done, or the frame below is discarded.
+    const id = state.commandIds[0];
+    const socket = state.sockets[0];
+    socket.deliver({ type: 'log', id, speaker: 'jarvis', text: REPLY, timestamp: Date.now() });
+    await sleep(700);
+    ok('a reply is still spoken when the HTTP answer beats the websocket frame',
+       state.voiceRequests.length >= 1, JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 40))));
+    const bubbles = [...doc.querySelectorAll('.chat-bubble.speaker-jarvis')].map((b) => b.textContent);
+    ok('…and the words appear on screen exactly once, not once per path',
+       bubbles.filter((t) => /cannot classify/.test(t)).length === 1, JSON.stringify(bubbles.map((b) => b.slice(0, 30))));
+    dom_close(window);
+  }
+
+  /* — a failure report is not a thing to read out loud character by character — */
+  {
+    const RAW = 'The call to Gemini failed for a reason I cannot classify (model gemini-3.8-flash, key from environment): '
+      + '{"error":{"message":"{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"the model is overloaded\"}}","code":503,"status":"Service Unavailable"}}.';
+    const { window, state } = makeDom({ audioMs: 200 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.__jarvisWs({ type: 'log', id: 'raw-1', speaker: 'jarvis', text: RAW, timestamp: Date.now() });
+    await sleep(700);
+    const said = state.voiceRequests.map((r) => r.text).join(' ');
+    ok('a failure is still spoken', state.voiceRequests.length >= 1, `${state.voiceRequests.length} sentence(s)`);
+    ok('…but the raw error body is NOT read aloud — a voice asked to say JSON may simply refuse, which sounds like silence',
+       !/[{}]/.test(said), said.slice(0, 120));
+    ok('…and he says where the detail can be found instead', /details are on screen/i.test(said), said.slice(0, 120));
     dom_close(window);
   }
 

@@ -63,7 +63,7 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   Outlook or other provider connection and no send action. “Open in mail app” makes
   a correctly encoded `mailto:` handoff for you to review and send yourself.
 - Glass HUD, My Hands gesture tracking, camera stage, file browser
-- Chat with Gemini (the app's moving alias `gemini-flash-latest`), with your
+- Chat with Gemini (`gemini-3.8-flash`, Google's current stable model), with your
   personality file `core/prompt.txt`
   and your memory as context; conversation survives restarts
 - **Voice out** 🔊 — JARVIS speaks replies, sentence by sentence, starting with the

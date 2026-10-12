@@ -2128,12 +2128,23 @@
         if (!data || !data.reply) return;
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
-        renderedReplies.set(id, Date.now());
-        if (live) { live.classList.remove('streaming'); renderBubbleBody(live, data.reply); liveStreams.delete(id); }
-        else if (!socketWasUp) appendChat('jarvis', data.reply);
-        // The speaking happens exactly once, on whichever path delivered the
-        // words: the stream's tail if this page watched it live, or this reply.
-        if (!socketWasUp && !live) speakReply(data.reply);
+        if (live) {
+          live.classList.remove('streaming');
+          renderBubbleBody(live, data.reply);
+          liveStreams.delete(id);
+          renderedReplies.set(id, Date.now());   // shown here: the socket's copy is a duplicate
+        } else if (!socketWasUp) {
+          // This reply was delivered by HTTP, so it is shown and spoken HERE —
+          // and only now is it recorded as done.
+          appendChat('jarvis', data.reply);
+          renderedReplies.set(id, Date.now());
+          speakReply(data.reply);
+        }
+        // When the socket is up we record nothing: the socket owns the reply, and
+        // recording it here would make the frame below look like a duplicate and
+        // be swallowed — the reply then appears on screen but is never spoken,
+        // which is exactly how "he can talk but will not" looks from outside.
+        // The two paths race: measured 1-8 ms apart on a loopback server.
       }).catch(() => {
         if (!socketWasUp) {
           const id = requestId;
@@ -4985,6 +4996,11 @@
     function cleanForSpeech(text) {
       return String(text || '')
         .replace(/```[\s\S]*?```/g, ' — code block — ')
+        // The raw error body Google sends back (a wall of JSON) belongs on the
+        // screen, not in the mouth: read aloud it is not English, and a voice
+        // model asked to say it may simply refuse — which sounds exactly like
+        // "he will not talk".
+        .replace(/\{[\s\S]*"[\s\S]*:[\s\S]*\}/g, 'the details are on screen, sir')
         .replace(/[*_#`>|]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
