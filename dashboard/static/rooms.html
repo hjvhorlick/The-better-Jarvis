@@ -44,11 +44,8 @@
       border-color: var(--jg-gold-bright);
     }
 
-    /* Technical clutter, hidden: the fps readout, the Studio's aspect-ratio and
-       picture-model pickers, the 3D room's wireframe switch and see-through
-       slider. Their defaults carry on underneath. */
+    /* Keep the supported 16:9 / 9:16 Studio aspect selector visible. */
     #env-fps { display: none !important; }
-    label[for="studio-aspect"], #studio-aspect,
     label[for="studio-model"], #studio-model { display: none !important; }
     #tool-design-wireframe, #tool-design-opacity { display: none !important; }
 

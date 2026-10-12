@@ -591,9 +591,28 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
   grid-template-rows: auto minmax(0, 1fr);
   grid-template-areas: "brief library" "script library";
 }
-.studio-brief { grid-area: brief; display: flex; flex-direction: column; gap: 7px; }
-.studio-script { grid-area: script; min-height: 0; display: flex; flex-direction: column; gap: 8px; }
-.studio-library { grid-area: library; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.studio-brief { grid-area: brief; display: flex; flex-direction: column; gap: 7px; min-height: 0; max-height: 44vh; overflow-y: auto; padding-right: 3px; }
+.studio-script { grid-area: script; min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.studio-library { grid-area: library; min-height: 0; display: flex; flex-direction: column; gap: 6px; overflow: hidden; }
+.studio-project-shelf { display: flex; flex: 0 0 auto; flex-direction: column; gap: 6px; max-height: 58%; overflow-y: auto; padding: 6px; }
+.studio-project-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio-project-actions .studio-button { padding: 5px 8px; font-size: 11px; }
+.studio-button { cursor: pointer; }
+.studio-project-list { display: flex; flex-direction: column; gap: 5px; max-height: 150px; overflow-y: auto; }
+.studio-project-row { padding: 6px 8px; border: 1px solid var(--glass-edge); border-radius: 8px; background: rgba(24, 25, 30, 0.42); }
+.studio-project-row p { margin: 4px 0 0; color: var(--dim); font-size: 11px; line-height: 1.35; }
+.studio-project-open { width: 100%; text-align: left; padding: 4px 6px; font-size: 12px; }
+.studio-project-meta, .studio-note, .studio-citations { margin: 2px 0; color: var(--dim); font-size: 11px; line-height: 1.4; }
+.studio-research-picker, .studio-research-card, .studio-creative-details { padding: 6px; border: 1px solid var(--glass-edge); border-radius: 8px; background: rgba(18, 19, 23, 0.35); }
+.studio-research-picker .studio-row select { flex: 1; min-width: 180px; }
+.studio-research-card { max-height: 180px; overflow: auto; font-size: 12px; line-height: 1.4; }
+.studio-research-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.studio-research-card ol { padding-left: 22px; }
+.studio-research-card a { color: var(--accent); overflow-wrap: anywhere; }
+.studio-research-report { white-space: pre-wrap; }
+.studio-creative-details textarea, .studio-brief textarea { width: 100%; padding: 6px 8px; font: inherit; font-size: 12px; border-radius: 8px; }
+.studio-copy-fallback { width: 100%; min-height: 110px; max-height: 180px; font-family: ui-monospace, monospace; font-size: 11px; }
+.studio-citations { color: var(--accent); }
 
 .studio-label { font-size: 12px; color: var(--dim); }
 .studio-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -704,9 +723,12 @@ input[type=text]:focus { outline: 2px solid var(--accent); outline-offset: 1px; 
 @media (max-width: 900px) {
   .studio {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1.2fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 0.85fr) minmax(0, 1.15fr) minmax(0, 0.9fr);
     grid-template-areas: "brief" "script" "library";
   }
+  .studio-brief { max-height: none; }
+  .studio-project-shelf { max-height: 48%; }
+  .studio-research-card { max-height: 120px; }
 }
 
 

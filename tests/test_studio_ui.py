@@ -89,10 +89,38 @@ def test_the_studio_layout_stretches_to_the_work_area():
     assert "@media (max-width: 900px)" in css
 
 
-def test_the_studio_offers_the_shapes_a_short_video_needs():
+def test_the_studio_offers_the_requested_video_formats():
     room = _read(STUDIO)
-    for shape in ("9:16", "16:9", "1:1", "4:5"):
+    for shape in ("9:16", "16:9"):
         assert shape in room, shape
+    assert '["1:1"' not in room
+    assert '["4:5"' not in room
+
+
+def test_saved_video_projects_use_primary_node_routes_and_keep_handoff_manual():
+    root = pathlib.Path(__file__).resolve().parents[1]
+    server = _read(root / "server.ts")
+    projects = _read(root / "studio" / "projects.ts")
+    room = _read(STUDIO)
+    for route in ("/api/studio/projects", "/api/studio/scripts", "/api/studio/research-reports"):
+        assert route in projects, route
+    assert "registerStudioRoutes(app, requireAuth" in server
+    assert "sceneringImportSupported: false" in projects
+    assert "manual-copy" in projects
+    assert "Nothing was sent" in room
+    assert "sourceScript" in room
+    assert "Authorization: `Bearer ${token}`" in room
+
+
+def test_voice_and_chat_studio_commands_reach_the_rooms_iframe():
+    root = pathlib.Path(__file__).resolve().parents[1]
+    dashboard = _read(root / "dashboard" / "static" / "app.html")
+    assert "m.type === 'studio_control'" in dashboard
+    assert "openStudioForCommand(m.command)" in dashboard
+    assert "msg.type === 'studio_ready'" in dashboard
+    room = _read(STUDIO)
+    assert 'message.type !== "studio_control"' in room
+    assert 'command.action === "open-project"' in room
 
 
 def test_the_picture_model_can_be_chosen():

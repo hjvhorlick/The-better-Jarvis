@@ -1985,6 +1985,7 @@
             else if (m.action === 'goto' && m.room) roomsGoto(m.room);
             else if (m.action === 'tools') sendToRooms({ type: 'jarvis-rooms-tools', open: Boolean(m.open) });
           }
+          if (m.type === 'studio_control') openStudioForCommand(m.command);
         } catch (err) { console.error('WS message error:', err); }
       }
     }
@@ -2255,6 +2256,8 @@
     const roomsWin = document.getElementById('win-rooms');
     const roomsFrame = document.getElementById('rooms-frame');
     let roomsOpen = false;
+    let studioReady = false;
+    let pendingStudioCommand = null;
 
     function openRooms() {
       if (!roomsFrame.src) roomsFrame.src = '/rooms.html';
@@ -2287,6 +2290,31 @@
       if (s) { s.open(id); return; }
       if (tries < 20) setTimeout(() => roomsGoto(id, tries + 1), 400);
     }
+
+    function dispatchPendingStudioCommand() {
+      if (!pendingStudioCommand || !studioReady) return;
+      const command = pendingStudioCommand;
+      pendingStudioCommand = null;
+      sendToRooms({ type: 'studio_control', command });
+    }
+
+    function openStudioForCommand(value) {
+      if (!value || typeof value.action !== 'string') return;
+      const allowed = new Set(['open-project', 'open-scenering', 'copy-script', 'copy-scenes', 'copy-project', 'save-new', 'save-current', 'duplicate-current', 'rename-current', 'delete-current', 'search-projects', 'breakdown', 'open-studio']);
+      if (!allowed.has(value.action)) return;
+      const command = { action: value.action };
+      if (value.action === 'open-project') {
+        if (typeof value.projectId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.projectId)) return;
+        command.projectId = value.projectId;
+      }
+      if (value.action === 'breakdown' && typeof value.sourceScript === 'string') command.sourceScript = value.sourceScript.slice(0, 12000);
+      if (value.action === 'search-projects' && typeof value.query === 'string') command.query = value.query.slice(0, 200);
+      if (value.action === 'rename-current' && typeof value.title === 'string') command.title = value.title.slice(0, 160);
+      pendingStudioCommand = command;
+      roomsGoto('studio');
+      dispatchPendingStudioCommand();
+    }
+
     document.addEventListener('keydown', (e) => {
       if (!roomsOpen) return;
       if (e.key === 'Escape') closeRooms();
@@ -2781,7 +2809,12 @@
     window.addEventListener('message', (ev) => {
       if (ev.origin !== location.origin) return;
       const msg = ev.data || {};
-      if (msg.type === 'jarvis-rooms-hello') {
+      if (msg.type === 'studio_ready') {
+        if (ev.source === roomsFrame.contentWindow) {
+          studioReady = true;
+          dispatchPendingStudioCommand();
+        }
+      } else if (msg.type === 'jarvis-rooms-hello') {
         pushGlassToRooms();
         sendCameraToRooms();
       } else if (msg.type === 'jarvis-glass-hello') {

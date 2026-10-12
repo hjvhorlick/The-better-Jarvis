@@ -1,3 +1,11 @@
+import {
+  buildStudioScriptPrompt,
+  executeStudioCommand,
+  parseStudioCommand,
+  parseStudioScript,
+  registerStudioRoutes,
+  videoProjectStore,
+} from './studio/projects.js';
 import express, { Request, Response, NextFunction } from 'express';
 import http from 'http';
 import os from 'os';
@@ -394,6 +402,18 @@ async function makeAiImage(promptText: string, imageBase64?: string): Promise<{ 
   }
 }
 
+async function generateStudioScript(request: import('./studio/projects.js').StudioScriptRequest, research: import('./studio/projects.js').VideoResearchReference | null) {
+  const prompt = buildStudioScriptPrompt(request, research);
+  const run = await runBrain(brainCaller(), {
+    kind: 'text',
+    contents: [{ role: 'user', parts: [{ text: prompt.userPrompt }] }],
+    config: { systemInstruction: prompt.systemInstruction, maxOutputTokens: 2_000, temperature: 0.3 },
+    speed: false,
+    extract: (raw) => typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null,
+  });
+  return parseStudioScript(run.value, request.durationSeconds, research?.sources.map((source) => source.id) || []);
+}
+
 // Process user command through JARVIS reasoning.
 // `onDelta` — when the caller wants a live answer — receives the whole reply so
 // far, every time more of it exists, so the page can print (and speak) the first
@@ -403,6 +423,20 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (!trimmed) return 'Awaiting your command, sir.';
 
   const lower = trimmed.toLowerCase();
+  const studioIntent = parseStudioCommand(trimmed);
+  if (studioIntent) {
+    try {
+      const result = await executeStudioCommand(studioIntent, {
+        store: videoProjectStore,
+        generateScript: generateStudioScript,
+      });
+      if (result.command) broadcast({ type: 'studio_control', command: result.command });
+      return result.reply;
+    } catch (error) {
+      if (error instanceof BrainError) return `I could not prepare the video project: ${error.message}`;
+      return `I could not complete that Studio request: ${error instanceof Error ? error.message : 'local storage or script preparation failed'}. No Scenering transfer was made.`;
+    }
+  }
   // Intercept My Hands spatial commands directly for instantaneous UI state toggling
   if (lower.includes('my hands') || lower.includes('myhands') || (lower.includes('hand') && lower.includes('gesture')) || lower.includes('gesture tracking')) {
     if (lower.includes('off') || lower.includes('stop') || lower.includes('disable') || lower.includes('close') || lower.includes('exit')) {
@@ -1733,6 +1767,12 @@ app.get('/api/brain-check', requireAuth, async (_req: Request, res: Response) =>
     console.warn(`[JARVIS] brain check FAILED (${result.code}): ${result.error}`);
   }
   res.status(result.ok ? 200 : 503).json(result);
+});
+
+registerStudioRoutes(app, requireAuth, {
+  store: videoProjectStore,
+  generateScript: generateStudioScript,
+  providerReady: () => Boolean(resolveGeminiKey().key),
 });
 
 // Fallback route handler
