@@ -20,7 +20,7 @@ def _is_problem(e: dict) -> bool:
 
 
 def build(bus: EventBus, devices, myhands_session, chat, myhands_available: bool,
-          budget=None, confirmations=None, policy=None, voice=None) -> dict:
+          budget=None, confirmations=None, policy=None, voice=None, brain=None) -> dict:
     problems = [
         {
             "seq": s,
@@ -35,6 +35,9 @@ def build(bus: EventBus, devices, myhands_session, chat, myhands_available: bool
         "version": __version__,
         "api_key_configured": config.get_gemini_api_key() is not None,
         "text_model": chat.model,
+        "provider": chat.provider_status() if hasattr(chat, "provider_status") else {
+            "state": "not_tested", "key_configured": config.get_gemini_api_key() is not None},
+        "brain": brain.status() if brain is not None and hasattr(brain, "status") else None,
         "file_roots_available": len(files.get_roots()),
         "bus": {"last_seq": bus.last_seq, "oldest_seq": bus.oldest_seq, "capacity": bus.capacity},
         "devices": devices.snapshot(),

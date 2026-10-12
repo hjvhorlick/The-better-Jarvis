@@ -104,6 +104,7 @@
           body: JSON.stringify({ approve: approved }),
         });
         say("assistant", out.result, out.status === "approved" ? "done" : out.status);
+        if (out.status === "approved" && out.action === "brain.forget" && window.SupperBrain) window.SupperBrain.refresh();
       } catch (e) {
         say("error", e.message);
       }
@@ -215,6 +216,22 @@
     row(list, "Gemini key", d.api_key_configured ? "set" : "not set");
     row(list, "Text model", d.text_model);
     row(list, "Allowed folders", d.file_roots_available);
+
+    list = section("Gemini provider (last real request)");
+    const provider = d.provider || {};
+    row(list, "Connection", provider.state || "not tested");
+    row(list, "Last success", provider.last_success_at || "not verified yet");
+    if (provider.last_failure) row(list, "Last failure", provider.last_failure);
+    row(list, "Model", provider.model || d.text_model);
+    row(list, "Key configured", provider.key_configured ? "yes (value hidden)" : "no");
+
+    list = section("Persistent Brain");
+    const brain = d.brain || {};
+    row(list, "Memory store", brain.available ? "available" : `problem: ${brain.storage_error || "unknown"}`);
+    row(list, "Topics", brain.topic_count ?? "unknown");
+    row(list, "Open tasks", brain.open_task_count ?? "unknown");
+    row(list, "Sourced research records", brain.research_count ?? "unknown");
+    row(list, "Verified backups", brain.backup ? brain.backup.count : "unknown");
 
     list = section("Gemini budget");
     const b = d.gemini_budget;

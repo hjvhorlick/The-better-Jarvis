@@ -63,9 +63,30 @@ export const VOICE_QUOTA_FILE = path.join(RUNTIME_DIR, 'voice_quota.json');
 export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json');
 
 /**
- * The app's moving alias for text work (backend/config.py: DEFAULT_TEXT_MODEL).
- * A moving alias is deliberate: it follows Google's current Flash model, so a
- * retired name can never be pinned here again.
+ * The model this app connects to — Google's CURRENT stable Flash model.
+ *
+ *   gemini-3.8-flash    GA 2 September 2026. "Our most intelligent Flash
+ *                       model", 1M context, tunable thinking levels
+ *                       (low / medium / high). Google tells NEW projects to use
+ *                       3.8 Flash (or 3.5 Flash-Lite). Source:
+ *                       ai.google.dev/gemini-api/docs/models, read 2026-10-12.
+ *
+ * This used to be the moving alias `gemini-flash-latest`. An alias is only as
+ * good as the last time Google re-pointed it, and it was last moved on
+ * 19 May 2026 — to gemini-3.5-flash, which 3.6 and 3.8 Flash have since
+ * superseded and which Google no longer lists among its stable models. The
+ * alias therefore left the app on a superseded generation with nothing in this
+ * repository changing, which is exactly how "it is talking to the wrong Gemini
+ * version" happens silently.
+ *
+ * The alias is KEPT as the first automatic fallback below, so if this pinned
+ * name is ever withdrawn the app steps back onto Google's moving pointer
+ * instead of breaking.
+ */
+export const CURRENT_TEXT_MODEL = 'gemini-3.8-flash';
+/**
+ * Google's moving pointer, kept as the fallback: if the pinned name above is
+ * withdrawn, whatever Google currently calls "flash-latest" answers instead.
  */
 export const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
 export const DEFAULT_DAILY_BUDGET = 20;           // backend/config.py
@@ -187,7 +208,7 @@ export function resolveTextModel(): ModelInfo {
   if (appSetting) return { model: appSetting, source: 'SUPPER_TEXT_MODEL' };
   const pinned = (process.env.GEMINI_MODEL || '').trim();
   if (pinned) return { model: pinned, source: 'GEMINI_MODEL' };
-  return { model: DEFAULT_TEXT_MODEL, source: `the app's default alias (${DEFAULT_TEXT_MODEL})` };
+  return { model: CURRENT_TEXT_MODEL, source: `the app's current model (${CURRENT_TEXT_MODEL})` };
 }
 
 export function resolveImageModel(): ModelInfo {
@@ -228,9 +249,14 @@ export function readRememberedModel(kind: 'text' | 'image'): string {
 export function rememberModel(kind: 'text' | 'image', model: string): void {
   if (!model) return;
   try {
+    // Merge into whatever is already in the file. readModelMemory() only knows
+    // the text/image sections, so writing it back on its own would wipe the
+    // thinking settings that live beside them.
+    const file = (readJsonSafe(MODEL_MEMORY_FILE) || {}) as Record<string, unknown>;
     const memory = readModelMemory();
     memory[kind] = { model, at: new Date().toISOString() };
-    writeFileAtomic(MODEL_MEMORY_FILE, JSON.stringify(memory, null, 2));
+    for (const [key, value] of Object.entries(memory)) file[key] = value;
+    writeFileAtomic(MODEL_MEMORY_FILE, JSON.stringify(file, null, 2));
   } catch (err) {
     console.warn('[config] could not remember the working model:', err);
   }
@@ -239,10 +265,12 @@ export function rememberModel(kind: 'text' | 'image', model: string): void {
 /** Forget a model that failed, so it is not offered again before re-discovery. */
 function forgetModel(kind: 'text' | 'image', model: string): void {
   try {
+    const file = (readJsonSafe(MODEL_MEMORY_FILE) || {}) as Record<string, unknown>;
     const memory = readModelMemory();
     if (memory[kind]?.model === model) {
       delete memory[kind];
-      writeFileAtomic(MODEL_MEMORY_FILE, JSON.stringify(memory, null, 2));
+      delete file[kind];
+      writeFileAtomic(MODEL_MEMORY_FILE, JSON.stringify(file, null, 2));
     }
   } catch { /* remembering is a convenience, never a hard dependency */ }
 }
@@ -260,7 +288,7 @@ export function modelCandidates(kind: 'text' | 'image'): ModelCandidate[] {
   // The app's own moving alias is the configured next step when a pin or an
   // override has been withdrawn — a model the app chose, never a discovered one.
   if (kind === 'text' && !list.some((c) => c.model === DEFAULT_TEXT_MODEL)) {
-    list.push({ model: DEFAULT_TEXT_MODEL, source: `the app's default alias (${DEFAULT_TEXT_MODEL})` });
+    list.push({ model: DEFAULT_TEXT_MODEL, source: `Google's moving alias (${DEFAULT_TEXT_MODEL}) — the fallback when the pinned name is withdrawn` });
   }
   const remembered = readRememberedModel(kind);
   if (remembered && !list.some((c) => c.model === remembered)) {
@@ -456,10 +484,36 @@ export function markBudgetExhausted(): void {
   writeCounter(counter.day, budget.limit);
 }
 
+/**
+ * Google refused a SPOKEN sentence because its own limit is reached.
+ *
+ * The two budgets are counted apart on purpose (see the note on
+ * VOICE_QUOTA_FILE): twenty spoken sentences a day and no answers left would
+ * be the result of sharing one counter. So a refused sentence may only close
+ * the voice's own counter — never the brain's. Marking the text budget here
+ * switched the answers off for the rest of the day because the MOUTH was
+ * refused, which is exactly the confusion the split exists to prevent.
+ */
+export function markVoiceBudgetExhausted(): void {
+  const budget = resolveVoiceBudget();
+  if (budget.limit <= 0) return;
+  const counter = readCounter(VOICE_QUOTA_FILE);
+  if (counter.unreadable) return;           // never overwrite a counter we could not read
+  writeCounter(counter.day, budget.limit, VOICE_QUOTA_FILE);
+}
+
 // ── The brain: one call path, honest failures ───────────────────────────────
 export interface GeminiRaw {
   text?: string;
   candidates?: Array<{ content?: { parts?: Array<{ text?: string; inlineData?: { data?: string; mimeType?: string } }> } }>;
+  /**
+   * What the model name ACTUALLY resolved to. `gemini-flash-latest` is a moving
+   * alias: the owner is told "flash-latest" while Google quietly moves it from
+   * one generation to the next, and that is the only way to end up on the wrong
+   * Gemini version without anything ever changing in this repository. Google
+   * returns the concrete version here, so the app can name it.
+   */
+  modelVersion?: string;
 }
 
 export interface BrainCaller {
@@ -477,41 +531,111 @@ export interface BrainCaller {
 /**
  * ── SPEED: the settings that make a reply arrive in a second, not ten ────────
  *
- * Gemini 2.5 Flash (the app's moving alias resolves to it) *thinks* before it
- * answers unless it is told not to. That thinking is invisible in the reply and
- * costs several seconds of waiting on every single command — the owner hears
- * silence, then a paragraph. For a voice assistant the answer is worth more than
- * the deliberation, so thinking is switched off (thinkingBudget: 0 → "no
- * thinking"; -1 is Google's default dynamic budget) and the answer length is
- * capped, because a capped answer is written sooner and spoken sooner.
+ * Gemini *thinks* before it answers unless it is told not to. That thinking is
+ * invisible in the reply and costs several seconds of waiting on every single
+ * command — the owner hears silence, then a paragraph. For a voice assistant the
+ * answer is worth more than the deliberation, so thinking is turned down and
+ * the answer length is capped, because a capped answer is written sooner and
+ * spoken sooner.
  *
- * The budget is only sent for the models that document it. A model that refuses
- * it (a 400 naming thinkingConfig) is retried once with plain settings — see
- * isConfigRejection() — so this can never turn a working model into a broken one.
+ * ── WHICH PARAMETER? THIS IS WHERE THE GENERATION MATTERS ────────────────────
+ * The two generations do NOT take the same setting, and sending the wrong one
+ * costs a failed round trip on every single reply:
+ *
+ *   Gemini 2.x  -> thinkingConfig: { thinkingBudget: 0 }
+ *   Gemini 3.x  -> thinkingConfig: { thinkingLevel: 'LOW' }
+ *
+ * Google deprecated thinking_budget for Gemini 3 (it answers
+ * 400 INVALID_ARGUMENT); Gemini 3.8 Flash documents "tunable thinking levels
+ * (low, medium, high)". This app used to send the 2.5 parameter while
+ * gemini-flash-latest was already serving a Gemini 3 model — the definition of
+ * talking to one generation with another generation's settings.
+ *
+ * The generation is read from the model NAME, and when a name gives nothing
+ * away (a moving alias) the app assumes the current generation. Whichever
+ * guess is wrong, the ladder in thinkingModes() tries the other one, then no
+ * thinking setting at all — see isConfigRejection() — and remembers which one
+ * worked, so the mistake is never paid for twice.
  */
 export const SPEED_MAX_OUTPUT_TOKENS = 900;
 
-/** Models that are known NOT to take a thinking budget — never sent to these. */
-const NO_THINKING_CONFIG = /(?:^|[^a-z0-9])(?:1\.5|2\.0)(?:[^a-z0-9]|$)|embedding|aqa|gemma|learnlm/;
+/** How to ask a model to keep its thinking short. */
+export type ThinkingMode = 'level' | 'budget' | 'none';
 
-export function speedConfig(model: string): Record<string, unknown> {
+/** Only these older generations take a numeric thinking budget. */
+const BUDGET_ERA = /(?:^|[^a-z0-9])(?:1\.5|2\.0|2\.5)(?:[^a-z0-9]|$)|embedding|aqa|gemma|learnlm/;
+
+/** Which thinking parameter this model's generation understands. */
+export function preferredThinkingMode(model: string): ThinkingMode {
   const id = String(model || '').toLowerCase();
+  if (!id) return 'none';
+  if (BUDGET_ERA.test(id)) return 'budget';
+  // Gemini 3 and later — and any moving alias, which is a 3-era model today.
+  return 'level';
+}
+
+export function speedConfig(model: string, mode: ThinkingMode = preferredThinkingMode(model)): Record<string, unknown> {
   const cfg: Record<string, unknown> = {
     maxOutputTokens: SPEED_MAX_OUTPUT_TOKENS,
     temperature: 0.7,
   };
-  // Thinking is switched off wherever the model can take that setting — the
-  // question "does this one think?" is answered by the model itself (a refusal is
-  // retried with plain settings), so only the models known to reject it are spared.
-  if (!NO_THINKING_CONFIG.test(id)) {
-    cfg.thinkingConfig = { thinkingBudget: 0 };
-  }
+  if (mode === 'level') cfg.thinkingConfig = { thinkingLevel: 'LOW' };
+  else if (mode === 'budget') cfg.thinkingConfig = { thinkingBudget: 0 };
   return cfg;
+}
+
+/**
+ * The order to try the thinking settings in: what worked last time for this
+ * model first, then the generation's own parameter, then the other one, then
+ * none. Remembering means a model that answers is answered the same way next
+ * time instead of paying for a refused request on every reply.
+ */
+export function thinkingModes(model: string): ThinkingMode[] {
+  const remembered = readThinkingMemory()[String(model || '')]?.mode;
+  const order: ThinkingMode[] = [];
+  const push = (mode: ThinkingMode) => { if (!order.includes(mode)) order.push(mode); };
+  if (remembered) push(remembered);
+  push(preferredThinkingMode(model));
+  push('budget');
+  push('level');
+  push('none');
+  return order;
+}
+
+/** What last worked, per model, in runtime/dashboard_models.json. */
+function readThinkingMemory(): Record<string, { mode: ThinkingMode; at: string }> {
+  const raw = readJsonSafe(MODEL_MEMORY_FILE) as Record<string, unknown> | null;
+  const section = (raw && raw['thinking']) as Record<string, unknown> | undefined;
+  const out: Record<string, { mode: ThinkingMode; at: string }> = {};
+  if (section && typeof section === 'object') {
+    for (const [model, entry] of Object.entries(section)) {
+      const mode = (entry as { mode?: unknown })?.mode;
+      if (mode === 'level' || mode === 'budget' || mode === 'none') {
+        out[model] = { mode, at: String((entry as { at?: unknown })?.at ?? '') };
+      }
+    }
+  }
+  return out;
+}
+
+export function rememberThinkingMode(model: string, mode: ThinkingMode): void {
+  if (!model || !mode) return;
+  try {
+    const file = (readJsonSafe(MODEL_MEMORY_FILE) || {}) as Record<string, unknown>;
+    const section = (file['thinking'] && typeof file['thinking'] === 'object')
+      ? file['thinking'] as Record<string, unknown>
+      : {};
+    section[model] = { mode, at: new Date().toISOString() };
+    file['thinking'] = section;
+    writeFileAtomic(MODEL_MEMORY_FILE, JSON.stringify(file, null, 2));
+  } catch (err) {
+    console.warn('[config] could not remember the working thinking setting:', err);
+  }
 }
 
 /** True when a failure is the model refusing a generation setting, not the model. */
 export function isConfigRejection(raw: string): boolean {
-  return /thinkingconfig|thinking_config|thinkingbudget|thinking budget|invalid[_ ]argument|invalid json payload|unknown name|unsupported field|cannot be set/i.test(String(raw || ''));
+  return /thinkingconfig|thinking_config|thinkingbudget|thinking budget|thinkinglevel|thinking level|thinking_level|invalid[_ ]argument|invalid json payload|unknown name|unsupported field|cannot be set/i.test(String(raw || ''));
 }
 
 export type BrainFailureCode =
@@ -617,7 +741,14 @@ export function explainBrainFailure(ctx: FailureContext): string {
  * and only then — as a last resort — whatever the key's own model list offers.
  * Every attempt that reaches Gemini takes one unit of the day's budget.
  */
-export interface BrainRun<T> { value: T; model: string; modelSource: string; attempts: AttemptReport[]; }
+export interface BrainRun<T> {
+  value: T;
+  model: string;
+  modelSource: string;
+  /** The concrete version the model NAME resolved to, when Google reports one. */
+  modelVersion?: string;
+  attempts: AttemptReport[];
+}
 
 export interface BrainRunOptions<T> {
   kind: 'text' | 'image';
@@ -679,8 +810,8 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
     // The speed settings ride along with every text call: thinking off where the
     // model takes that setting, and a capped answer. See speedConfig().
     const usedSpeed = opts.speed !== false && opts.kind === 'text';
-    const callConfig = usedSpeed ? { ...speedConfig(next.model), ...(opts.config || {}) } : opts.config;
-    const attempt = async (cfg: Record<string, unknown> | undefined): Promise<{ raw?: GeminiRaw; error?: ClassifiedError }> => {
+    type Outcome = { raw?: GeminiRaw; error?: ClassifiedError };
+    const attempt = async (cfg: Record<string, unknown> | undefined): Promise<Outcome> => {
       try {
         return { raw: await caller.generate(next.model, opts.contents, cfg) };
       } catch (err) {
@@ -688,15 +819,28 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       }
     };
 
-    let outcome = await attempt(callConfig);
-    if (outcome.error && usedSpeed && isConfigRejection(outcome.error.raw)) {
-      // A setting was refused, not the model: ask once more with plain settings
-      // so a model that does not take thinkingConfig still answers.
-      console.warn(`[config] ${opts.kind} call to ${next.model} refused the speed settings (${trimRaw(outcome.error.raw)}) — retrying with the model's own defaults.`);
-      outcome = await attempt(opts.config);
+    // Walk the thinking settings and STOP at the first one this model accepts.
+    // Whichever one works is remembered, so the next reply does not pay for the
+    // same refused request again.
+    const ladder: Array<ThinkingMode | null> = usedSpeed ? [...thinkingModes(next.model), null] : [null];
+    let outcome: Outcome = { error: classifyGeminiError('no model was called') };
+    let usedMode: ThinkingMode | null = null;
+    for (const mode of ladder) {
+      const cfg = mode === null ? opts.config : { ...speedConfig(next.model, mode), ...(opts.config || {}) };
+      outcome = await attempt(cfg);
+      usedMode = mode;
+      if (!outcome.error) break;
+      // A setting was refused, not the model: try the next setting so a model
+      // that does not take this one still answers.
+      if (mode === null || !isConfigRejection(outcome.error.raw)) break;
+      console.warn(`[config] ${opts.kind} call to ${next.model} refused the ${mode} thinking setting (${trimRaw(outcome.error.raw)}) — trying another.`);
     }
+    if (outcome.raw && usedMode) rememberThinkingMode(next.model, usedMode);
 
     if (outcome.raw) {
+      if (outcome.raw.modelVersion && outcome.raw.modelVersion !== next.model) {
+        console.log(`[JARVIS] ${next.model} is being served as ${outcome.raw.modelVersion} — that is the version actually answering.`);
+      }
       const value = opts.extract(outcome.raw);
       if (value === null || value === undefined) {
         attempts.push({ model: next.model, source: next.source, ok: false, error: 'empty reply' });
@@ -705,7 +849,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       }
       if (readRememberedModel(opts.kind) !== next.model) rememberModel(opts.kind, next.model);
       attempts.push({ model: next.model, source: next.source, ok: true });
-      return { value, model: next.model, modelSource: next.source, attempts };
+      return { value, model: next.model, modelSource: next.source, modelVersion: outcome.raw.modelVersion, attempts };
     }
 
     {
@@ -752,6 +896,8 @@ export interface BrainStreamRun {
   value: string;
   model: string;
   modelSource: string;
+  /** The concrete version the model NAME resolved to, when Google reports one. */
+  modelVersion?: string;
   attempts: AttemptReport[];
   /** True when the reply arrived in pieces (the answer can be spoken as written). */
   streamed: boolean;
@@ -814,11 +960,17 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
     }
 
     const usedSpeed = opts.speed !== false && opts.kind === 'text';
-    const callConfig = usedSpeed ? { ...speedConfig(next.model), ...(opts.config || {}) } : opts.config;
+    const ladder: Array<ThinkingMode | null> = usedSpeed ? [...thinkingModes(next.model), null] : [null];
+    const cfgFor = (mode: ThinkingMode | null) => (mode === null
+      ? opts.config
+      : { ...speedConfig(next.model, mode), ...(opts.config || {}) });
 
     let text = '';
     let failure: ClassifiedError | null = null;
     let streamed = false;
+    /** The concrete version Google served under this model NAME, when it says. */
+    let lastModelVersion = '';
+    let usedMode: ThinkingMode | null = null;
 
     const consume = async (stream: AsyncIterable<string>) => {
       for await (const piece of stream) {
@@ -829,52 +981,54 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
       }
     };
 
-    if (typeof caller.generateStream === 'function') {
-      try {
-        await consume(caller.generateStream(next.model, opts.contents, callConfig));
-      } catch (err) {
-        failure = classifyGeminiError(err);
-        if (usedSpeed && !text && isConfigRejection(failure.raw)) {
-          console.warn(`[config] streaming call to ${next.model} refused the speed settings (${trimRaw(failure.raw)}) — retrying with the model's own defaults.`);
-          failure = null;
-          try { await consume(caller.generateStream(next.model, opts.contents, opts.config)); }
-          catch (err2) { failure = classifyGeminiError(err2); }
-        }
-      }
-    }
+    // Same ladder as runBrain(): stop at the thinking setting this model
+    // accepts, and remember it so the next reply never pays for a refusal.
+    for (const mode of ladder) {
+      usedMode = mode;
+      failure = null;
+      text = '';
+      streamed = false;
 
-    // Some endpoints answer a streaming request with nothing at all (an old
-    // proxy, or a server that only speaks generateContent). Ask once the ordinary
-    // way rather than pretending the model is broken.
-    if (!text && !failure) {
-      try {
-        const raw = await caller.generate(next.model, opts.contents, callConfig);
-        const value = extractText(raw);
-        if (value) { text = value; if (opts.onDelta) opts.onDelta(text); }
-        else lastReport = { code: 'empty', raw: 'empty reply' };
-      } catch (err) {
-        const classified = classifyGeminiError(err);
-        if (usedSpeed && isConfigRejection(classified.raw)) {
-          try {
-            const raw = await caller.generate(next.model, opts.contents, opts.config);
-            const value = extractText(raw);
-            if (value) { text = value; if (opts.onDelta) opts.onDelta(text); }
-            else lastReport = { code: 'empty', raw: 'empty reply' };
-          } catch (err2) { failure = classifyGeminiError(err2); }
-        } else {
-          failure = classified;
+      if (typeof caller.generateStream === 'function') {
+        try {
+          await consume(caller.generateStream(next.model, opts.contents, cfgFor(mode)));
+        } catch (err) {
+          failure = classifyGeminiError(err);
         }
       }
+
+      // Some endpoints answer a streaming request with nothing at all (an old
+      // proxy, or a server that only speaks generateContent). Ask once the
+      // ordinary way rather than pretending the model is broken.
+      if (!text && !failure) {
+        try {
+          const raw = await caller.generate(next.model, opts.contents, cfgFor(mode));
+          lastModelVersion = raw.modelVersion || lastModelVersion;
+          const value = extractText(raw);
+          if (value) { text = value; if (opts.onDelta) opts.onDelta(text); }
+          else lastReport = { code: 'empty', raw: 'empty reply' };
+        } catch (err) {
+          failure = classifyGeminiError(err);
+        }
+      }
+
+      if (!failure) break;
+      if (mode === null || !isConfigRejection(failure.raw)) break;
+      console.warn(`[config] streaming call to ${next.model} refused the ${mode} thinking setting (${trimRaw(failure.raw)}) — trying another.`);
     }
+    if (!failure && usedMode) rememberThinkingMode(next.model, usedMode);
 
     if (text) {
       if (failure) {
         // The words that arrived are real; keep them and say so in the log.
         console.warn(`[config] the stream from ${next.model} broke after ${text.length} characters (${failure.code}): ${trimRaw(failure.raw)}`);
       }
+      if (lastModelVersion) {
+        console.log(`[JARVIS] ${next.model} is being served as ${lastModelVersion} — that is the version actually answering.`);
+      }
       if (readRememberedModel(opts.kind) !== next.model) rememberModel(opts.kind, next.model);
       attempts.push({ model: next.model, source: next.source, ok: true, error: failure ? `cut short: ${trimRaw(failure.raw)}` : undefined });
-      return { value: text, model: next.model, modelSource: next.source, attempts, streamed };
+      return { value: text, model: next.model, modelSource: next.source, modelVersion: lastModelVersion || undefined, attempts, streamed };
     }
 
     if (!failure) {
@@ -916,6 +1070,14 @@ export interface BrainCheckResult {
   ok: boolean;
   model: string;
   modelSource: string;
+  /**
+   * The concrete version the model NAME resolved to. `gemini-flash-latest` is a
+   * moving alias — it printed the same string while Google moved it from 2.5 to
+   * 3 to 3.5 underneath, which is how this app can end up talking to a
+   * different Gemini generation without a line of code changing. This is the
+   * version that actually answered, straight from Google.
+   */
+  modelVersion?: string;
   keySource: KeySource;
   keyTail: string | null;
   keyDetail: string;
@@ -949,7 +1111,7 @@ export async function brainCheck(caller: BrainCaller | null): Promise<BrainCheck
     });
     const textModel = resolveTextModel();
     return {
-      ok: true, reply: run.value, model: run.model, modelSource: run.modelSource,
+      ok: true, reply: run.value, model: run.model, modelSource: run.modelSource, modelVersion: run.modelVersion,
       keySource: key.source, keyTail: key.tail, keyDetail: key.detail,
       latencyMs: Date.now() - started, attempts: run.attempts,
       quota: quotaSnapshot(),

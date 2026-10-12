@@ -12,6 +12,21 @@ from backend import config  # noqa: E402
 import memory.memory_manager as mm  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def keep_test_persistence_isolated(tmp_path, monkeypatch):
+    """No test may let the newly integrated Brain write into the checkout's real data folders."""
+    mem_dir = tmp_path / "memory"
+    cfg_dir = tmp_path / "config"
+    runtime_dir = tmp_path / "runtime"
+    long_term = mem_dir / "long_term.json"
+    dialogue = mem_dir / "recent_dialogue.json"
+    monkeypatch.setattr(mm, "MEMORY_PATH", long_term)
+    monkeypatch.setattr(mm, "DIALOGUE_PATH", dialogue)
+    monkeypatch.setattr(config, "API_CONFIG_PATH", cfg_dir / "api_keys.json")
+    monkeypatch.setattr(config, "RUNTIME_DIR", runtime_dir)
+    yield
+
+
 SAMPLE_MEMORY = {
     "identity": {"name": {"value": "Test Person", "updated": "2026-01-01"}},
     "preferences": {"tea": {"value": "earl grey", "updated": "2026-01-02"}},

@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from . import __version__, config, files, pairing
 from .agent import Agent, BudgetExhausted
+from .brain import BrainStorageError, BrainStore
 from .chat import BackendNotConfigured, ChatService, UpstreamError
 from .permissions import ConfirmationError, ConfirmationStore, TooManyPending, default_policy
 from .quota import DailyBudget
@@ -50,6 +51,58 @@ from .workspaces import DEFAULT_WORKSPACE, WORKSPACES, is_known
 class ChatIn(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     workspace: str = Field(default=DEFAULT_WORKSPACE, max_length=32)
+    conversation_id: str | None = Field(default=None, max_length=64)
+    topic_id: str | None = Field(default=None, max_length=64)
+
+
+class BrainMemoryIn(BaseModel):
+    category: str = Field(..., min_length=2, max_length=40)
+    key: str = Field(..., min_length=1, max_length=160)
+    value: str = Field(..., min_length=1, max_length=1200)
+    topic_id: str | None = Field(default=None, max_length=64)
+    provenance: str = Field(default="", max_length=400)
+
+
+class BrainMemoryCorrectionIn(BaseModel):
+    category: str = Field(..., min_length=2, max_length=40)
+    key: str = Field(..., min_length=1, max_length=160)
+    value: str = Field(..., min_length=1, max_length=1200)
+    topic_id: str | None = Field(default=None, max_length=64)
+    reason: str = Field(default="", max_length=300)
+
+
+class BrainTopicIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=160)
+    goal: str = Field(default="", max_length=800)
+
+
+class BrainTopicUpdateIn(BaseModel):
+    title: str | None = Field(default=None, max_length=160)
+    summary: str | None = Field(default=None, max_length=1600)
+    goal: str | None = Field(default=None, max_length=800)
+    status: str | None = Field(default=None, max_length=16)
+    next_step: str | None = Field(default=None, max_length=800)
+    open_questions: list[str] | None = Field(default=None, max_length=20)
+
+
+class BrainConversationIn(BaseModel):
+    topic_id: str | None = Field(default=None, max_length=64)
+
+
+class BrainTaskIn(BaseModel):
+    title: str = Field(..., min_length=1, max_length=800)
+    topic_id: str | None = Field(default=None, max_length=64)
+    due_at: str = Field(default="", max_length=80)
+
+
+class BrainTaskUpdateIn(BaseModel):
+    status: str = Field(..., min_length=1, max_length=16)
+
+
+class BrainForgetIn(BaseModel):
+    category: str = Field(..., min_length=2, max_length=40)
+    key: str = Field(..., min_length=1, max_length=160)
+    topic_id: str | None = Field(default=None, max_length=64)
 
 
 class ConfirmIn(BaseModel):
@@ -101,7 +154,8 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
                myhands_session=None, bus: EventBus | None = None,
                devices: DeviceRegistry | None = None, budget: DailyBudget | None = None,
                policy=None, confirmations: ConfirmationStore | None = None,
-               roots=None, voice=None, opener=None, pairing_store=None) -> FastAPI:
+               roots=None, voice=None, opener=None, pairing_store=None,
+               brain_store: BrainStore | None = None) -> FastAPI:
     started: dict = {}
 
     @asynccontextmanager
@@ -128,6 +182,7 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
         config.get_daily_budget(), path=config.RUNTIME_DIR / "quota.json")
     policy = policy if policy is not None else default_policy()
     confirmations = confirmations if confirmations is not None else ConfirmationStore(bus=bus)
+    brain = brain_store if brain_store is not None else BrainStore()
     pairing_store = pairing_store if pairing_store is not None else pairing.PairingStore(
         config.RUNTIME_DIR / "paired_devices.json")
     voice = voice if voice is not None else voice_factory.build(
@@ -136,12 +191,15 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
     reminders = Reminders(config.RUNTIME_DIR / "reminders.json", bus=bus)
     agent = Agent(chat, budget, policy, confirmations, bus=bus, session=session, roots=roots,
                   voice=voice, opener=opener, notices=notices, reminders=reminders,
-                  pairing=pairing_store)
+                  pairing=pairing_store, brain=brain)
     started["reminders"] = reminders
     started["voice"] = voice
     if hasattr(voice, "attach_answerer"):
-        # Spoken requests go through the same agent as typed chat (local first, Gemini last).
-        voice.attach_answerer(lambda text: agent.handle(text, quiet=True)["reply"])
+        # Local spoken requests go through the same Brain, tools and permission system as typed chat.
+        voice.attach_answerer(lambda text: agent.handle(text, quiet=True, channel="voice")["reply"])
+    if hasattr(voice, "attach_turn_recorder"):
+        # Gemini Live remains a provider-native voice path, but its transcripts join the same topic history.
+        voice.attach_turn_recorder(agent.record_live_turn)
     myhands_api.register(app, session, devices)
     media.register(app, chat, budget)          # Studio: pictures, scripts, the library
     voice_api.register(app, voice, confirmations)
@@ -160,7 +218,7 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
     def diagnostics_view() -> dict:
         return diagnostics.build(bus, devices, session, chat, myhands_api.tracker_available(),
                                  budget=budget, confirmations=confirmations, policy=policy,
-                                 voice=voice)
+                                 voice=voice, brain=brain)
 
     @app.get("/api/health")
     def health() -> dict:
@@ -168,14 +226,19 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
 
     @app.get("/api/status")
     def status() -> dict:
+        brain_status = brain.status()
         return {
             "version": __version__,
             "api_key_configured": config.get_gemini_api_key() is not None,
+            "provider": chat.provider_status() if hasattr(chat, "provider_status") else {"state": "not_tested"},
             "text_model": chat.model,
             "prompt_file_present": config.PROMPT_PATH.exists(),
             "config_file_present": config.API_CONFIG_PATH.exists(),
             "file_roots_available": len(files.get_roots()),
             "gemini_budget": budget.snapshot(),
+            "brain": {"available": brain_status["available"],
+                      "topic_count": brain_status["topic_count"],
+                      "open_task_count": brain_status["open_task_count"]},
         }
 
     @app.get("/api/workspaces")
@@ -187,18 +250,191 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
     def memory() -> dict:
         return memory_summary()
 
+    # Brain management routes. They operate on the existing local memory store and never accept
+    # a request-supplied owner ID. Phone access is intentionally not added to LocalOnlyGuard.
+    @app.get("/api/brain/status")
+    def brain_status() -> dict:
+        return brain.status()
+
+    @app.post("/api/brain/backup")
+    def brain_backup() -> dict:
+        try:
+            return brain.create_backup()
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.get("/api/brain/topics")
+    def brain_topics() -> dict:
+        return {"topics": brain.list_topics()}
+
+    @app.post("/api/brain/topics")
+    def brain_create_topic(body: BrainTopicIn) -> dict:
+        try:
+            return brain.create_topic(body.title, goal=body.goal)
+        except (ValueError, BrainStorageError) as exc:
+            raise HTTPException(status_code=400 if isinstance(exc, ValueError) else 503, detail=str(exc))
+
+    @app.patch("/api/brain/topics/{topic_id}")
+    def brain_update_topic(topic_id: str, body: BrainTopicUpdateIn) -> dict:
+        try:
+            updates = body.model_dump(exclude_unset=True) if hasattr(body, "model_dump") else body.dict(exclude_unset=True)
+            return brain.update_topic(topic_id, updates)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.post("/api/brain/topics/{topic_id}/activate")
+    def brain_activate_topic(topic_id: str) -> dict:
+        try:
+            conversation = brain.start_conversation(topic_id=topic_id)
+            return {**conversation, "topics": brain.list_topics()}
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.post("/api/brain/conversations")
+    def brain_start_conversation(body: BrainConversationIn) -> dict:
+        try:
+            return brain.start_conversation(topic_id=body.topic_id or "")
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.get("/api/brain/conversations/{conversation_id}")
+    def brain_conversation(conversation_id: str, limit: int = Query(default=100, ge=1, le=500)) -> dict:
+        try:
+            return brain.conversation_history(conversation_id, limit=limit)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+
+    @app.get("/api/brain/memory")
+    def brain_memories(query: str = Query(default="", max_length=400),
+                       category: str = Query(default="", max_length=40),
+                       topic_id: str = Query(default="", max_length=64),
+                       limit: int = Query(default=100, ge=1, le=500)) -> dict:
+        return {"memories": brain.list_memories(query, category=category, topic_id=topic_id, limit=limit)}
+
+    @app.post("/api/brain/memory")
+    def brain_add_memory(body: BrainMemoryIn) -> dict:
+        try:
+            saved = brain.add_memory(body.category, body.key, body.value, source="ui_explicit",
+                                     confidence=1.0, topic_id=body.topic_id or "",
+                                     provenance=body.provenance)
+            return {"saved": True, "memory": saved}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.put("/api/brain/memory")
+    def brain_correct_memory(body: BrainMemoryCorrectionIn) -> dict:
+        try:
+            corrected = brain.correct_memory(body.category, body.key, body.value,
+                                             reason=body.reason, topic_id=body.topic_id or "")
+            if corrected is None:
+                raise HTTPException(status_code=404, detail="No saved memory matched that category and name.")
+            return {"saved": True, "memory": corrected}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.post("/api/brain/memory/forget")
+    def brain_forget_memory(body: BrainForgetIn) -> dict:
+        try:
+            if body.topic_id and not brain.get_topic(body.topic_id):
+                raise HTTPException(status_code=404, detail="That saved topic is not available in this local profile.")
+            entries = brain.list_memories(category=body.category, limit=500)
+            wanted_topic = body.topic_id or ""
+            exists = any(row["key"] == body.key and (row.get("topic_id") or "") == wanted_topic
+                         for row in entries)
+            if not exists:
+                raise HTTPException(status_code=404, detail="No saved memory matched that category and name.")
+            scope = f" in topic {brain.get_topic(body.topic_id)['title']}" if body.topic_id else ""
+            confirmation = confirmations.request(
+                "brain.forget", f"Forget saved memory {body.category}/{body.key}{scope}",
+                run=lambda: ("Memory forgotten." if brain.forget_memory(
+                    body.category, body.key, topic_id=body.topic_id or "")
+                    else "The memory was not found; nothing was changed."))
+            return {"confirmation": confirmation}
+        except HTTPException:
+            raise
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except TooManyPending as exc:
+            raise HTTPException(status_code=429, detail=str(exc))
+
+    @app.get("/api/brain/tasks")
+    def brain_tasks(topic_id: str = Query(default="", max_length=64),
+                    status_filter: str = Query(default="", alias="status", max_length=16)) -> dict:
+        return {"tasks": brain.list_tasks(topic_id=topic_id, status=status_filter)}
+
+    @app.post("/api/brain/tasks")
+    def brain_add_task(body: BrainTaskIn) -> dict:
+        try:
+            return {"task": brain.add_task(body.title, topic_id=body.topic_id or "", due_at=body.due_at)}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.patch("/api/brain/tasks/{task_id}")
+    def brain_update_task(task_id: str, body: BrainTaskUpdateIn) -> dict:
+        try:
+            return {"task": brain.update_task(task_id, body.status)}
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except BrainStorageError as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+
+    @app.get("/api/brain/research")
+    def brain_research(topic_id: str = Query(default="", max_length=64),
+                       query: str = Query(default="", max_length=400),
+                       limit: int = Query(default=50, ge=1, le=200)) -> dict:
+        return {"research": brain.list_research(topic_id=topic_id, query=query, limit=limit)}
+
+    @app.post("/api/diagnostics/provider-test")
+    def provider_test() -> dict:
+        if not config.get_gemini_api_key():
+            raise HTTPException(status_code=503, detail="No Gemini API key is configured.")
+        if not budget.try_spend():
+            raise HTTPException(status_code=429, detail="Today's Gemini budget is used up; no test request was sent.")
+        try:
+            return chat.probe()
+        except BackendNotConfigured as exc:
+            raise HTTPException(status_code=503, detail=str(exc))
+        except UpstreamError as exc:
+            if exc.quota:
+                budget.mark_exhausted()
+                raise HTTPException(status_code=429, detail="Gemini reports its limit is reached for now.")
+            raise HTTPException(status_code=502, detail=str(exc))
+
     @app.post("/api/chat")
     def post_chat(body: ChatIn) -> dict:
         if not is_known(body.workspace):
             raise HTTPException(status_code=400, detail="unknown workspace")
         try:
-            return agent.handle(body.text, workspace=body.workspace)
+            return agent.handle(body.text, workspace=body.workspace,
+                                conversation_id=body.conversation_id, topic_id=body.topic_id)
+        except BrainStorageError as e:
+            raise HTTPException(status_code=503, detail=str(e))
         except BackendNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))
         except (BudgetExhausted, TooManyPending) as e:
             raise HTTPException(status_code=429, detail=str(e))
         except UpstreamError as e:
             raise HTTPException(status_code=502, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @app.get("/api/confirmations")
     def list_confirmations() -> dict:

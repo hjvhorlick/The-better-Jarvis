@@ -24,6 +24,12 @@ dashboard, paste the key, press Save. It is stored only in the local, git-ignore
 `.env` file on your machine and takes effect immediately — no restart. You can
 also copy `.env.example` to `.env` by hand if you prefer.
 
+**If JARVIS ever says he has no key when you have just saved one, read the build
+line at the bottom of Settings → Voice.** It prints the page's build, the
+server's build, and the folder this server is reading its settings from. When
+the page and the server disagree, the browser is holding an older copy — press
+Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
+
 ## What the main build does
 
 - **Clear glass, thin yellow lines** — one look on every surface (dashboard and
@@ -57,7 +63,7 @@ also copy `.env.example` to `.env` by hand if you prefer.
   Outlook or other provider connection and no send action. “Open in mail app” makes
   a correctly encoded `mailto:` handoff for you to review and send yourself.
 - Glass HUD, My Hands gesture tracking, camera stage, file browser
-- Chat with Gemini (the app's moving alias `gemini-flash-latest`), with your
+- Chat with Gemini (`gemini-3.8-flash`, Google's current stable model), with your
   personality file `core/prompt.txt`
   and your memory as context; conversation survives restarts
 - **Voice out** 🔊 — JARVIS speaks replies, sentence by sentence, starting with the
@@ -67,7 +73,10 @@ also copy `.env.example` to `.env` by hand if you prefer.
   spoken sentence is one voice call, counted in its own daily budget
   (`runtime/voice_quota.json`, see `SUPPER_GEMINI_VOICE_BUDGET`) so speaking can
   never use up the day's answers; a sentence already spoken is replayed from
-  memory and costs nothing. *This computer's voice* (free, offline) remains in
+  memory and costs nothing. The voice has its **own model**, separate from the
+  text model (`SUPPER_VOICE_MODEL`, see `.env.example`), and its own budget, so
+  a refused sentence can never stop the answers.
+  *This computer's voice* (free, offline) remains in
   Settings → Voice as an explicit choice — nothing ever falls back to it by
   itself, so a failure is always reported instead of quietly sounding different.
 - **Voice in** 🎤 — one dictated command (browser speech recognition, with a
@@ -96,8 +105,31 @@ also copy `.env.example` to `.env` by hand if you prefer.
 - **Personality** — `core/prompt.txt` is used **in full** (repeated blocks are
   collapsed), plus a short conversation section: opinions that can be defended,
   one good follow-up question, interest in your family and your projects.
-- `remember <fact>` / `what do you remember` — notes kept in `memory/dashboard_memory.json`
-  (your original `memory/long_term.json` is read-only and never touched)
+- **Persistent Brain** — the Brain button opens the single-local-profile panel for memories,
+  saved topics/projects, decisions, tasks, sourced research, verified backups and restore.
+  The Node app uses one BrainStore: `memory/long_term.json` holds structured records,
+  `memory/recent_dialogue.json` holds recent turns, and older turns are retained in
+  `memory/dialogue_archive.jsonl`. Corrections supersede prior values; forgetting is
+  two-step and removes a record from active memory (recovery backups may retain an earlier copy).
+  Passwords, API keys, tokens and financial credentials are rejected as memory.
+- Chat retrieves bounded, topic-aware full-text context from that same BrainStore and
+  sends only the current conversation history to Gemini. Retrieved memories are clearly
+  marked as untrusted reference data, not system instructions. Topic continuity, saved
+  decisions, open tasks and verified sourced-research references are added when relevant.
+  Embeddings are not required or claimed.
+- **Safe legacy import** — on startup the Brain checks the old dashboard notes/history
+  and local knowledge file, makes hash-verified backups before importing, records a
+  repeatable schema/migration report, and leaves source files in place. Malformed stores
+  are not replaced by empty defaults; partial/blocked imports are visible in the Brain
+  panel. Only data present on this computer can be imported; this checkout contains no
+  owner-specific runtime memory to claim as migrated.
+- **Sourced research** — the existing Research workspace remains the full-report store.
+  When you explicitly save a report, its cited URLs and source-verification limits are
+  indexed in Brain; unsaved task results are not silently converted into durable memory.
+- `remember <fact>` / `what do you remember` — local memory operations; use
+  `remember preferences/tea = green` or the Brain panel for a named record. Say
+  `correct preferences/tea to black` to supersede a value, or `forget preferences/tea`
+  and approve the one-time confirmation code to remove it from active memory.
 - Diagnostics button — real measured telemetry, not canned text
 
 ## Engine room (not the app)

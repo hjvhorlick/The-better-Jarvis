@@ -93,6 +93,13 @@ def default_policy() -> PermissionPolicy:
     # A web search is one Gemini request with only the owner's query, the same as a chat message.
     p.register("web.search", Tier.SAFE)
     p.register("memory.recall", Tier.SAFE)           # read-only: answers from stored facts, no network
+    p.register("brain.remember", Tier.SAFE)          # explicit owner request, local memory only
+    p.register("brain.correct", Tier.SAFE)           # explicit owner correction, local memory only
+    p.register("brain.forget", Tier.CONFIRM)         # removal from active memory needs approval
+    p.register("brain.decision", Tier.SAFE)          # explicit owner-stated project decision
+    p.register("brain.goal", Tier.SAFE)              # explicit owner-stated topic goal
+    p.register("brain.next_step", Tier.SAFE)         # explicit owner-stated next step
+    p.register("brain.task", Tier.SAFE)              # explicit local task creation
     p.register("knowledge.list", Tier.SAFE)         # read-only list of local answers
     p.register("knowledge.teach", Tier.SAFE)        # the owner asked for it directly; can be forgotten
     p.register("knowledge.forget", Tier.SAFE)       # moves the entry to the archive; nothing is deleted

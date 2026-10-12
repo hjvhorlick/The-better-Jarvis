@@ -59,6 +59,16 @@ _RULES: list[tuple[re.Pattern, str]] = [
     (re.compile(r"(what (errors|problems|faults) have you (noticed|found)|"
                 r"(list|show)( me)?( the| any)?( recent)? (errors|problems|faults|notices)( you noticed| you found)?)"
                 + _TAIL), "repair.notices"),
+    # Explicit Brain writes only: ordinary messages are never promoted into memory automatically.
+    (re.compile(r"(?:please )?(?:remember|save to memory)(?: that| this)?\s*[:,-]?\s*.{3,1500}"),
+     "brain.remember"),
+    (re.compile(r"(?:please )?(?:correction|correct)(?: that)?\s*[:,]?\s*.{3,1500}"),
+     "brain.correct"),
+    (re.compile(r"(?:we decided|the decision is)(?: that)?\s+.{3,1200}"), "brain.decision"),
+    (re.compile(r"(?:the )?(?:project )?goal(?: is)?\s+.{2,800}"), "brain.goal"),
+    (re.compile(r"(?:the )?next step(?: is)?\s+.{2,800}"), "brain.next_step"),
+    (re.compile(r"(?:task|todo)\s+.{2,800}"), "brain.task"),
+    (re.compile(r"forget memory (?P<category>[a-z_]{2,24})/(?P<key>.{1,160})"), "brain.forget"),
     # Local knowledge: the owner teaches an answer, lists what is kept, or forgets one.
     # The teach rule is RAW, so the handler reads the question and answer with their capitals.
     (re.compile(r"(?:learn|teach me|save this answer)(?: that| this)?[:,]?\s+.{3,1000}?\s*(?:=|means|->)\s*.{1,2000}"),
@@ -83,7 +93,9 @@ _RULES: list[tuple[re.Pattern, str]] = [
 ]
 
 
-RAW_ACTIONS = frozenset({"repair.propose", "reminder.add", "reminder.cancel", "web.search", "knowledge.teach"})
+RAW_ACTIONS = frozenset({"repair.propose", "reminder.add", "reminder.cancel", "web.search", "knowledge.teach",
+                         "brain.remember", "brain.correct", "brain.forget", "brain.decision",
+                         "brain.goal", "brain.next_step", "brain.task"})
 
 # The words in front of a web search query. Removed from the raw text, which keeps capitals.
 WEB_PREFIX = re.compile(r"^(search|look up)( the| for)?( the)? (web|internet|online)( for)?\s*", re.IGNORECASE)

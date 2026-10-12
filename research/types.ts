@@ -39,5 +39,7 @@ export interface ResearchTaskSnapshot {
   updatedAt: string;
   report: ResearchDocument | null;
   savedReportId: string | null;
+  topicId?: string;
   error: string | null;
+  warning?: string | null;
 }

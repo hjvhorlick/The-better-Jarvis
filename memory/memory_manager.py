@@ -3,8 +3,9 @@ import json
 import os
 import shutil
 import re
+import tempfile
 from datetime import datetime
-from threading import Lock
+from threading import RLock
 from pathlib import Path
 import sys
 
@@ -17,8 +18,35 @@ def get_base_dir() -> Path:
 
 BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
-_lock            = Lock()
+_lock            = RLock()
 MAX_VALUE_LENGTH = 1200
+
+
+def _atomic_json_write(path: Path, data) -> None:
+    """Replace a JSON file atomically, keeping private memory owner-readable on POSIX."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            try:
+                os.fchmod(stream.fileno(), 0o600)
+            except (AttributeError, OSError):
+                pass
+            stream.write(json.dumps(data, indent=2, ensure_ascii=False))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+        try:
+            path.chmod(0o600)
+        except OSError:                         # Windows permissions inherit from the directory
+            pass
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
 
 # ── Why there are two very different numbers here ────────────────────────────
 #
@@ -51,6 +79,7 @@ DIALOGUE_PATH = BASE_DIR / "memory" / "recent_dialogue.json"
 MAX_DIALOGUE_TURNS = 60
 
 def _empty_memory() -> dict:
+    # Brain records extend the existing long_term.json store. They are not a second database.
     return {
         "identity":      {},
         "preferences":   {},
@@ -58,6 +87,12 @@ def _empty_memory() -> dict:
         "relationships": {},
         "wishes":        {},
         "notes":         {},
+        "topics":        {},
+        "conversations": {},
+        "decisions":     {},
+        "corrections":   {},
+        "tasks":         {},
+        "research":      {},
     }
 
 def load_memory() -> dict:
@@ -74,7 +109,8 @@ def load_memory() -> dict:
                 return data
             return _empty_memory()
         except Exception as e:
-            print(f"[Memory] ⚠️ Load error: {e}")
+            # Error logs may be collected in diagnostics; never echo memory contents or parser text.
+            print(f"[Memory] load unavailable ({type(e).__name__})")
             return _empty_memory()
 
 def _all_entries(memory: dict) -> list[tuple]:
@@ -122,9 +158,7 @@ def _archive(records: list[dict]) -> None:
     stamp = datetime.now().isoformat(timespec="seconds")
     current.extend({"archived": stamp, **r} for r in records)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, path)
+    _atomic_json_write(path, current)
 
 
 def _trim_to_limit(memory: dict) -> dict:
@@ -158,13 +192,9 @@ def _trim_to_limit(memory: dict) -> dict:
 def save_memory(memory: dict) -> None:
     if not isinstance(memory, dict):
         return
-    memory = _trim_to_limit(memory)
-    MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
     with _lock:
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
+        memory = _trim_to_limit(memory)
+        _atomic_json_write(MEMORY_PATH, memory)
 
 
 def _truncate_value(val: str) -> str:
@@ -199,11 +229,84 @@ def _recursive_update(target: dict, updates: dict) -> bool:
 def update_memory(memory_update: dict) -> dict:
     if not isinstance(memory_update, dict) or not memory_update:
         return load_memory()
-    memory = load_memory()
-    if _recursive_update(memory, memory_update):
+    with _lock:
+        memory = load_memory()
+        if _recursive_update(memory, memory_update):
+            save_memory(memory)
+            print(f"[Memory] saved categories: {', '.join(str(k) for k in memory_update)}")
+        return memory
+
+
+def put_records(records: list[dict]) -> list[dict]:
+    """Atomically upsert several structured records in one canonical-memory write."""
+    if not isinstance(records, list) or not records:
+        raise ValueError("at least one memory record is required")
+    prepared = []
+    for item in records:
+        if not isinstance(item, dict):
+            raise ValueError("memory records must be objects")
+        category = str(item.get("category") or "").strip()
+        key = str(item.get("key") or "").strip()
+        value = str(item.get("value") or "").strip()
+        metadata = item.get("metadata", {})
+        if metadata is None:
+            metadata = {}
+        if not category or not key or not value:
+            raise ValueError("category, key and value are required")
+        if len(category) > 40 or len(key) > 160 or len(value) > MEMORY_MAX_CHARS:
+            raise ValueError("memory record is too long")
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be an object")
+        prepared.append((category, key, value, dict(metadata)))
+    with _lock:
+        memory = load_memory()
+        output = []
+        stamp = datetime.now().isoformat(timespec="seconds")
+        for category, key, value, metadata in prepared:
+            bucket = memory.setdefault(category, {})
+            if not isinstance(bucket, dict):
+                raise ValueError(f"the {category!r} category is not a record collection")
+            old = bucket.get(key)
+            old = dict(old) if isinstance(old, dict) else ({"value": str(old)} if old else {})
+            record = {**old, **metadata}
+            record["value"] = value[:MAX_VALUE_LENGTH]
+            record.setdefault("created_at", stamp)
+            record["updated"] = stamp
+            bucket[key] = record
+            output.append(dict(record))
         save_memory(memory)
-        print(f"[Memory] 💾 Saved: {list(memory_update.keys())}")
-    return memory
+        return output
+
+
+def put_record(category: str, key: str, value: str, metadata: dict | None = None) -> dict:
+    """Upsert one structured record in long_term.json, preserving its original timestamp."""
+    return put_records([{"category": category, "key": key, "value": value,
+                         "metadata": {} if metadata is None else metadata}])[0]
+
+
+def delete_record(category: str, key: str) -> bool:
+    """Remove one active record from the canonical store. No archive copy is made."""
+    with _lock:
+        memory = load_memory()
+        bucket = memory.get(category)
+        if not isinstance(bucket, dict) or key not in bucket:
+            return False
+        del bucket[key]
+        save_memory(memory)
+        return True
+
+
+def get_record(category: str, key: str) -> dict | None:
+    memory = load_memory()
+    bucket = memory.get(category, {})
+    if not isinstance(bucket, dict):
+        return None
+    record = bucket.get(key)
+    if isinstance(record, dict):
+        return dict(record)
+    if isinstance(record, str) and record.strip():
+        return {"value": record}
+    return None
 
 def _entry_value(entry) -> str:
     """Accept both the {'value': ..., 'updated': ...} shape and a bare string,
@@ -211,6 +314,14 @@ def _entry_value(entry) -> str:
     if isinstance(entry, dict):
         return str(entry.get("value", "") or "").strip()
     return str(entry or "").strip()
+
+
+def _is_topic_scoped(entry) -> bool:
+    return isinstance(entry, dict) and bool(entry.get("topic_id"))
+
+
+def _display_key(key: str, entry) -> str:
+    return str(entry.get("memory_key") or key) if isinstance(entry, dict) else str(key)
 
 
 def _pretty(key: str) -> str:
@@ -259,7 +370,8 @@ def format_memory_for_prompt(memory: dict | None) -> str:
     core_lines: list[str] = []
 
     # 1. Identity - always, in full
-    identity = memory.get("identity", {}) or {}
+    identity = {key: entry for key, entry in (memory.get("identity", {}) or {}).items()
+                if not _is_topic_scoped(entry)}
     for field in _IDENTITY_FIELDS:
         val = _entry_value(identity.get(field))
         if not val:
@@ -284,11 +396,14 @@ def format_memory_for_prompt(memory: dict | None) -> str:
     rest: list[tuple[str, str, str, str]] = []   # (updated, cat, key, value)
     for cat in _CATEGORY_LABELS:
         for key, entry in (memory.get(cat, {}) or {}).items():
+            if _is_topic_scoped(entry):
+                continue
             val = _entry_value(entry)
             if not val:
                 continue
+            display_key = _display_key(key, entry)
             updated = (entry.get("updated", "") if isinstance(entry, dict) else "") or "0000-00-00"
-            rest.append((updated, cat, key, val))
+            rest.append((updated, cat, display_key, val))
     rest.sort(key=lambda t: t[0], reverse=True)
 
     used    = sum(len(l) + 1 for l in core_lines)
@@ -400,12 +515,15 @@ def search_memory(query: str, limit: int = 20) -> str:
         if not isinstance(items, dict):
             continue                     # skip 'sessions', which is a list
         for key, entry in items.items():
+            if _is_topic_scoped(entry):
+                continue
             val = _entry_value(entry)
             if not val:
                 continue
-            s = _score(words, cat, key, val) if words else 1
+            display_key = _display_key(key, entry)
+            s = _score(words, cat, display_key, val) if words else 1
             if s > 0:
-                rows.append((s, cat, key, val))
+                rows.append((s, cat, display_key, val))
 
     if not rows:
         return (f"Nothing stored about '{query}'." if query
@@ -432,11 +550,18 @@ def all_entries_for_ui() -> list[dict]:
             val = _entry_value(entry)
             if not val:
                 continue
+            details = entry if isinstance(entry, dict) else {}
             rows.append({
                 "category": cat,
-                "key":      key,
+                "key":      _display_key(key, details),
                 "value":    val,
-                "updated":  (entry.get("updated", "") if isinstance(entry, dict) else ""),
+                "updated":  details.get("updated", ""),
+                "created_at": details.get("created_at", ""),
+                "source": details.get("source", "legacy"),
+                "confidence": details.get("confidence"),
+                "topic_id": details.get("topic_id", ""),
+                "status": details.get("status", ""),
+                "provenance": details.get("provenance", ""),
             })
     rows.sort(key=lambda r: (r["updated"] or "0000-00-00"), reverse=True)
     return rows
@@ -490,12 +615,8 @@ def save_session_summary(summary: str, language: str = "") -> None:
         _archive([{"kind": "session", "record": r} for r in sessions[:-_SESSION_MAX]])
     memory["sessions"] = sessions[-_SESSION_MAX:]
     with _lock:
-        MEMORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-        MEMORY_PATH.write_text(
-            json.dumps(memory, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-    print(f"[Memory] 📝 Session saved ({entry['date']}): {summary[:60]}…")
+        _atomic_json_write(MEMORY_PATH, memory)
+    print(f"[Memory] session summary saved ({entry['date']})")
 
 
 def pop_last_session() -> dict | None:
@@ -515,10 +636,7 @@ def pop_last_session() -> dict | None:
                 if not entry.get("briefed", False):
                     entry["briefed"] = True
                     memory["sessions"] = sessions
-                    MEMORY_PATH.write_text(
-                        json.dumps(memory, indent=2, ensure_ascii=False),
-                        encoding="utf-8",
-                    )
+                    _atomic_json_write(MEMORY_PATH, memory)
                     return entry
             return None
         except Exception as e:
@@ -558,9 +676,17 @@ def _append_dialogue_archive(turns: list) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().isoformat(timespec="seconds")
     with path.open("a", encoding="utf-8") as f:
+        try:
+            os.fchmod(f.fileno(), 0o600)
+        except (AttributeError, OSError):
+            pass
         for t in turns:
             f.write(json.dumps({"archived": stamp, "turn": t}, ensure_ascii=False) + "\n")
         f.flush()
+    try:
+        path.chmod(0o600)
+    except OSError:
+        pass
 
 
 def _read_dialogue_for_append() -> list:
@@ -576,35 +702,59 @@ def _read_dialogue_for_append() -> list:
     except Exception as e:
         aside = DIALOGUE_PATH.with_name(f"{DIALOGUE_PATH.name}.corrupt-{datetime.now():%Y%m%d-%H%M%S}")
         shutil.copy2(DIALOGUE_PATH, aside)
-        print(f"[Memory] recent_dialogue.json could not be read ({e}); a copy is at {aside.name}")
+        try:
+            aside.chmod(0o600)
+        except OSError:
+            pass
+        print(f"[Memory] recent_dialogue.json is unreadable ({type(e).__name__}); a copy was preserved")
         return []
 
 
-def append_dialogue_turn(speaker: str, text: str) -> None:
-    """Save a turn now. Turns beyond MAX_DIALOGUE_TURNS move to dialogue_archive.jsonl. If the
-    archive cannot be written, nothing is dropped and the log keeps every turn."""
+def append_dialogue_turn(speaker: str, text: str, *, conversation_id: str = "",
+                         topic_id: str = "", owner_id: str = "", source: str = "",
+                         status: str = "complete", sources: list[dict] | None = None,
+                         strict: bool = False) -> None:
+    """Save a conversation turn with optional Brain linkage. Old two-argument callers still work.
+
+    Turns beyond MAX_DIALOGUE_TURNS move to dialogue_archive.jsonl. If the archive cannot be
+    written, nothing is dropped and the live log keeps every turn.
+    """
     text = (text or "").strip()
     if not text:
         return
     with _lock:
         try:
-            turns = _read_dialogue_for_append()
-            turns.append({
+            now = datetime.now()
+            turn = {
                 "speaker": speaker,
                 "text": text,
-                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            })
+                "time": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "created_at": now.isoformat(timespec="milliseconds"),
+            }
+            for name, value in (("conversation_id", conversation_id), ("topic_id", topic_id),
+                                ("owner_id", owner_id), ("source", source)):
+                if value:
+                    turn[name] = value
+            if isinstance(sources, list) and sources:
+                turn["sources"] = [{"url": str(item.get("url", ""))[:1800],
+                                     "title": str(item.get("title", ""))[:240]}
+                                    for item in sources[:12] if isinstance(item, dict)]
+            if status != "complete":
+                turn["status"] = status
+            turns = _read_dialogue_for_append()
+            turns.append(turn)
             if len(turns) > MAX_DIALOGUE_TURNS:
                 overflow = turns[:-MAX_DIALOGUE_TURNS]
                 try:
                     _append_dialogue_archive(overflow)
                     turns = turns[-MAX_DIALOGUE_TURNS:]
                 except Exception as e:
-                    print(f"[Memory] dialogue archive unavailable, keeping all turns: {e}")
-            DIALOGUE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            DIALOGUE_PATH.write_text(json.dumps(turns, indent=2, ensure_ascii=False), encoding="utf-8")
+                    print(f"[Memory] dialogue archive unavailable ({type(e).__name__}); keeping all turns")
+            _atomic_json_write(DIALOGUE_PATH, turns)
         except Exception as e:
-            print(f"[Memory] Error saving dialogue turn: {e}")
+            print(f"[Memory] dialogue save unavailable ({type(e).__name__})")
+            if strict:
+                raise OSError("conversation history could not be saved") from None
 
 def get_recent_dialogue(limit: int = 12) -> list:
     with _lock:
@@ -615,6 +765,34 @@ def get_recent_dialogue(limit: int = 12) -> list:
             return turns[-max(1, limit):] if isinstance(turns, list) else []
         except Exception:
             return []
+
+
+def get_dialogue_history(*, topic_id: str = "", conversation_id: str = "",
+                         owner_id: str = "", limit: int = 12) -> list[dict]:
+    """Return newest conversation turns, scoped to the requested owner/topic/conversation.
+
+    Archived legacy turns without an owner id are deliberately excluded from Brain context.
+    """
+    rows: list[tuple[str, int, dict]] = []
+    with _lock:
+        try:
+            archived = _read_dialogue_archive()
+        except Exception:
+            archived = []
+        recent = get_recent_dialogue(limit=MAX_DIALOGUE_TURNS)
+    for index, turn in enumerate([t for _line, t in archived] + recent):
+        if not isinstance(turn, dict):
+            continue
+        if owner_id and turn.get("owner_id") != owner_id:
+            continue
+        if topic_id and turn.get("topic_id") != topic_id:
+            continue
+        if conversation_id and turn.get("conversation_id") != conversation_id:
+            continue
+        stamp = str(turn.get("created_at") or turn.get("time") or "")
+        rows.append((stamp, index, dict(turn)))
+    rows.sort(key=lambda row: (row[0], row[1]))
+    return [turn for _stamp, _index, turn in rows[-max(1, int(limit)):]]
 
 def format_dialogue_for_prompt(limit: int = 8) -> str:
     turns = get_recent_dialogue(limit)

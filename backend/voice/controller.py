@@ -102,6 +102,7 @@ class VoiceController:
         self._local_ready = local_ready
         self._wake_default = wake_default
         self._answerer: Callable[[str], str] | None = None
+        self._turn_recorder: Callable[[str, str], bool | None] | None = None
 
         self._closed = threading.Event()
         self._watchdog = watchdog
@@ -121,6 +122,10 @@ class VoiceController:
     def attach_answerer(self, answer: Callable[[str], str]) -> None:
         """Set the function that answers a spoken request (the agent). Used by the local engine."""
         self._answerer = answer
+
+    def attach_turn_recorder(self, recorder: Callable[[str, str], bool | None]) -> None:
+        """Persist final Gemini Live transcripts through the same local Brain history."""
+        self._turn_recorder = recorder
 
     def start_live(self, source: str = "button") -> dict:
         with self._lock:
@@ -142,6 +147,8 @@ class VoiceController:
                 callbacks["answer"] = self._ask_agent
             else:
                 callbacks["spend_reconnect"] = self._budget.try_spend
+                if self._turn_recorder is not None:
+                    callbacks["on_turn"] = self._turn_recorder
             relay = self._make_relay(**callbacks)
             try:
                 self._mic_live.start()

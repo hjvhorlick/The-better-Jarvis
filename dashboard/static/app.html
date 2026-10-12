@@ -10,6 +10,7 @@
        same file), so a window here and a panel there are the same clear glass
        with the same thin yellow line. -->
   <link rel="stylesheet" href="/static/jarvis-glass.css">
+  <link rel="stylesheet" href="/static/brain.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1240,6 +1241,11 @@
         <span>Rooms</span>
       </button>
 
+      <button class="hud-toggle-btn" id="btn-toggle-brain" onclick="toggleWindow('win-brain')" title="Open persistent Brain, saved topics, memories, decisions, tasks and research">
+        <span class="btn-icon">🧠</span>
+        <span>Brain</span>
+      </button>
+
       <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace Settings">
         <span class="btn-icon">⚙️</span>
         <span>Settings</span>
@@ -1261,6 +1267,7 @@
     </div>
 
     <div class="hud-status-group">
+      <span class="brain-topic-chip" id="brain-active-topic" title="Current persistent Brain topic">Topic: none</span>
       <div class="status-pill online" id="status-pill">
         <span class="status-dot"></span>
         <span id="status-txt">Online</span>
@@ -1603,7 +1610,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-simple-hud-4 — the model and the key's source appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-12-brain-voice-fix-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1692,6 +1699,94 @@
       <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-settings')" title="Drag to Resize Glass Window"></div>
     </div>
 
+    <!-- PANEL 6: THE OWNER'S PERSISTENT BRAIN. All controls call the same local BrainStore used by chat. -->
+    <div class="glass-window" id="win-brain" style="top: 72px; left: 60%; width: 470px; height: min(82vh, 760px); display: none;">
+      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-brain')">
+        <div class="window-title-group"><span class="window-icon">🧠</span><span>Persistent Brain</span></div>
+        <div class="window-actions">
+          <button class="win-btn" onclick="toggleMinimize('win-brain')" title="Minimize">_</button>
+          <button class="win-btn" onclick="toggleWindow('win-brain')" title="Close">✕</button>
+        </div>
+      </div>
+      <div class="window-body settings-body brain-window-body" id="brain-window-body">
+        <p id="brain-status" class="brain-status" role="status" aria-live="polite">Checking local memory…</p>
+        <p id="brain-feedback" class="brain-feedback" role="status" aria-live="polite"></p>
+        <div class="brain-action-row">
+          <button type="button" class="preset-btn" id="brain-provider-test">Test Gemini connection</button>
+          <button type="button" class="preset-btn" id="brain-backup">Create verified backup</button>
+        </div>
+        <div class="brain-restore-row">
+          <select id="brain-backup-select" aria-label="Verified backup to restore"><option value="">Choose verified backup</option></select>
+          <button type="button" class="preset-btn" id="brain-restore">Restore…</button>
+        </div>
+
+        <details open class="brain-section">
+          <summary>Topics and project continuity</summary>
+          <label for="brain-topic-select">Saved topic</label>
+          <select id="brain-topic-select"><option value="">No saved topics</option></select>
+          <div class="brain-action-row">
+            <button type="button" class="preset-btn" id="brain-topic-resume">Resume selected</button>
+            <select id="brain-topic-status" aria-label="Topic status">
+              <option value="active">Active</option><option value="paused">Paused</option>
+              <option value="completed">Completed</option><option value="archived">Archived</option>
+            </select>
+          </div>
+          <label for="brain-topic-goal">Goal</label>
+          <textarea id="brain-topic-goal" rows="2" maxlength="800"></textarea>
+          <label for="brain-topic-summary">Summary</label>
+          <textarea id="brain-topic-summary" rows="3" maxlength="1600"></textarea>
+          <label for="brain-topic-next">Next step</label>
+          <textarea id="brain-topic-next" rows="2" maxlength="800"></textarea>
+          <button type="button" class="preset-btn" id="brain-topic-save">Save topic state</button>
+          <form id="brain-topic-create" class="brain-form">
+            <input id="brain-topic-title" type="text" maxlength="160" placeholder="New topic title" required>
+            <button type="submit" class="preset-btn">Create topic</button>
+          </form>
+        </details>
+
+        <details open class="brain-section">
+          <summary>Persistent memories</summary>
+          <div class="brain-form">
+            <input id="brain-memory-search" type="search" maxlength="400" placeholder="Search memories">
+            <button type="button" class="preset-btn" id="brain-memory-search-go">Search</button>
+          </div>
+          <form id="brain-memory-create" class="brain-form">
+            <select id="brain-memory-category" aria-label="Memory category">
+              <option value="notes">Note</option><option value="preferences">Preference</option>
+              <option value="identity">Identity</option><option value="projects">Project</option>
+              <option value="relationships">Relationship</option><option value="wishes">Plan</option>
+            </select>
+            <input id="brain-memory-key" type="text" maxlength="160" placeholder="Name, e.g. tea" required>
+            <textarea id="brain-memory-value" rows="2" maxlength="1200" placeholder="What should be remembered?" required></textarea>
+            <button type="submit" class="preset-btn">Save memory</button>
+          </form>
+          <div id="brain-memory-list" class="brain-list"></div>
+        </details>
+
+        <details open class="brain-section">
+          <summary>Decisions and tasks</summary>
+          <form id="brain-decision-create" class="brain-form">
+            <input id="brain-decision-value" type="text" maxlength="1200" placeholder="Record a decision for this topic" required>
+            <button type="submit" class="preset-btn">Save decision</button>
+          </form>
+          <div id="brain-decision-list" class="brain-list"></div>
+          <form id="brain-task-create" class="brain-form">
+            <input id="brain-task-title" type="text" maxlength="800" placeholder="Add a task or next step" required>
+            <button type="submit" class="preset-btn">Add task</button>
+          </form>
+          <div id="brain-task-list" class="brain-list"></div>
+        </details>
+
+        <details class="brain-section">
+          <summary>Sourced research</summary>
+          <div id="brain-research-list" class="brain-list"></div>
+        </details>
+        <p class="brain-footnote">Memory, history and backups stay in the local app data folder. Provider status is measured only when you press Test; stored research keeps its source URLs and verification limits.</p>
+      </div>
+      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-brain')" title="Drag Brain window"></div>
+      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-brain')" title="Resize Brain window"></div>
+    </div>
+
     <!-- SPATIAL STATUS TELEMETRY HUD (Bottom-Right) -->
     <div id="spatial-status-hud">
       <div class="spatial-badge">
@@ -1740,7 +1835,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-11-simple-hud-4';
+    const JARVIS_BUILD = '2026-10-12-brain-voice-fix-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1797,7 +1892,19 @@
       const key = info && info.present ? keySourceLine(info) : 'no key set';
       const quota = info && info.quota ? `${info.quota.used}/${info.quota.limit} Gemini calls used today` : 'budget not measured';
       const owner = _userName ? `, for ${_userName}` : '';
-      el.textContent = `Build ${JARVIS_BUILD} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}`;
+      // The server's own marker against this page's. When they differ the
+      // browser is holding a different build than the process answering it —
+      // and that is the one honest explanation for "the settings say a key is
+      // saved but JARVIS says there is none".
+      let builds = `page ${JARVIS_BUILD}`;
+      if (info && info.build) {
+        builds = info.build === JARVIS_BUILD
+          ? `page and server both ${JARVIS_BUILD}`
+          : `page ${JARVIS_BUILD} — BUT THE SERVER IS ${info.build}: this page is stale, press Ctrl/Cmd+Shift+R (or restart the server if it is the older one)`;
+      }
+      const root = info && info.configRoot ? ` · settings read from ${info.configRoot}` : '';
+      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}${root}`;
+      el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : '';
     }
 
     async function refreshGeminiKeyStatus() {
@@ -1919,6 +2026,9 @@
       {
         try {
           if (m.type === 'stream') {
+            // The HTTP response may win the race. If it already completed this
+            // id, a late stream frame is a duplicate, not a new answer.
+            if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) return;
             // The answer is arriving piece by piece: show it as it is written and
             // read the finished sentences out loud while the rest is still coming.
             updateStreamBubble(m.id, m.text, m.done !== false);
@@ -1930,7 +2040,8 @@
             if (m.speaker === 'user' && m.id && localEchoes.has(m.id)) {
               localEchoes.delete(m.id);          // our own command, already on screen
             } else if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) {
-              renderedReplies.delete(m.id);      // already shown (and spoken) from the HTTP answer
+              // Keep the id claimed for its whole dedupe window; the same reply
+              // can have a stream frame, final log and HTTP body in any order.
             } else {
             const live = liveStreamBubble(m.id);
             if (live) {
@@ -1940,12 +2051,16 @@
               renderBubbleBody(live, m.text);
               if (m.speaker === 'jarvis') finishStreamed(m.id, m.text);
               liveStreams.delete(m.id);
+              if (m.speaker === 'jarvis' && m.id) renderedReplies.set(m.id, Date.now());
             } else {
               const bubble = appendChat(m.speaker, m.text, m.image, m.replay === true);
               // Every fresh reply is spoken. Only the history replayed to a page
               // that has just opened is silent — the server says which is which,
               // so a slow answer can never be mistaken for old history again.
-              if (m.speaker === 'jarvis' && m.replay !== true) speakReply(m.text);
+              if (m.speaker === 'jarvis' && m.replay !== true) {
+                speakReply(m.text, m.id);
+                if (m.id) renderedReplies.set(m.id, Date.now());
+              }
               else if (m.speaker === 'jarvis') console.log('[speech] replay, not spoken:', String(m.text).slice(0, 60));
               void bubble;
             }
@@ -1953,6 +2068,12 @@
           }
           if (m.type === 'status') {
             reactorTag.textContent = m.state === 'active' ? `${_assistantName} ACTIVE` : `${_assistantName} SLEEPING`;
+          }
+          if (m.type === 'brain_topic') {
+            window.dispatchEvent(new CustomEvent('jarvis:brain-topic', { detail: m }));
+          }
+          if (m.type === 'log' && m.speaker === 'jarvis' && m.replay !== true) {
+            window.dispatchEvent(new CustomEvent('jarvis:brain-refresh'));
           }
           if (m.type === 'wake') {
             toast('Systems awake and responsive');
@@ -2005,9 +2126,8 @@
     // Commands this page sent itself, by id: the server echoes them back to every
     // client, and the sender must not print its own words twice.
     const localEchoes = new Map();
-    // Replies this page has already put on screen through the HTTP answer, by id:
-    // the websocket copy of the same reply must not print it a second time (the
-    // two paths race, and either may arrive first).
+    // Reply ids already rendered from either path. Keep the id claimed through
+    // the short dedupe window because stream, log and HTTP may arrive in any order.
     const renderedReplies = new Map();
     setInterval(() => {
       const cutoff = Date.now() - 20000;
@@ -2116,12 +2236,39 @@
         if (!data || !data.reply) return;
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
-        renderedReplies.set(id, Date.now());
-        if (live) { live.classList.remove('streaming'); renderBubbleBody(live, data.reply); liveStreams.delete(id); }
-        else if (!socketWasUp) appendChat('jarvis', data.reply);
-        // The speaking happens exactly once, on whichever path delivered the
-        // words: the stream's tail if this page watched it live, or this reply.
-        if (!socketWasUp && !live) speakReply(data.reply);
+        if (renderedReplies.has(id)) return;        // the socket already completed it
+        if (live) {
+          // The live stream owns the bubble, but HTTP can beat the final stream
+          // frame. Read any tail not yet queued before claiming the id.
+          live.classList.remove('streaming');
+          renderBubbleBody(live, data.reply);
+          finishStreamed(id, data.reply);
+          liveStreams.delete(id);
+          renderedReplies.set(id, Date.now());
+        } else if (!socketWasUp) {
+          // No socket was available when sent: HTTP is the owner of this reply.
+          appendChat('jarvis', data.reply);
+          renderedReplies.set(id, Date.now());
+          speakReply(data.reply, id);
+        } else {
+          // The socket was open when sent, but a proxy/reconnect can still drop
+          // its frames. Give it a brief chance; if nothing claimed the id, HTTP
+          // becomes the fallback instead of silently losing the answer.
+          setTimeout(() => {
+            if (renderedReplies.has(id)) return;
+            const lateLive = liveStreamBubble(id);
+            if (lateLive) {
+              lateLive.classList.remove('streaming');
+              renderBubbleBody(lateLive, data.reply);
+              finishStreamed(id, data.reply);
+              liveStreams.delete(id);
+            } else {
+              appendChat('jarvis', data.reply);
+              speakReply(data.reply, id);
+            }
+            renderedReplies.set(id, Date.now());
+          }, 700);
+        }
       }).catch(() => {
         if (!socketWasUp) {
           const id = requestId;
@@ -2225,7 +2372,11 @@
         const res = await _authFetch('/api/brain-check');
         const info = await res.json().catch(() => ({}));
         if (info.ok) {
-          lines.push(`Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
+          // Name the version that ACTUALLY answered, not just the alias that was
+          // asked for — "gemini-flash-latest" reads the same whichever
+          // generation Google points it at.
+          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
+          lines.push(`Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
         } else {
           lines.push(`Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
@@ -2250,11 +2401,19 @@
       }
 
       appendChat('system', 'Senses check:\n' + lines.join('\n'));
-      // Finally, the proof: speak one line out loud.
+      // Finally, the proof: speak one line out loud — through the engine that is
+      // actually in force. This used to go straight to speechSynthesis, so on a
+      // machine with no voices installed (the very case the server voice exists
+      // for) the page announced "I just spoke a test line" while nothing at all
+      // came out of the speakers.
       try {
-        const u = new SpeechSynthesisUtterance('Voice check. If you hear this, my speakers work.');
-        speechSynthesis.speak(u);
-        appendChat('system', 'I just spoke a test line — did you hear it?');
+        const engine = engineUsesServer() ? 'the JARVIS server voice' : "this computer's own voice";
+        if (!_speakOn) {
+          appendChat('system', `The speakers are switched off (🔊 in Settings → Voice), so I said nothing. Turn them on and run the check again to hear ${engine}.`);
+        } else {
+          speakReply('Voice check. If you hear this, my speakers work.');
+          appendChat('system', `I am speaking a test line through ${engine} — did you hear it? If not, press 🔊 Test Speakers in Settings → Voice: it proves the tones, this computer's voice and the server voice one at a time, and names the one that is silent.`);
+        }
       } catch (err) {
         appendChat('system', `Could not even try to speak: ${err.message}`);
       }
@@ -2342,7 +2501,8 @@
         const res = await _authFetch('/api/brain-check');
         const info = await res.json().catch(() => ({}));
         if (info.ok) {
-          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
+          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
+          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
         } else {
           appendChat('system', `Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
@@ -3096,7 +3256,7 @@
       document.getElementById('lbl-pinch-thresh').textContent = `${pinchThreshold.toFixed(2)}×`;
     }
 
-    // The slider scales Barehands' two measured 2D gates (frontal/profile),
+    // The slider scales My Hands' two measured 2D gates (frontal/profile),
     // rather than assuming every hand is the same size or using noisy z depth.
     function pinchEnterThreshold(frame) {
       const measured = Number(frame && frame.pinchGate);
@@ -3183,7 +3343,7 @@
           `Screen gap: ${summary.touchGapScreenPx.median.toFixed(1)} px [${summary.touchGapScreenPx.range}]\n` +
           `Palm aspect: ${summary.palmAspect.median.toFixed(2)} [${summary.palmAspect.range}]\n` +
           `Index reach: ${summary.indexReach.median.toFixed(2)} · other fingers: ${summary.otherFingersReach.median.toFixed(2)}\n` +
-          `Barehands pinch signature: ${summary.pinchSignaturePercent}% · impossible geometry: ${summary.impossibleHandPercent}%\n` +
+          `My Hands pinch signature: ${summary.pinchSignaturePercent}% · impossible geometry: ${summary.impossibleHandPercent}%\n` +
           `Copy this JSON from the browser console if needed.`;
         handSampleSummary = report;
         panel.textContent = report;
@@ -3443,7 +3603,7 @@
             },
             numHands: 2,
             runningMode: "VIDEO",
-            // Match Barehands' measured fresh-detection confidence: this
+            // Match My Hands' measured fresh-detection confidence: this
             // reduces low-confidence finger jitter/phantom hands in clutter.
             minHandDetectionConfidence: 0.7,
             minHandPresenceConfidence: 0.5,
@@ -4859,13 +5019,41 @@
 
     const Speech = {
       queue: [],          // sentences waiting to be read out
-      speaking: false,    // the browser's mouth is busy right now
+      speaking: false,    // a mouth is busy right now — see engine, below
+      /** Which throat owns the sentence in progress: 'browser' or 'server'. */
+      engine: null,
+      /**
+       * A spoken sentence may legitimately take longer than the watchdog's
+       * 1.4 s: the server voice is a round trip to Gemini plus a sound file
+       * several seconds long. The watchdog below only polices the BROWSER's
+       * synthesiser, and this is a long stop for the server voice so a request
+       * that never answers at all cannot wedge the mouth forever.
+       */
+      SERVER_SENTENCE_TIMEOUT_MS: 45000,
       startedAt: 0,
       voice: null,
       streams: {},        // streamId -> { spoken: characters already queued }
       watchdog: 0,
       resumeTimer: 0,
+      /** The sound file playing right now, so it can be stopped on purpose. */
+      audio: null,
+      /** In-flight TTS requests are invalidated when the owner silences JARVIS. */
+      requestController: null,
+      generation: 0,
     };
+
+    /**
+     * Replies this page has already read out. The same reply can arrive twice —
+     * the socket frame and the HTTP answer both carry it — and two voices saying
+     * the same sentence at once is worse than one of them saying nothing, so the
+     * second copy is dropped whatever path it comes in on.
+     */
+    const spokenReplies = new Set();
+    function rememberSpokenReply(replyId) {
+      if (!replyId) return;
+      spokenReplies.add(replyId);
+      while (spokenReplies.size > 200) spokenReplies.delete(spokenReplies.values().next().value);
+    }
 
     // Both halves are required to say anything: the synthesiser itself and the
     // utterance class. A webview with one but not the other is honestly silent.
@@ -4901,6 +5089,19 @@
         const synth = window.speechSynthesis;
         if (!synth) return;
         try { if (synth.paused) synth.resume(); } catch (_) {}
+        if (Speech.speaking && Speech.engine === 'server') {
+          // The server voice is a fetched sound file, not a synthesiser: nothing
+          // here can say whether it is working, and the browser-voice test below
+          // would fire on EVERY sentence (synth.speaking is false when the
+          // browser's own mouth is not the one talking) and cut each one off
+          // after 1.4 s. Only a call that never answers at all is a failure.
+          if (performance.now() - Speech.startedAt > Speech.SERVER_SENTENCE_TIMEOUT_MS) {
+            console.warn('[speech] the server voice never answered — giving the sentence up');
+            Speech.serverTimeouts = (Speech.serverTimeouts || 0) + 1;
+            finishUtterance('server-timeout');
+          }
+          return;
+        }
         if (Speech.speaking && !synth.speaking && !synth.pending && performance.now() - Speech.startedAt > 1400) {
           // The synthesiser took the sentence and never made a sound. That is the
           // exact failure this app's voice engine is meant to avoid, so it is
@@ -4937,6 +5138,11 @@
     function cleanForSpeech(text) {
       return String(text || '')
         .replace(/```[\s\S]*?```/g, ' — code block — ')
+        // The raw error body Google sends back (a wall of JSON) belongs on the
+        // screen, not in the mouth: read aloud it is not English, and a voice
+        // model asked to say it may simply refuse — which sounds exactly like
+        // "he will not talk".
+        .replace(/\{[\s\S]*"[\s\S]*:[\s\S]*\}/g, 'the details are on screen, sir')
         .replace(/[*_#`>|]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
@@ -4988,19 +5194,39 @@
     function stopSpeaking() {
       Speech.queue.length = 0;
       Speech.streams = {};
+      // Invalidate first: even a fetch implementation that ignores abort must
+      // not start playing an old reply after the user has silenced it.
+      Speech.generation++;
+      if (Speech.requestController) {
+        const request = Speech.requestController;
+        Speech.requestController = null;
+        try { request.abort(); } catch (_) {}
+      }
       try { window.speechSynthesis.cancel(); } catch (_) {}
       try { window.speechSynthesis.resume(); } catch (_) {}
+      // The server voice is a sound file, and forgetting about it is not the
+      // same as stopping it: leave it running and the next sentence starts on
+      // top of it, which is two voices talking over each other.
+      if (Speech.audio) {
+        const el = Speech.audio;
+        el.onended = null; el.onerror = null;
+        try { el.pause(); } catch (_) {}
+        Speech.audio = null;
+      }
       Speech.speaking = false;
+      Speech.engine = null;
       resumeListeningAfterSpeech();
     }
     window.__jarvisStopSpeaking = stopSpeaking;
 
     /* Speak one whole reply (a reply that arrived in one piece, or an
        acknowledgement such as "Microphone on, sir."). */
-    function speakReply(text) {
+    function speakReply(text, replyId) {
       if (!_speakOn || !canSpeak() || !text) return;
+      if (replyId && spokenReplies.has(replyId)) return;
       const pieces = chunkForSpeech(text);
       if (!pieces.length) return;
+      rememberSpokenReply(replyId);
       _lastSpokenText = cleanForSpeech(text);
       Speech.queue.push(...pieces);
       pumpSpeech();
@@ -5011,7 +5237,13 @@
        the next piece of the answer. */
     function speakStreamed(id, textSoFar) {
       if (!_speakOn || !canSpeak() || !textSoFar) return;
-      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const existing = Speech.streams[id];
+      // If HTTP already spoke this id, a late stream is not a new instruction.
+      if (id && spokenReplies.has(id) && !existing) return;
+      // Mark the id at the first stream frame too: the eventual log/HTTP copy is
+      // the same answer, not a second instruction to read it from the start.
+      rememberSpokenReply(id);
+      const entry = existing || (Speech.streams[id] = { spoken: 0 });
       const clean = cleanForSpeech(textSoFar);
       if (clean.length <= entry.spoken) return;
       _lastSpokenText = clean;
@@ -5027,7 +5259,10 @@
     /* The answer is complete: read out whatever tail was still waiting. */
     function finishStreamed(id, fullText) {
       if (!_speakOn || !canSpeak() || !fullText) return;
-      const entry = Speech.streams[id] || (Speech.streams[id] = { spoken: 0 });
+      const existing = Speech.streams[id];
+      if (id && spokenReplies.has(id) && !existing) return;
+      rememberSpokenReply(id);
+      const entry = existing || (Speech.streams[id] = { spoken: 0 });
       const clean = cleanForSpeech(fullText);
       const tail = clean.slice(entry.spoken);
       entry.spoken = clean.length;
@@ -5040,31 +5275,60 @@
        page. This is the path that works when the computer has no voice of its
        own — the sound does not depend on what the browser can synthesise. */
     const _serverVoiceCache = new Map();     // sentence -> object URL (this page's copy)
-    async function speakViaServer(text) {
+    // ONE report per run of failures. A broken server voice fails every single
+    // sentence of a reply, and a bubble per sentence drowns the answer it was
+    // meant to explain — so the first failure speaks for the whole reply and the
+    // rest are only logged until one sentence actually plays.
+    let _serverVoiceReportAt = 0;
+    function reportServerVoiceFailure(message) {
+      const now = Date.now();
+      if (now - _serverVoiceReportAt > 15000) {
+        _serverVoiceReportAt = now;
+        micReport(`🔊 The server voice could not speak: ${message}`, [
+          { label: '🗣 Use this computer’s own voice', run: () => setVoiceEngine('browser') },
+          { label: '🔊 Test speakers', run: () => testSpeakersNow() },
+        ]);
+      } else {
+        console.warn('[speech] the server voice refused again:', message);
+      }
+    }
+    async function speakViaServer(text, generation) {
       const sentence = String(text || '').slice(0, 1200);
+      if (generation !== Speech.generation) return false;
       const remembered = _serverVoiceCache.get(sentence);
       if (remembered) {
         try {
           const el = new Audio(remembered);
-          el.onended = () => finishUtterance('end');
-          el.onerror = () => finishUtterance('error');
+          Speech.audio = el;
+          el.onended = () => finishUtterance('end', generation);
+          el.onerror = () => finishUtterance('error', generation);
           await el.play();
+          if (generation !== Speech.generation) { try { el.pause(); } catch (_) {} return false; }
           return true;
-        } catch (_) { /* the remembered copy would not play: ask for it again below */ }
+        } catch (_) {
+          if (generation !== Speech.generation) return false;
+          /* the remembered copy would not play: ask for it again below */
+        }
       }
       const body = JSON.stringify({ text: sentence });
+      const controller = new AbortController();
+      Speech.requestController = controller;
       let res, data;
       try {
-        res = await _authFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body });
+        res = await _authFetch('/api/voice/speak', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal });
         data = await res.json();
       } catch (err) {
+        if (generation !== Speech.generation || controller.signal.aborted || (err && err.name === 'AbortError')) return false;
         toast('🔇 The server voice could not be reached');
         console.warn('[speech] the server voice could not be reached:', err && err.message);
         return false;
+      } finally {
+        if (Speech.requestController === controller) Speech.requestController = null;
       }
+      if (generation !== Speech.generation) return false;
       if (!data || !data.ok || !data.audio) {
         console.warn('[speech] the server voice refused:', data && data.message);
-        micReport(`🔊 The server voice could not speak: ${(data && data.message) || 'no reason given'}.`, []);
+        reportServerVoiceFailure((data && data.message) || 'no reason given');
         return false;
       }
       try {
@@ -5077,11 +5341,15 @@
           _serverVoiceCache.delete(oldest);
         }
         const el = new Audio(url);
-        el.onended = () => finishUtterance('end');       // the URL is kept for the cache
-        el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error'); };
+        Speech.audio = el;                               // so stopSpeaking can silence it
+        el.onended = () => finishUtterance('end', generation); // the URL is kept for the cache
+        el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error', generation); };
         await el.play();
+        if (generation !== Speech.generation) { try { el.pause(); } catch (_) {} return false; }
+        _serverVoiceReportAt = 0;                        // it spoke: the next failure is news again
         return true;
       } catch (err) {
+        if (generation !== Speech.generation) return false;
         toast('🔇 The browser refused to play the audio — click the page once, then try again');
         console.warn('[speech] playback refused:', err && err.message);
         return false;
@@ -5130,11 +5398,16 @@
       if (!next) { onSpeechQueueEmpty(); return; }
 
       pauseListeningForSpeech();                          // never listen to our own voice
+      const generation = Speech.generation;
 
       if (engineUsesServer()) {
         Speech.speaking = true;                           // the file's own end continues the queue
+        Speech.engine = 'server';                         // so the watchdog above leaves it alone
         Speech.startedAt = performance.now();
-        speakViaServer(next).then((played) => { if (!played) finishUtterance('server-failed'); });
+        speakViaServer(next, generation).then((played) => {
+          if (generation !== Speech.generation) return;
+          if (!played) finishUtterance('server-failed', generation);
+        });
         return;
       }
 
@@ -5145,12 +5418,13 @@
       const v = Speech.voice || pickVoice();
       if (v) { u.voice = v; u.lang = v.lang; }
       Speech.speaking = true;
+      Speech.engine = 'browser';                          // the watchdog below owns this one
       Speech.startedAt = performance.now();
       u.onstart = () => { Speech.startedAt = performance.now(); };
-      u.onend = () => finishUtterance('end');
+      u.onend = () => finishUtterance('end', generation);
       u.onerror = (e) => {
         if (e && e.error && e.error !== 'interrupted' && e.error !== 'canceled') console.warn('[speech] utterance error:', e.error);
-        finishUtterance('error');
+        finishUtterance('error', generation);
       };
       // A cancel() in the same tick as speak() makes Chrome drop the utterance,
       // so the two are never in the same tick — and when nothing was playing
@@ -5158,19 +5432,22 @@
       const wasBusy = !!(synth.speaking || synth.pending);
       if (wasBusy) { try { synth.cancel(); } catch (_) {} }
       setTimeout(() => {
+        if (generation !== Speech.generation) return;
         try {
           if (synth.paused) synth.resume();
           synth.speak(u);
         } catch (err) {
           console.warn('[speech] could not speak:', err && err.message);
-          finishUtterance('refused');
+          finishUtterance('refused', generation);
         }
       }, wasBusy ? 90 : 0);
     }
 
-    function finishUtterance(reason) {
-      if (!Speech.speaking) return;
+    function finishUtterance(reason, generation = Speech.generation) {
+      if (generation !== Speech.generation || !Speech.speaking) return;
       Speech.speaking = false;
+      Speech.engine = null;
+      Speech.audio = null;
       void reason;
       setTimeout(pumpSpeech, 30);
     }
@@ -5194,6 +5471,8 @@
       supported: speechSupported(),
       engine: _voiceEngine,
       usingServer: engineUsesServer(),
+      speakingEngine: Speech.engine,      // which throat owns the sentence in progress
+      timedOutServerSentences: Speech.serverTimeouts || 0,
       browserVoiceStarted: _browserVoiceFailed,
       voice: Speech.voice ? `${Speech.voice.name} (${Speech.voice.lang})` : 'browser default',
       voiceCount: speechSupported() ? (window.speechSynthesis.getVoices() || []).length : 0,
@@ -5201,7 +5480,8 @@
       queued: Speech.queue.length,
       lastSpoken: _lastSpokenText.slice(0, 120),
     });
-    refreshBuildLine(null);   // the build marker + the settings in force, before the pane is opened
+    refreshBuildLine(null);   // the marker at once, so the line is never blank…
+    refreshGeminiKeyStatus(); // …then the server's own marker, so a stale page says so before Settings is opened
 
     /* ══ THE EARS — always listening, and one button to silence them ═════════
        The owner's report: "the mic works but it does not stay on — I have to
@@ -5922,5 +6202,6 @@
 
     buildDesktop();
   </script>
+  <script src="/static/brain-ui.js"></script>
 </body>
 </html>
