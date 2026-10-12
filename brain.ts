@@ -26,6 +26,8 @@ const TOPIC_STATUSES = new Set(['active', 'paused', 'completed', 'archived']);
 const TASK_STATUSES = new Set(['open', 'in_progress', 'blocked', 'completed', 'cancelled']);
 const SENSITIVE = /\b(password|passcode|secret|api[\s_-]*key|access[\s_-]*token|refresh[\s_-]*token|private[\s_-]*key|seed[\s_-]*phrase|credit[\s_-]*card|bank[\s_-]*account|social[\s_-]*security|ssn)\b/i;
 const CREDENTIAL_VALUE = /\b(?:password|passcode|api[\s_-]*key|access[\s_-]*token|refresh[\s_-]*token|private[\s_-]*key|seed[\s_-]*phrase|secret)\b\s*(?:is|=|:)\s*[^\s,;]{1,}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}/i;
+const SAFE_CREDENTIAL_REFERENCE = /^(?:(?:use|check|see|look(?:\s+at)?|read|ask|refer(?:\s+to)?|find)\b|the one\s+(?:on|in|at|under|behind|inside|next to)\b)/i;
+const SAFE_CREDENTIAL_LOCATION = /\b(?:sticker|label|fridge|router|password manager|vault|note|document|paper|envelope|drawer|cabinet|safe|administrator|admin|IT|written|desk)\b/i;
 const STOP = new Set(('a about after again all also am an and any are as at be because been before being between but by can could did do does doing done for from get go going got had has have he her here hers him his how i if in into is it its just me my of on or our ours please she so some that the their them then there they this those to up us was we were what when where which who will with would you your').split(' '));
 const LEGACY_SOURCES = [
   'memory/dashboard_history.json',
@@ -114,7 +116,22 @@ export function containsSensitiveContent(value: unknown): boolean {
   const text = clean(value, 12_000);
   return SENSITIVE.test(text) || CREDENTIAL_VALUE.test(text);
 }
-export function looksLikeCredentialInput(value: unknown): boolean { return CREDENTIAL_VALUE.test(clean(value, 4_000)); }
+export function looksLikeCredentialInput(value: unknown): boolean {
+  const text = clean(value, 4_000);
+  const teaching = text.match(/^\s*(?:learn|teach)(?:\s+that)?\s*:\s*(.*?)\s*=\s*(.+)$/i);
+  if (teaching && SENSITIVE.test(teaching[1]) && SAFE_CREDENTIAL_REFERENCE.test(teaching[2])
+      && SAFE_CREDENTIAL_LOCATION.test(teaching[2])) {
+    const answer = clean(teaching[2], 2_000);
+    const words = answer.match(/[a-z0-9]+/gi) || [];
+    const likelySecret = CREDENTIAL_VALUE.test(answer)
+      || /\b\d{4,}\b/.test(answer)
+      || /\b[A-Za-z0-9._~+/-]*\d[A-Za-z0-9._~+/-]*\b/.test(answer)
+      || /\b[A-Za-z0-9._~+/-]{12,}\b/.test(answer)
+      || (words.length <= 3 && words.some((word) => word.length >= 7));
+    if (!likelySecret) return false;
+  }
+  return CREDENTIAL_VALUE.test(text);
+}
 function terms(value: unknown): string[] {
   return clean(value, 12_000).toLocaleLowerCase().match(/[a-z0-9]+/g)?.filter((word) => word.length > 1 && !STOP.has(word)) || [];
 }

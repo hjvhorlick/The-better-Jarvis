@@ -215,7 +215,7 @@ function decodeWav(b64) {
       String(reply.reply).slice(0, 90));
     const chatCall = srv.stub.calls.findLast((c) => c.kind === 'stream');
     const gen = chatCall?.body?.generationConfig || {};
-    const sentPrompt = (chatCall?.body?.contents || []).flatMap((c) => c.parts || []).map((p) => p.text || '').join('\n');
+    const sentPrompt = JSON.stringify(chatCall?.body || {});
     ok('ordinary answers use a small output cap instead of a long-answer budget',
       gen.maxOutputTokens === 128, JSON.stringify(gen));
     ok('…and the model is explicitly asked to keep ordinary chat brief',
@@ -228,7 +228,7 @@ function decodeWav(b64) {
     const detailReply = (await post(srv, '/api/command', { text: 'explain in detail how an induction motor starts' })).body;
     const detailCall = srv.stub.calls.filter((c) => c.kind === 'stream').at(-1);
     const detailGen = detailCall?.body?.generationConfig || {};
-    const detailPrompt = (detailCall?.body?.contents || []).flatMap((c) => c.parts || []).map((p) => p.text || '').join('\n');
+    const detailPrompt = JSON.stringify(detailCall?.body || {});
     ok('an explicit request for detail keeps the larger output budget', detailGen.maxOutputTokens === 900, JSON.stringify(detailGen));
     ok('…and is not forced into the short-answer rule', !/35 words or fewer/.test(detailPrompt), detailPrompt.slice(-120));
     void detailReply;

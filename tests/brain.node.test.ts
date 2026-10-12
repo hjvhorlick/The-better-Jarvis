@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { BrainStore, BrainStoreError } from '../brain.js';
+import { BrainStore, BrainStoreError, looksLikeCredentialInput } from '../brain.js';
 
 function fixture(): { root: string; brain: BrainStore; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'supper-brain-node-'));
@@ -132,6 +132,14 @@ test('Node Brain redacts credential-like dialogue and excludes legacy secrets fr
     assert.equal(brain.searchMemories('API key ABCD SECRET VALUE').length, 0);
     assert.equal(brain.buildBrainContext('API key ABCD SECRET VALUE', topic.id).includes('ABCD-SECRET-VALUE'), false);
   } finally { cleanup(); }
+});
+
+test('credential filtering allows safe local password-location notes but blocks actual values', () => {
+  assert.equal(looksLikeCredentialInput('learn: what is the office wifi password = Use the blue sticker on the router.'), false);
+  assert.equal(looksLikeCredentialInput('learn: what is the office wifi password = the one on the fridge, sir'), false);
+  assert.equal(looksLikeCredentialInput('learn: what is the office wifi password = Use hunter2'), true);
+  assert.equal(looksLikeCredentialInput('learn: what is the office wifi password = Use green bird house'), true);
+  assert.equal(looksLikeCredentialInput('My password is hunter2'), true);
 });
 
 test('Node Brain refuses corrupt memory and reports partial migration without overwriting the source', () => {
