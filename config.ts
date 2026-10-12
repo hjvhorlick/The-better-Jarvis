@@ -14,16 +14,12 @@
  *          (the same order as backend/config.py: get_gemini_api_key();
  *           the same key every actions/*.py reads)
  *
- *   MODEL  SUPPER_TEXT_MODEL  (the app's own setting)
- *          then GEMINI_MODEL   (kept working from an earlier session)
- *          then DEFAULT_TEXT_MODEL = "gemini-flash-latest", the app's moving
- *               alias (backend/config.py). Never a pinned version number:
- *               pinned names are what break when Google retires a model.
- *          API discovery (ai.models.list()) is only ever a last resort after
- *          every configured candidate has failed — never the decision-maker.
- *          The model that last worked is remembered in
- *          runtime/dashboard_models.json, and re-discovery happens only when
- *          nothing configured works any more.
+ *   MODEL  SUPPER_TEXT_MODEL (the app's own setting), then GEMINI_MODEL.
+ *          Known Gemini 2.5 text overrides are migrated to CURRENT_TEXT_MODEL
+ *          because Google now restricts access to 2.5 models for accounts that
+ *          have not actively used them. The current stable model is tried before
+ *          Google's moving alias (gemini-flash-latest), then the last working
+ *          model. API discovery is the last resort after configured candidates.
  *
  *   NAMES  config/api_keys.json -> "assistant_name" / "user_name"
  *          (backend/config.py: get_assistant_name() / get_user_name())
@@ -79,9 +75,8 @@ export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json')
  * repository changing, which is exactly how "it is talking to the wrong Gemini
  * version" happens silently.
  *
- * The alias is KEPT as the first automatic fallback below, so if this pinned
- * name is ever withdrawn the app steps back onto Google's moving pointer
- * instead of breaking.
+ * Google's moving alias is kept as a fallback after the current stable model,
+ * so a withdrawn or inaccessible model does not strand the Brain on an old pin.
  */
 export const CURRENT_TEXT_MODEL = 'gemini-3.8-flash';
 /**
@@ -203,11 +198,31 @@ export function assistantName(): string { return resolveNames().assistant; }
 export interface ModelInfo { model: string; source: string; }
 export interface ModelCandidate { model: string; source: string; }
 
+function legacyTextModelReplacement(model: string): boolean {
+  // Gemini 2.5 access is now restricted to accounts that used those models before.
+  // Never let a stale environment setting pin the main Brain to that generation.
+  return /^(?:models\/)?gemini-2\.5-(?:flash|pro)(?:-|$)/i.test(model.trim());
+}
+
 export function resolveTextModel(): ModelInfo {
   const appSetting = (process.env.SUPPER_TEXT_MODEL || '').trim();
+  if (appSetting && legacyTextModelReplacement(appSetting)) {
+    return {
+      model: CURRENT_TEXT_MODEL,
+      source: `legacy SUPPER_TEXT_MODEL (${appSetting}) automatically upgraded to ${CURRENT_TEXT_MODEL}`,
+    };
+  }
   if (appSetting) return { model: appSetting, source: 'SUPPER_TEXT_MODEL' };
+
   const pinned = (process.env.GEMINI_MODEL || '').trim();
+  if (pinned && legacyTextModelReplacement(pinned)) {
+    return {
+      model: CURRENT_TEXT_MODEL,
+      source: `legacy GEMINI_MODEL (${pinned}) automatically upgraded to ${CURRENT_TEXT_MODEL}`,
+    };
+  }
   if (pinned) return { model: pinned, source: 'GEMINI_MODEL' };
+
   return { model: CURRENT_TEXT_MODEL, source: `the app's current model (${CURRENT_TEXT_MODEL})` };
 }
 
@@ -276,22 +291,30 @@ function forgetModel(kind: 'text' | 'image', model: string): void {
 }
 
 /**
- * The candidates for a task, in the order the app means them:
- * the configured setting first (it always wins), then the app's own moving
- * alias, then the model that last worked. Discovery is appended by runBrain()
- * only when every one of these has failed.
+ * Candidates are ordered so a valid owner override wins, followed by the app's
+ * verified current stable text model, Google's moving alias, and only then a
+ * remembered model. Legacy Gemini 2.5 text overrides and remembered values are
+ * normalized/removed before they can be sent to Google.
  */
 export function modelCandidates(kind: 'text' | 'image'): ModelCandidate[] {
   const list: ModelCandidate[] = [];
   const configured = kind === 'text' ? resolveTextModel() : resolveImageModel();
   if (configured.model) list.push({ model: configured.model, source: configured.source });
-  // The app's own moving alias is the configured next step when a pin or an
-  // override has been withdrawn — a model the app chose, never a discovered one.
-  if (kind === 'text' && !list.some((c) => c.model === DEFAULT_TEXT_MODEL)) {
-    list.push({ model: DEFAULT_TEXT_MODEL, source: `Google's moving alias (${DEFAULT_TEXT_MODEL}) — the fallback when the pinned name is withdrawn` });
+
+  if (kind === 'text') {
+    if (!list.some((c) => c.model === CURRENT_TEXT_MODEL)) {
+      list.push({ model: CURRENT_TEXT_MODEL, source: `the app's current stable text model (${CURRENT_TEXT_MODEL})` });
+    }
+    if (!list.some((c) => c.model === DEFAULT_TEXT_MODEL)) {
+      list.push({ model: DEFAULT_TEXT_MODEL, source: `Google's moving alias (${DEFAULT_TEXT_MODEL}) — fallback after the current stable model` });
+    }
   }
+
   const remembered = readRememberedModel(kind);
-  if (remembered && !list.some((c) => c.model === remembered)) {
+  if (remembered && kind === 'text' && legacyTextModelReplacement(remembered)) {
+    // Do not let a stale local runtime cache bring Gemini 2.5 back after migration.
+    forgetModel(kind, remembered);
+  } else if (remembered && !list.some((c) => c.model === remembered)) {
     list.push({ model: remembered, source: 'remembered as working (runtime/dashboard_models.json)' });
   }
   return list;
@@ -676,7 +699,22 @@ export function classifyGeminiError(err: unknown): ClassifiedError {
   if (status === 404 || /not_found|not found|no longer available|is not supported|does not exist|unknown model|not supported for/.test(text)) {
     return { code: 'model-unavailable', status, raw };
   }
-  if (status === 401 || status === 403 || /api[ _-]?key[ _-]?invalid|api_key_invalid|permission denied|unauthenticated|invalid api key|incorrect api key/.test(text)) {
+  const keySpecificFailure =
+    /api[ _-]?key[ _-]?invalid|api_key_invalid|unauthenticated|invalid api key|incorrect api key|key is invalid|key not valid|api[ _-]?key.*(?:not authorized|permission|denied)/.test(text);
+  if (status === 401 || keySpecificFailure) {
+    return { code: 'key-rejected', status, raw };
+  }
+  // Google can return 403 when an otherwise-valid key is not allowed to use a
+  // particular model (for example, restricted Gemini 2.5 access). Try the
+  // current stable model for an explicitly model-scoped denial. Generic 403s
+  // still indicate a key/project permission problem and must not be hidden.
+  const modelScopedDenial =
+    /\b(?:model|models\/|gemini[-\w.]+)\b/.test(text) &&
+    /\b(?:permission|access denied|not authorized|not allowed|restricted|unavailable)\b/.test(text);
+  if (status === 403 && modelScopedDenial) {
+    return { code: 'model-unavailable', status, raw };
+  }
+  if (status === 403 || /permission denied/.test(text)) {
     return { code: 'key-rejected', status, raw };
   }
   if (status === 429 || /resource_exhausted|quota|rate limit|too many requests/.test(text)) {
