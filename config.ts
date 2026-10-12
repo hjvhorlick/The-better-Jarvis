@@ -904,7 +904,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
         // Another model cannot mend a rejected key or a dead connection.
         throw new BrainError(explainBrainFailure({ code: classified.code, model: next.model, modelSource: next.source, key, raw: classified.raw, attempts }), classified.code, attempts, next.model, next.source);
       }
-      // A withdrawn name (404) or an unexplained failure: forget it and try the next candidate.
+      // A withdrawn name, model-scoped access denial, or unexplained failure: forget it and try the next candidate.
       forgetModel(opts.kind, next.model);
     }
   }
