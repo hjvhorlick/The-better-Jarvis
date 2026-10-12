@@ -19,7 +19,9 @@
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
 
-const html = readFileSync(new URL('../dashboard/static/app.html', import.meta.url), 'utf8');
+const handScript = readFileSync(new URL('../dashboard/static/hand-gestures.js', import.meta.url), 'utf8');
+const html = readFileSync(new URL('../dashboard/static/app.html', import.meta.url), 'utf8')
+  .replace('<script src="/static/hand-gestures.js"></script>', `<script>${handScript}</script>`);
 
 const results = [];
 const ok = (name, cond, extra = '') => {
@@ -181,7 +183,7 @@ function makeDom({ withSR = true, micFails = null, transcribeText = 'open the fi
       // ── network ─────────────────────────────────────────────────────────
       window.fetch = async (url, opts = {}) => {
         const body = opts.body ? JSON.parse(opts.body) : {};
-        state.fetches.push({ url: String(url), body });
+        state.fetches.push({ url: String(url), body, at: Date.now() });
         if (String(url).includes('/api/voice/transcribe')) {
           state.posts.push(body);
           return { ok: true, status: 200, json: async () => ({ ok: true, text: transcribeText }) };
@@ -252,7 +254,12 @@ async function speak(state, { loudTicks = 6, quietTicks = 16 } = {}) {
   ok('browser recogniser: microphone opened', state.micOpenCalls === 1, `calls=${state.micOpenCalls}`);
   ok('browser recogniser: state is listening', status.state === 'listening', JSON.stringify(status));
   ok('browser recogniser: listening strip shown', doc.getElementById('mic-strip').classList.contains('show'));
+  const finalAt = Date.now();
   state.sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'what is the status' }], { isFinal: true })] });
+  const immediateCommand = state.fetches.find((f) => f.url.includes('/api/command'));
+  ok('browser recogniser: a final transcript bypasses the VAD silence wait',
+     !!immediateCommand && immediateCommand.at - finalAt < 250,
+     immediateCommand ? `${immediateCommand.at - finalAt} ms after final` : 'not sent yet');
   await settle(800);
   const cmd = state.fetches.find((f) => f.url.includes('/api/command'));
   ok('browser recogniser: words became a command', cmd && cmd.body.text === 'what is the status', JSON.stringify(cmd && cmd.body));
@@ -267,9 +274,16 @@ async function speak(state, { loudTicks = 6, quietTicks = 16 } = {}) {
   await settle(200);
   ok('fallback: microphone opened', state.micOpenCalls === 1);
   ok('fallback: no recogniser noted', state.sr === null);
-  await speak(state, { loudTicks: 6, quietTicks: 16 });
+  await speak(state, { loudTicks: 6, quietTicks: 7 });
+  // Seven quiet meter ticks are enough for the faster VAD path now; the old
+  // 1.2 s threshold would still be waiting here. Give the async transcribe a
+  // single short turn before checking the timing-sensitive edge.
+  await settle(30);
+  const stoppedAfterShortPause = state.posts.length > 0;
   await settle(500);
   const sent = state.posts[0];
+  ok('fallback: the shorter silence window starts transcription promptly', stoppedAfterShortPause,
+     `transcribing=${stoppedAfterShortPause}, status=${JSON.stringify(window.jarvisMicStatus().state)}`);
   ok('fallback: audio was sent to the server transcriber', !!sent, sent ? `bytes=${Math.round((sent.pcm.length * 3) / 4)} rate=${sent.rate}` : `status=${JSON.stringify(window.jarvisMicStatus())}`);
   const cmd = state.fetches.find((f) => f.url.includes('/api/command'));
   ok('fallback: transcript became a command', cmd && cmd.body.text === 'open the files', JSON.stringify(cmd && cmd.body));
@@ -350,10 +364,12 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   const waitListening = async (ms = 3000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) {
-      if (status().listenState === 'listening') return true;
+      const current = status();
+      if (current.listenState === 'listening' && current.alwaysListening) return true;
       await settle(60);
     }
-    return status().listenState === 'listening';
+    const current = status();
+    return current.listenState === 'listening' && current.alwaysListening;
   };
   ok('always-on: microphone on by default', status().micAlwaysOn === true, JSON.stringify(status().listenState));
   ok('always-on: mode defaults to "no wake word"', status().listenMode === 'always', status().listenMode);
@@ -372,20 +388,34 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   const say = (text) => {
     state.sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] });
   };
+  const sayInterim = (text) => {
+    state.sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: false })] });
+  };
   const speakTo = async (text) => { await waitListening(); say(text); };
-  state.sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'what is the time' }], { isFinal: false })] });
+  sayInterim('what is the time');
   await settle(60);
   ok('always-on: the interim words appear in the bar', /Hearing/.test(doc.getElementById('listen-text').textContent), doc.getElementById('listen-text').textContent);
-  await speakTo('what is the time');
-  await settle(900);
+  await waitListening();
+  const finalAt = Date.now();
+  say('what is the time');
+  await settle(450);
   const firstCommands = state.fetches.filter((f) => f.url.includes('/api/command'));
+  const firstSendMs = firstCommands[0] ? firstCommands[0].at - finalAt : Infinity;
   ok('always-on: speaking (no wake word) sends the command', firstCommands.length === 1 && firstCommands[0].body.text === 'what is the time',
      JSON.stringify(firstCommands.map((f) => f.body.text)));
+  ok('always-on: final fragments are submitted with a shorter settle delay', firstSendMs <= 450,
+     `${firstSendMs} ms after the final result`);
   ok('always-on: every command carries an id', !!firstCommands[0].body.requestId, JSON.stringify(firstCommands[0].body));
 
-  // A pause in the middle of a sentence must be one command, not two.
+  // A pause in the middle of a sentence must be one command, not two. A live
+  // interim update extends the join window rather than firing the earlier final.
   await speakTo('remind me to');
-  await settle(160);
+  await settle(180);
+  sayInterim('remind me to call');
+  await settle(200);
+  const beforeContinuation = state.fetches.filter((f) => f.url.includes('/api/command'));
+  ok('always-on: active interim speech holds a pending final fragment', beforeContinuation.length === 1,
+     JSON.stringify(beforeContinuation.map((f) => f.body.text)));
   await speakTo('call the office');
   await settle(900);
   const joined = state.fetches.filter((f) => f.url.includes('/api/command'));

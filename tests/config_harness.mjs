@@ -410,8 +410,10 @@ function freePort() {
     const MODELS = { 'harness-text-model': { } };
     const srv = await startDashboard({ models: MODELS, name: 'page' });
     try {
-      const html = await (await fetch(srv.url('/'))).text();
-      ok('the server fills the assistant name into the page', html.includes('Tessa — Autonomous Workspace'), html.slice(0, 60).replace(/\n/g, ' '));
+      const pageHtml = await (await fetch(srv.url('/'))).text();
+      ok('the server fills the assistant name into the page', pageHtml.includes('Tessa — Autonomous Workspace'), pageHtml.slice(0, 60).replace(/\n/g, ' '));
+      const handScript = fs.readFileSync(path.join(REPO, 'dashboard/static/hand-gestures.js'), 'utf8');
+      const html = pageHtml.replace('<script src="/static/hand-gestures.js"></script>', `<script>${handScript}</script>`);
       const { VirtualConsole } = await import('jsdom');
       const virtualConsole = new VirtualConsole();          // jsdom's canvas warning is not our business
       virtualConsole.on('jsdomError', () => {});
@@ -426,7 +428,7 @@ function freePort() {
       await sleep(400);
 
       const buildLine = window.document.getElementById('jarvis-build-line');
-      ok('Settings → Voice shows the build marker', /Build 2026-10-11-simple-hud-2/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
+      ok('Settings → Voice shows the build marker', /Build 2026-10-11-simple-hud-4/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
       ok('…with the assistant\'s configured name', /Tessa/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
 
       await window.refreshGeminiKeyStatus();
@@ -757,6 +759,19 @@ function freePort() {
        /jarvis-rooms-hello/.test(cameraJs) && /useShared/.test(cameraJs) && /getUserMedia/.test(cameraJs) && /api\/myhands\/preview/.test(cameraJs), 'three tiers');
     ok('…and the tools stay out of the way until they are asked for', /body:not\(\.show-tools\) \.env-tools/.test(await (await fetch(srv.url('/rooms-src/styles.css'))).text()), 'simplicity');
 
+    const design = await (await fetch(srv.url('/rooms-src/environments/design.js'))).text();
+    ok('Design: the picker accepts OBJ and STL and dispatches both to real parsers',
+       /fileInput\.accept = [^;]*\.obj[^;]*\.stl/.test(design) && /new OBJLoader/.test(design) && /new STLLoader/.test(design), 'OBJLoader + STLLoader');
+    ok('Design: the framing call uses Three.js Box3.getCenter, not the nonexistent getCentre',
+       /box\.getCenter\(/.test(design) && !/box\.getCentre\(/.test(design), 'valid bounds centre');
+    ok('Design: OBJ companion materials are parsed and the vendored MTL loader is served',
+       /findObjMaterialLibrary/.test(design) && /new MTLLoader/.test(design) &&
+         (await fetch(srv.url('/vendor/three/loaders/MTLLoader.js'))).status === 200, 'OBJ + MTL + local texture paths');
+    ok('Design: My Hands cursor is mapped to the real viewport and moves on a camera-facing drag plane',
+       /mapSharedCursorToRoom/.test(design) && /frameElement/.test(design) && /ray\.intersectPlane/.test(design), 'screen-to-room ray drag');
+    ok('Design: the import prompt clears away after a model is framed',
+       /host\.classList\.add\("has-model"\)/.test(design) && /\.d3\.has-model \.d3-drop \{ display: none; \}/.test(await (await fetch(srv.url('/rooms-src/styles.css'))).text()), 'clear model view');
+
     // (b) the drafting desk: written here, never by the AI
     const before = srv.stub.calls.length;
     const draft = await post(srv, '/api/command', { text: 'draft an email to the plumber about the leaking pipe in the kitchen' });
@@ -788,12 +803,14 @@ function freePort() {
     ok('drafting: the drafts are listed by number', /You have 2 drafts/.test(String(list.body.reply)) && /1\. email to the plumber/.test(String(list.body.reply)), String(list.body.reply).split('\n')[1] || '');
     const read = await post(srv, '/api/command', { text: 'read draft 1' });
     ok('drafting: a draft can be read back in full', /Hello,/.test(String(read.body.reply)) && /leaking pipe/.test(String(read.body.reply)), String(read.body.reply).split('\n')[1] || '');
-    const gone = await post(srv, '/api/command', { text: 'delete draft 1' });
-    ok('drafting: a draft can be thrown away, file and all',
-       /Draft 1 is gone/.test(String(gone.body.reply)) && !fs.readdirSync(dir).some((f) => f.startsWith('0001')), String(gone.body.reply).slice(0, 60));
-    ok('…and the desk still answers for what is left', fs.readdirSync(dir).some((f) => f.includes('note')), fs.readdirSync(dir).join(','));
+    const blockedDelete = await post(srv, '/api/command', { text: 'delete draft 1' });
+    ok('drafting: chat/voice deletion is refused until interface confirmation',
+       /will not delete draft 1/.test(String(blockedDelete.body.reply)) && fs.readdirSync(dir).filter((f) => f.endsWith('.txt')).length === 2,
+       String(blockedDelete.body.reply).slice(0, 90));
+    ok('…and both plain-text drafts remain intact', fs.readdirSync(dir).some((f) => f.includes('email')) && fs.readdirSync(dir).some((f) => f.includes('note')), fs.readdirSync(dir).join(','));
 
-    ok('drafting: the status reports the desk', (await get(srv, '/api/system-status')).body.drafts && (await get(srv, '/api/system-status')).body.drafts.count === 1, 'drafts.count');
+    const draftingStatus = await get(srv, '/api/system-status');
+    ok('drafting: the status reports the desk', draftingStatus.body.drafts && draftingStatus.body.drafts.count === 2, 'drafts.count');
     ok('…and the honest guard now points at it', /drafting desk/.test(String((await post(srv, '/api/command', { text: 'book a flight to Durban for Friday' })).body.reply)), 'no local tool message');
 
     // (c) the camera and the tools, by voice, for nothing

@@ -795,23 +795,28 @@
       pointer-events: none; z-index: 990;
     }
     .hand-cursor {
-      position: absolute; width: 34px; height: 34px;
+      position: absolute; left: 0; top: 0; width: 34px; height: 34px;
       border-radius: 50%; border: 2px solid rgba(16, 185, 129, 0.9);
       background: rgba(16, 185, 129, 0.15);
-      transform: translate(-50%, -50%);
-      pointer-events: none; z-index: 995;
+      transform: translate3d(var(--cursor-x, 50vw), var(--cursor-y, 50vh), 0) translate(-50%, -50%);
+      pointer-events: none; z-index: 995; will-change: transform;
       display: none; transition: width 0.1s ease, height 0.1s ease, background 0.1s ease;
     }
     .hand-cursor.pinched {
       background: rgba(16, 185, 129, 0.9);
       box-shadow: 0 0 28px rgba(16, 185, 129, 0.95);
-      border-color: var(--jg-gold-pale); transform: translate(-50%, -50%) scale(0.85);
+      border-color: var(--jg-gold-pale);
+      transform: translate3d(var(--cursor-x, 50vw), var(--cursor-y, 50vh), 0) translate(-50%, -50%) scale(0.85);
     }
     .hand-cursor.fist {
       background: rgba(239, 68, 68, 0.85);
       border-color: var(--jg-gold-pale);
       box-shadow: 0 0 32px rgba(239, 68, 68, 0.9);
-      transform: translate(-50%, -50%) scale(1.15);
+      transform: translate3d(var(--cursor-x, 50vw), var(--cursor-y, 50vh), 0) translate(-50%, -50%) scale(1.15);
+    }
+    .hand-cursor.pulling {
+      border-color: #c084fc; background: rgba(192, 132, 252, 0.72);
+      box-shadow: 0 0 30px rgba(192, 132, 252, 0.85);
     }
     .hand-cursor.dwelling {
       border-color: var(--accent);
@@ -1260,7 +1265,6 @@
         <span class="status-dot"></span>
         <span id="status-txt">Online</span>
       </div>
-      <div class="status-pill" id="enc-badge" style="font-size: 10px;">AES-256</div>
     </div>
   </header>
 
@@ -1477,10 +1481,14 @@
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
             <div style="display: flex; justify-content: space-between; width: 100%; align-items: center;">
               <span class="settings-label">1. Precision Pinch Sensitivity</span>
-              <span class="settings-desc" id="lbl-pinch-thresh" style="font-weight:700; color:var(--emerald);">52 px</span>
+              <span class="settings-desc" id="lbl-pinch-thresh" style="font-weight:700; color:var(--emerald);">0.30×</span>
             </div>
-            <span class="settings-desc">Bring thumb tip & index tip together to grab windows</span>
-            <input type="range" class="range-input" min="30" max="85" value="52" id="rng-pinch" oninput="updatePinchThreshold(this.value)">
+            <span class="settings-desc">Touch thumb + index; keep the other three arched (tested OK-sign pinch). Lower values require a closer touch.</span>
+            <input type="range" class="range-input" min="18" max="50" value="30" id="rng-pinch" oninput="updatePinchThreshold(this.value)">
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button class="preset-btn" type="button" onclick="toggleHandDiagnostics()">D · Live hand metrics</button>
+              <button class="preset-btn" type="button" onclick="sampleHandPose()">P · Sample pose (4 s)</button>
+            </div>
           </div>
 
           <!-- Fist Grab -->
@@ -1595,7 +1603,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-simple-hud-2 — the model and the key's source appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-simple-hud-4 — the model and the key's source appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1716,22 +1724,23 @@
        stay visible — they are the same in every room. A hand sweep, a voice
        command or Esc moves the rooms; there is no chrome and no close button. -->
   <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:260px; right:0; bottom:0;
-       z-index:900; background:#141519;
+       z-index:900; background:transparent;
        border:1px solid var(--jg-line); border-right:none;
-       box-shadow:-40px 0 120px rgba(0,0,0,0.8), 0 0 var(--jg-glow-size) var(--jg-glow);
+       box-shadow:0 0 var(--jg-glow-size) var(--jg-glow);
        transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);">
-    <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:#141519;"></iframe>
+    <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:transparent;"></iframe>
   </div>
 
   <!-- TOAST NOTIFICATION -->
   <div id="hud-toast"></div>
 
   <!-- SCRIPT LOGIC -->
+  <script src="/static/hand-gestures.js"></script>
   <script>
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-11-simple-hud-2';
+    const JARVIS_BUILD = '2026-10-11-simple-hud-4';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -3059,7 +3068,7 @@
     // ── MY HANDS GESTURE ENGINE & TUNING ──
     let handTrackingActive = false;
     let handTrackerLoaded = false;
-    let pinchThreshold = 52;
+    let pinchThreshold = 0.30;
     let fistGrabEnabled = true;
     let dwellGrabEnabled = true;
     let dwellDuration = 750;
@@ -3083,8 +3092,145 @@
     resizeOverlay();
 
     function updatePinchThreshold(val) {
-      pinchThreshold = parseInt(val, 10);
-      document.getElementById('lbl-pinch-thresh').textContent = `${pinchThreshold} px`;
+      pinchThreshold = Math.max(0.18, Math.min(0.50, parseInt(val, 10) / 100));
+      document.getElementById('lbl-pinch-thresh').textContent = `${pinchThreshold.toFixed(2)}×`;
+    }
+
+    // The slider scales Barehands' two measured 2D gates (frontal/profile),
+    // rather than assuming every hand is the same size or using noisy z depth.
+    function pinchEnterThreshold(frame) {
+      const measured = Number(frame && frame.pinchGate);
+      const base = Number.isFinite(measured) && measured > 0 ? measured : 0.30;
+      return Math.max(0.12, Math.min(0.75, base * (pinchThreshold / 0.30)));
+    }
+    function pinchExitThreshold(frame) {
+      const enter = pinchEnterThreshold(frame);
+      return Math.min(0.95, Math.max(enter + 0.13, pinchThreshold + 0.25));
+    }
+
+    let handDiagnosticsPanel = null;
+    let handDiagnosticsOn = false;
+    let handPoseSampler = null;
+    let handSampleSummary = '';
+
+    function ensureHandDiagnosticsPanel() {
+      if (handDiagnosticsPanel) return handDiagnosticsPanel;
+      handDiagnosticsPanel = document.createElement('pre');
+      handDiagnosticsPanel.id = 'myhands-diagnostics';
+      handDiagnosticsPanel.style.cssText = [
+        'position:fixed', 'top:84px', 'right:16px', 'z-index:2000',
+        'max-width:min(430px, calc(100vw - 32px))', 'padding:10px 12px',
+        'border:1px solid rgba(255,214,10,.55)', 'border-radius:10px',
+        'background:rgba(8,10,14,.88)', 'color:#e8edf2',
+        'font:12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace',
+        'white-space:pre-wrap', 'pointer-events:none', 'display:none',
+      ].join(';');
+      document.body.appendChild(handDiagnosticsPanel);
+      return handDiagnosticsPanel;
+    }
+
+    function toggleHandDiagnostics() {
+      handDiagnosticsOn = !handDiagnosticsOn;
+      const panel = ensureHandDiagnosticsPanel();
+      panel.style.display = handDiagnosticsOn ? 'block' : 'none';
+      toast(handDiagnosticsOn ? 'Live hand metrics on (D toggles; P samples for 4 seconds)' : 'Live hand metrics hidden');
+    }
+    window.toggleHandDiagnostics = toggleHandDiagnostics;
+
+    function sampleHandPose() {
+      if (!handTrackingActive && !mouseHandActive) {
+        toast('Turn on My Hands or Mouse Hand before sampling');
+        return;
+      }
+      const panel = ensureHandDiagnosticsPanel();
+      handDiagnosticsOn = true;
+      panel.style.display = 'block';
+      handSampleSummary = '';
+      handPoseSampler = { started: performance.now(), until: performance.now() + 4000, rows: [] };
+      const sampler = handPoseSampler;
+      panel.textContent = 'Sampling 4 seconds — hold ONE pose steady (open, OK pinch, or fist)…';
+      toast('Sampling this hand pose for 4 seconds — keep it steady');
+      setTimeout(() => {
+        if (handPoseSampler !== sampler) return;
+        const rows = sampler.rows;
+        handPoseSampler = null;
+        if (!rows.length) {
+          handSampleSummary = 'No hand frames collected. Check lighting/camera, then sample again.';
+          panel.textContent = handSampleSummary;
+          toast('No hand frames sampled');
+          return;
+        }
+        const median = (key) => {
+          const values = rows.map((row) => row[key]).filter(Number.isFinite).sort((a, b) => a - b);
+          return values.length ? values[Math.floor(values.length / 2)] : NaN;
+        };
+        const range = (key) => {
+          const values = rows.map((row) => row[key]).filter(Number.isFinite);
+          return values.length ? `${Math.min(...values).toFixed(2)}–${Math.max(...values).toFixed(2)}` : 'n/a';
+        };
+        const summary = {
+          samples: rows.length,
+          pinchRatio: { median: median('ratio'), range: range('ratio') },
+          touchGapScreenPx: { median: median('gapPx'), range: range('gapPx') },
+          palmAspect: { median: median('aspect'), range: range('aspect') },
+          indexReach: { median: median('indexReach'), range: range('indexReach') },
+          otherFingersReach: { median: median('backMean'), range: range('backMean') },
+          pinchSignaturePercent: Math.round(rows.filter((row) => row.signature).length * 100 / rows.length),
+          impossibleHandPercent: Math.round(rows.filter((row) => row.garbage).length * 100 / rows.length),
+        };
+        const report = `POSE SAMPLE · ${summary.samples} frames\n` +
+          `2D gap / palm ratio: ${summary.pinchRatio.median.toFixed(3)} [${summary.pinchRatio.range}]\n` +
+          `Screen gap: ${summary.touchGapScreenPx.median.toFixed(1)} px [${summary.touchGapScreenPx.range}]\n` +
+          `Palm aspect: ${summary.palmAspect.median.toFixed(2)} [${summary.palmAspect.range}]\n` +
+          `Index reach: ${summary.indexReach.median.toFixed(2)} · other fingers: ${summary.otherFingersReach.median.toFixed(2)}\n` +
+          `Barehands pinch signature: ${summary.pinchSignaturePercent}% · impossible geometry: ${summary.impossibleHandPercent}%\n` +
+          `Copy this JSON from the browser console if needed.`;
+        handSampleSummary = report;
+        panel.textContent = report;
+        console.info('[My Hands pose sample]', summary);
+        toast('Pose sample complete — measurements shown in the diagnostics panel');
+      }, 4100);
+    }
+    window.sampleHandPose = sampleHandPose;
+
+    window.addEventListener('keydown', (event) => {
+      if (!handTrackingActive || event.ctrlKey || event.metaKey || event.altKey ||
+          ['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) return;
+      if (event.key.toLowerCase() === 'd') toggleHandDiagnostics();
+      if (event.key.toLowerCase() === 'p') sampleHandPose();
+    });
+
+    function updateHandDiagnostics(frame, gapPx, cursorX, cursorY, handSpeed, state) {
+      const ratio = Number(frame.pinchRatio) || 0;
+      const reach = frame.fingerReach || {};
+      const row = {
+        ratio,
+        gapPx,
+        aspect: Number(frame.aspect) || 0,
+        indexReach: Number(reach.index) || 0,
+        backMean: Number(reach.backMean) || 0,
+        signature: Boolean(frame.pinchSignature),
+        garbage: Boolean(frame.handGarbage),
+      };
+      const sampler = handPoseSampler;
+      if (sampler && performance.now() <= sampler.until) sampler.rows.push(row);
+      if (!handDiagnosticsOn) return;
+      const panel = ensureHandDiagnosticsPanel();
+      const video = bgCam && bgCam.videoWidth > 0
+        ? `${bgCam.videoWidth}×${bgCam.videoHeight}` : 'not ready';
+      const gate = pinchEnterThreshold(frame);
+      const mode = row.aspect < 2 ? 'profile lane' : 'frontal lane';
+      const lines = [
+        'MY HANDS · D hides · P samples current pose for 4s',
+        `Camera ${video} → viewport ${window.innerWidth}×${window.innerHeight} (mirrored object-fit: cover)`,
+        `Pinch 2D gap/palm ${ratio.toFixed(3)} · enter ${gate.toFixed(3)} · release ${pinchExitThreshold(frame).toFixed(3)}`,
+        `Shape ${mode} · aspect ${row.aspect.toFixed(2)} · signature ${row.signature ? 'OK' : 'no'} · impossible ${row.garbage ? 'yes' : 'no'}`,
+        `Finger reach index ${row.indexReach.toFixed(2)} · other three ${row.backMean.toFixed(2)}`,
+        `Touch gap ${gapPx.toFixed(1)} screen px · cursor ${Math.round(cursorX)},${Math.round(cursorY)} · speed ${Math.round(handSpeed)} px/s`,
+        `Gesture ${state.pinching ? 'PINCH' : state.fist ? 'FIST' : 'pointer'}${sampler ? ` · sampling ${Math.max(0, (sampler.until - performance.now()) / 1000).toFixed(1)} s` : ''}`,
+      ];
+      if (!sampler && handSampleSummary) lines.push('', handSampleSummary);
+      panel.textContent = lines.join('\n');
     }
 
     function toggleFistGrab() {
@@ -3140,8 +3286,8 @@
         btnHands.classList.add('active');
         if (swHands) swHands.classList.add('on');
         dotHands.classList.add('active');
-        txtHandsStatus.textContent = 'My Hands: Active';
-        toast('My Hands tracking active: Pinch or Clench to grab');
+        txtHandsStatus.textContent = 'My Hands: Starting…';
+        toast('Starting My Hands — pinch to grab, two hands to scale');
         startHandTrackingLoop();
       }
     }
@@ -3155,71 +3301,88 @@
     // sweeps the rooms in and slides between them; a fast downward sweep
     // dismisses them. No mouse, no keyboard, no buttons.
     let handsBus = null;
+    const gestureQueue = [];
+    function flushGestureQueue() {
+      if (!handsBus || handsBus.readyState !== WebSocket.OPEN) return;
+      while (gestureQueue.length) {
+        try { handsBus.send(JSON.stringify(gestureQueue.shift())); }
+        catch (_) { break; }
+      }
+    }
     function ensureHandsBus() {
-      if (handsBus && handsBus.readyState <= 1) return;
+      if (handsBus && handsBus.readyState <= WebSocket.OPEN) return;
       try {
         const proto = location.protocol === 'https:' ? 'wss' : 'ws';
         handsBus = new WebSocket(`${proto}://${location.host}/ws/myhands`);
+        handsBus.addEventListener('open', flushGestureQueue);
       } catch (_) { handsBus = null; }
     }
     function busSend(ev) {
-      if (handsBus && handsBus.readyState === 1) {
-        try { handsBus.send(JSON.stringify(ev)); } catch (_) { /* bus hiccup */ }
+      ensureHandsBus();
+      if (handsBus && handsBus.readyState === WebSocket.OPEN) {
+        try { handsBus.send(JSON.stringify(ev)); } catch (_) { /* reconnect on the next frame */ }
+        return;
+      }
+      // Preserve state transitions while the socket connects. Cursor updates
+      // collapse to the newest point, so reconnect never replays a stale trail.
+      if (ev.type === 'cursor_moved') {
+        const i = gestureQueue.findIndex((item) => item.type === 'cursor_moved');
+        if (i >= 0) gestureQueue[i] = ev; else gestureQueue.push(ev);
+      } else {
+        gestureQueue.push(ev);
+      }
+      while (gestureQueue.length > 64) {
+        const cursor = gestureQueue.findIndex((item) => item.type === 'cursor_moved');
+        gestureQueue.splice(cursor >= 0 ? cursor : 0, 1);
       }
     }
 
-    const gest = { present: false, pinch: false, fist: false, scaling: false, scaleBase: 0, clapped: false };
+    const gestureEngine = window.JarvisHandGestures.createGestureEngine({ send: busSend });
+    const gest = { present: false, pinch: false, fist: false, scaling: false, pulling: false };
     const sweepTrail = { samples: [], lastFire: 0 };
 
-    function publishGesture(cursorX, cursorY, isPinching, isFist) {
+    function publishGesture(cursorX, cursorY, frame, handSpeed = 0) {
       ensureHandsBus();
-      if (!gest.present) { gest.present = true; busSend({ type: 'hand_detected' }); }
-      busSend({ type: 'cursor_moved', x: cursorX / window.innerWidth, y: cursorY / window.innerHeight });
-      if (isPinching !== gest.pinch) {
-        gest.pinch = isPinching;
-        busSend({ type: isPinching ? 'pinch_started' : 'pinch_released' });
-      }
-      if (isFist !== gest.fist) {
-        gest.fist = isFist;
-        busSend({ type: isFist ? 'fist_started' : 'fist_released' });
-      }
-      detectSweep(cursorX, cursorY, isPinching || isFist);
+      const state = gestureEngine.updateFrame(frame, {
+        now: performance.now(),
+        cursorX: cursorX / window.innerWidth,
+        cursorY: cursorY / window.innerHeight,
+        pinchOn: pinchEnterThreshold(frame),
+        pinchOff: pinchExitThreshold(frame),
+        fistEnabled: fistGrabEnabled,
+        handSpeed,
+        pinchCarry: Boolean(handGrabbedWin),
+      });
+      gest.present = state.present;
+      gest.pinch = state.pinching;
+      gest.fist = state.fist;
+      gest.pulling = state.pulling;
+      detectSweep(cursorX, cursorY, state.pinching || state.fist || state.pulling);
+      return state;
     }
 
     function publishHandsLost() {
-      if (!gest.present) return;
-      gest.present = false;
-      if (gest.pinch) { gest.pinch = false; busSend({ type: 'pinch_released' }); }
-      if (gest.fist) { gest.fist = false; busSend({ type: 'fist_released' }); }
-      if (gest.scaling) { gest.scaling = false; busSend({ type: 'scale_ended' }); }
-      busSend({ type: 'hand_lost' });
+      gestureEngine.loseHand(performance.now());
+      gest.present = gest.pinch = gest.fist = gest.scaling = gest.pulling = false;
+      if (handGrabbedWin) {
+        handGrabbedWin.classList.remove('grabbed');
+        if (handGrabbedWin.classList.contains('desk-icon')) {
+          const label = handGrabbedWin.querySelector('.lbl');
+          if (label) deskSavePos(label.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
+        }
+        FoleyAudio.place();
+        handGrabbedWin = null;
+      }
+      handCursor.classList.remove('pinched', 'fist', 'pulling');
       sweepTrail.samples = [];
     }
 
-    // Two hands: the distance between the wrists scales the work; bringing
-    // the palms together is a clap, which centres it.
-    function publishTwoHands(all) {
-      if (all.length >= 2) {
-        const a = all[0][0], b = all[1][0];
-        const dist = Math.hypot(a.x - b.x, a.y - b.y, (a.z || 0) - (b.z || 0));
-        if (!gest.scaling) {
-          gest.scaling = true;
-          gest.scaleBase = Math.max(dist, 0.01);
-          busSend({ type: 'scale_started' });
-        } else {
-          busSend({ type: 'scale_delta', factor: dist / gest.scaleBase });
-        }
-        if (dist < 0.09 && !gest.clapped) {
-          gest.clapped = true;
-          busSend({ type: 'clap' });
-        } else if (dist > 0.22) {
-          gest.clapped = false;
-        }
-      } else if (gest.scaling) {
-        gest.scaling = false;
-        gest.clapped = false;
-        busSend({ type: 'scale_ended' });
-      }
+    // Whole-hand rules: two hands scale in 3D, fast closing palms clap, and a
+    // held half-curl can pull a model toward the camera. Recognition is shared
+    // with the tested, dependency-free gesture engine.
+    function publishTwoHands(frames) {
+      const state = gestureEngine.updateHands(frames, performance.now());
+      gest.scaling = state.scaling;
     }
 
     // The sweep: an OPEN hand (no pinch, no fist — a grab must never slide the
@@ -3252,13 +3415,25 @@
 
     // MediaPipe Hand Landmarker loop
     let landmarker = null;
+    let handTrackerLoading = null;
+    let handLoopStarted = false;
     let handGrabbedWin = null;
     let grabOffsetX = 0, grabOffsetY = 0;
     let dwellAnchor = { x: 0, y: 0, startTime: 0, activeWin: null };
 
-    async function startHandTrackingLoop() {
-      if (!handTrackerLoaded) {
-        try {
+    function screenPointForCameraLandmark(lm) {
+      const mapper = window.JarvisHandGestures && window.JarvisHandGestures.mapToCover;
+      if (mapper && bgCam && bgCam.videoWidth > 0 && bgCam.videoHeight > 0) {
+        return mapper(lm, bgCam.videoWidth, bgCam.videoHeight,
+          window.innerWidth, window.innerHeight, true);
+      }
+      return { x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight };
+    }
+
+    async function loadHandTracker() {
+      if (landmarker) return landmarker;
+      if (!handTrackerLoading) {
+        handTrackerLoading = (async () => {
           const { FilesetResolver, HandLandmarker } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
           const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
           landmarker = await HandLandmarker.createFromOptions(vision, {
@@ -3268,46 +3443,63 @@
             },
             numHands: 2,
             runningMode: "VIDEO",
-            // Tuned for speed: find the hand a little more eagerly, and keep
-            // TRACKING it rather than falling back to the slow re-detection.
-            minHandDetectionConfidence: 0.5,
-            minHandPresenceConfidence: 0.4,
+            // Match Barehands' measured fresh-detection confidence: this
+            // reduces low-confidence finger jitter/phantom hands in clutter.
+            minHandDetectionConfidence: 0.7,
+            minHandPresenceConfidence: 0.5,
             minTrackingConfidence: 0.5
           });
           handTrackerLoaded = true;
-        } catch (e) {
-          console.warn('Could not load MediaPipe landmarker, falling back to simulated hand:', e);
-          enableMouseHand();
-        }
+          return landmarker;
+        })();
       }
+      try { return await handTrackerLoading; }
+      catch (err) { handTrackerLoading = null; throw err; }
+    }
+
+    async function startHandTrackingLoop() {
+      try {
+        await loadHandTracker();
+      } catch (e) {
+        console.warn('Could not load MediaPipe landmarker, falling back to simulated hand:', e);
+        txtHandsStatus.textContent = 'Mouse Hand: Active (camera tracker unavailable)';
+        enableMouseHand();
+        return;
+      }
+      if (!handTrackingActive || handLoopStarted) return;
+      handLoopStarted = true;
+      txtHandsStatus.textContent = 'My Hands: Active';
 
       let lastVideoTime = -1;
 
       function processNow(now) {
-        if (landmarker && bgCam && bgCam.currentTime !== lastVideoTime && bgCam.videoWidth > 0) {
-          lastVideoTime = bgCam.currentTime;
-          const res = landmarker.detectForVideo(bgCam, now);
-          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        if (!landmarker || !bgCam || bgCam.currentTime === lastVideoTime || bgCam.videoWidth <= 0) return;
+        lastVideoTime = bgCam.currentTime;
+        const res = landmarker.detectForVideo(bgCam, now);
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
 
-          if (res.landmarks && res.landmarks.length > 0) {
-            const lms = res.landmarks[0];
-            publishTwoHands(res.landmarks);
-            processHandLandmarks(lms);
-          } else {
-            handCursor.style.display = 'none';
-            resetDwell();
-            resetHandFilter();
-            publishHandsLost();
-          }
+        const landmarks = (res.landmarks || []).slice(0, 2);
+        if (!landmarks.length) {
+          handCursor.style.display = 'none';
+          resetDwell();
+          resetHandFilter();
+          publishHandsLost();
+          return;
         }
+
+        const frames = landmarks.map((lms) => window.JarvisHandGestures.summarizeHand(lms));
+        for (const lms of landmarks) drawHandSkeleton(lms, screenPointForCameraLandmark);
+        publishTwoHands(frames);
+        processHandLandmarks(landmarks[0], frames[0], false, screenPointForCameraLandmark);
       }
 
-      // The fast path: run the moment the camera delivers a frame, instead of
-      // waiting for the next screen paint. Falls back to rAF where missing.
+      // The fast path runs on each delivered camera frame rather than waiting
+      // for screen paint. Stop rescheduling as soon as My Hands is switched off.
       if (bgCam && typeof bgCam.requestVideoFrameCallback === 'function') {
         const onFrame = (now) => {
           if (!handTrackingActive) {
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            handLoopStarted = false;
             return;
           }
           processNow(now);
@@ -3318,6 +3510,7 @@
         const trackingFrame = (now) => {
           if (!handTrackingActive) {
             overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+            handLoopStarted = false;
             return;
           }
           processNow(now);
@@ -3332,13 +3525,13 @@
     // almost raw — the smoothing falls away as speed rises, so there is no
     // lag when you move like you mean it. On top of that, a short velocity
     // lead cancels the camera-to-screen pipeline delay when the hand is free.
-    const euro = { x: null, y: null, dx: 0, dy: 0, t: 0, minCutoff: 1.4, beta: 0.04, dcutoff: 1.0 };
-    const HAND_LEAD_S = 0.06; // seconds of velocity lead while not grabbing
+    const euro = { x: null, y: null, dx: 0, dy: 0, t: 0, dcutoff: 1.0 };
+    const HAND_LEAD_S = 0.06; // predict through the camera-to-screen delay when the hand is free
     function euroAlpha(cutoff, dt) {
       const r = 2 * Math.PI * cutoff * dt;
       return r / (r + 1);
     }
-    function filterHand(rx, ry) {
+    function filterHand(rx, ry, grabbingHint = false) {
       const now = performance.now();
       if (euro.x === null) {
         euro.x = rx; euro.y = ry; euro.dx = 0; euro.dy = 0; euro.t = now;
@@ -3352,93 +3545,85 @@
       euro.dx += ad * (vx - euro.dx);
       euro.dy += ad * (vy - euro.dy);
       const speed = Math.hypot(euro.dx, euro.dy);
-      const a = euroAlpha(euro.minCutoff + euro.beta * speed, dt);
+      // Follow a grab more tightly than a pointer: movement is high consequence,
+      // so spend less time smoothing it. Fast motion also opens the filter up.
+      const minCutoff = grabbingHint ? 3.0 : 1.4;
+      const beta = grabbingHint ? 0.10 : 0.04;
+      const a = euroAlpha(minCutoff + beta * speed, dt);
       euro.x += a * (rx - euro.x);
       euro.y += a * (ry - euro.y);
       return { x: euro.x, y: euro.y, vx: euro.dx, vy: euro.dy };
     }
     function resetHandFilter() { euro.x = null; }
 
-    // Process Hand Landmarks with Pinch, Fist, and Dwell Grabbing
-    function processHandLandmarks(lms) {
-      // 0: Wrist, 4: Thumb tip, 8: Index tip, 12: Middle tip, 16: Ring tip, 20: Pinky tip
-      // Landmark mirror transformation
-      const toScreen = (lm) => ({ x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight });
-
-      const wrist = toScreen(lms[0]);
+    // Process a complete 21-point hand; geometry and timed gestures live in
+    // JarvisHandGestures, while this function maps them onto the desktop.
+    function processHandLandmarks(lms, frame = null, drawSkeleton = true, toScreen = screenPointForCameraLandmark) {
+      frame = frame || window.JarvisHandGestures.summarizeHand(lms);
       const thmTip = toScreen(lms[4]);
       const idxTip = toScreen(lms[8]);
-      const midTip = toScreen(lms[12]);
-      const rngTip = toScreen(lms[16]);
-      const pnkTip = toScreen(lms[20]);
+      if (drawSkeleton) drawHandSkeleton(lms, toScreen);
 
-      // Draw skeleton joints on overlay canvas
-      drawHandSkeleton(lms, toScreen);
-
-      // Primary interaction cursor center — filtered for real-world speed.
-      const f = filterHand((idxTip.x + thmTip.x) / 2, (idxTip.y + thmTip.y) / 2);
+      const pinchDist = Math.hypot(idxTip.x - thmTip.x, idxTip.y - thmTip.y);
+      const pinchOn = pinchEnterThreshold(frame);
+      const heldBeforeFilter = gestureEngine.getState();
+      const rawPinch = frame.pinchRatio <= pinchOn && frame.pinchSignature !== false && !frame.handGarbage;
+      const rawGrabbing = rawPinch || heldBeforeFilter.pinching ||
+        (fistGrabEnabled && frame.fist >= 0.60) || heldBeforeFilter.fist;
+      const f = filterHand((idxTip.x + thmTip.x) / 2, (idxTip.y + thmTip.y) / 2, rawGrabbing);
       let cursorX = f.x;
       let cursorY = f.y;
-      const pinchDist = Math.hypot(idxTip.x - thmTip.x, idxTip.y - thmTip.y);
 
-      // 1. PINCH DETECTION
-      const isPinching = pinchDist < pinchThreshold;
-
-      // 2. CLOSED FIST / CLENCH DETECTION
-      // Distance from fingertips to wrist vs knuckle to wrist
-      const distWristIdx = Math.hypot(idxTip.x - wrist.x, idxTip.y - wrist.y);
-      const distWristMid = Math.hypot(midTip.x - wrist.x, midTip.y - wrist.y);
-      const distWristRng = Math.hypot(rngTip.x - wrist.x, rngTip.y - wrist.y);
-      const distWristPnk = Math.hypot(pnkTip.x - wrist.x, pnkTip.y - wrist.y);
-      const avgFingerReach = (distWristIdx + distWristMid + distWristRng + distWristPnk) / 4;
-      const knuckleReach = Math.hypot(toScreen(lms[9]).x - wrist.x, toScreen(lms[9]).y - wrist.y);
-      const isFist = fistGrabEnabled && (avgFingerReach < knuckleReach * 1.35);
-
-      // Render tactile connector laser between thumb and index
+      // Keep the hand wireframe quiet; the thumb-index contact cue stays brighter.
+      const nearPinch = frame.pinchRatio <= pinchOn * 1.4;
       overlayCtx.save();
+      overlayCtx.globalAlpha = nearPinch ? 0.72 : 0.32;
       overlayCtx.beginPath();
       overlayCtx.moveTo(thmTip.x, thmTip.y);
       overlayCtx.lineTo(idxTip.x, idxTip.y);
-      overlayCtx.strokeStyle = isPinching ? '#10b981' : (pinchDist < pinchThreshold * 1.5 ? 'rgba(255, 208, 74, 0.8)' : 'rgba(255, 255, 255, 0.3)');
-      overlayCtx.lineWidth = isPinching ? 4 : 2;
+      overlayCtx.strokeStyle = nearPinch ? '#ffd04a' : '#ffffff';
+      overlayCtx.lineWidth = 2;
       overlayCtx.stroke();
-
-      // Readout badge
-      overlayCtx.fillStyle = isPinching ? '#10b981' : 'rgba(24, 25, 30, 0.8)';
+      overlayCtx.globalAlpha = frame.pinchRatio <= pinchOn ? 0.9 : 0.45;
+      overlayCtx.fillStyle = frame.pinchRatio <= pinchOn ? '#10b981' : '#ffd04a';
       overlayCtx.font = '10px monospace';
-      overlayCtx.fillText(`${Math.round(pinchDist)}px`, cursorX + 12, cursorY - 8);
+      overlayCtx.fillText(`${Math.round(pinchDist)}px · ${frame.pinchRatio.toFixed(2)}×`, cursorX + 12, cursorY - 8);
       overlayCtx.restore();
 
-      // Update Cursor Element
-      handCursor.style.display = 'block';
-      handCursor.style.left = `${cursorX}px`;
-      handCursor.style.top = `${cursorY}px`;
-      handCursor.classList.toggle('pinched', isPinching);
-      handCursor.classList.toggle('fist', isFist);
-
-      const isGrabbing = isPinching || isFist;
-
-      // A free hand gets a short velocity lead: the cursor arrives where the
-      // hand IS, not where the camera last saw it. Grabs stay exact.
-      if (!isGrabbing) {
+      // The engine confirms the pinch/fist with hold times and hysteresis.
+      const isHeldHint = rawGrabbing || gestureEngine.getState().pinching || gestureEngine.getState().fist;
+      if (!isHeldHint) {
         cursorX += f.vx * HAND_LEAD_S;
         cursorY += f.vy * HAND_LEAD_S;
       }
+      cursorX = Math.max(0, Math.min(window.innerWidth, cursorX));
+      cursorY = Math.max(0, Math.min(window.innerHeight, cursorY));
+      const handSpeed = Math.hypot(f.vx, f.vy);
+      const state = publishGesture(cursorX, cursorY, frame, handSpeed);
+      updateHandDiagnostics(frame, pinchDist, cursorX, cursorY, handSpeed, state);
+      const isPinching = state.pinching;
+      const isFist = state.fist;
+      const isPulling = state.pulling;
+      const isGrabbing = isPinching || isFist;
 
-      // Publish this hand on the gesture bus (drives the rooms + the sweep).
-      publishGesture(cursorX, cursorY, isPinching, isFist);
+      handCursor.style.display = 'block';
+      handCursor.style.setProperty('--cursor-x', `${cursorX}px`);
+      handCursor.style.setProperty('--cursor-y', `${cursorY}px`);
+      handCursor.classList.toggle('pinched', isPinching);
+      handCursor.classList.toggle('fist', isFist);
+      handCursor.classList.toggle('pulling', isPulling);
 
       if (isGrabbing) {
         resetDwell();
-        const gestureName = isFist ? 'FIST GRASP' : 'PINCH GRAB';
+        const gestureName = isPinching ? 'PINCH GRAB' : 'FIST GRASP';
         cursorTag.textContent = gestureName;
         badgeGesture.textContent = `Gesture: ${gestureName}`;
         badgeGesture.style.color = isFist ? '#ef4444' : '#10b981';
 
         if (!handGrabbedWin) {
           const el = document.elementFromPoint(cursorX, cursorY);
-          // Windows and desktop icons alike: pick up, carry, put down.
-          // The docked panel windows are part of the interface — never grabbed.
+          // Windows and desktop icons alike: pick up, carry, put down. Docked
+          // controls are part of the interface and are never dragged.
           let win = el ? el.closest('.desk-icon, .glass-window') : null;
           if (win && win.classList.contains('docked')) win = null;
           if (win) {
@@ -3456,17 +3641,20 @@
       } else {
         if (handGrabbedWin) {
           handGrabbedWin.classList.remove('grabbed');
-          // An icon put down by the hand keeps its place next boot too.
           if (handGrabbedWin.classList.contains('desk-icon')) {
-            const lbl = handGrabbedWin.querySelector('.lbl');
-            if (lbl) deskSavePos(lbl.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
+            const label = handGrabbedWin.querySelector('.lbl');
+            if (label) deskSavePos(label.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
           }
           FoleyAudio.place();
           handGrabbedWin = null;
         }
 
-        // 3. MAGNETIC DWELL LOCK CHECK
-        if (dwellGrabEnabled) {
+        if (isPulling) {
+          resetDwell();
+          cursorTag.textContent = 'CLAW PULL';
+          badgeGesture.textContent = 'Gesture: Claw Pull';
+          badgeGesture.style.color = '#c084fc';
+        } else if (dwellGrabEnabled) {
           processDwellLock(cursorX, cursorY);
         } else {
           cursorTag.textContent = 'POINTER';
@@ -3535,8 +3723,9 @@
       ];
 
       overlayCtx.save();
-      overlayCtx.strokeStyle = 'rgba(255, 208, 74, 0.4)';
-      overlayCtx.lineWidth = 2;
+      overlayCtx.globalAlpha = 0.20;
+      overlayCtx.strokeStyle = '#ffd04a';
+      overlayCtx.lineWidth = 1.5;
       for (const [s, e] of connections) {
         const p1 = toScreen(lms[s]);
         const p2 = toScreen(lms[e]);
@@ -3683,7 +3872,10 @@
         { x: 1 - ((mx + 44) / window.innerWidth), y: (simFist ? my + 18 : my - 28) / window.innerHeight }, // 20 Pinky tip
       ];
 
-      processHandLandmarks(mockLms);
+      // Simulator landmarks are authored in viewport coordinates, not camera
+      // coordinates, so keep their own direct mapping instead of camera crop.
+      processHandLandmarks(mockLms, null, true,
+        (lm) => ({ x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight }));
       requestAnimationFrame(renderHandSimLoop);
     }
 
@@ -3923,7 +4115,7 @@
     const micNewTabEl   = document.getElementById('mic-newtab-btn');
 
     const MIC_MAX_S       = 15;     // hard ceiling on one utterance
-    const MIC_SILENCE_MS  = 1200;   // stop this long after the voice stops
+    const MIC_SILENCE_MS  = 900;    // short pause-to-submit window for the raw-audio fallback
     const MIC_MIN_SPEECH  = 220;    // the level must stay up this long to count
     const MIC_MIN_AUDIO_S = 0.35;   // shorter than this is not worth transcribing
 
@@ -5060,6 +5252,8 @@
     let _awaitTimer = null;
     let _pendingWords = '';          // final fragments being joined into one command
     let _pendingTimer = null;
+    const LISTEN_FINAL_JOIN_MS = 320;   // shorter response delay after a stable final result
+    const LISTEN_INTERIM_HOLD_MS = 550; // keep joining while recognition still reports live words
     let _interim = '';               // what is being said right now
     let _lastHeard = { text: '', at: 0 };
     let _lastHeardAt = 0;
@@ -5273,13 +5467,20 @@
       clearTimeout(_awaitTimer);
       _pendingWords = '';
       clearTimeout(_pendingTimer);
+      _pendingTimer = null;
       _interim = '';
       renderWakeBtn();
     }
 
-    /* One result from the recogniser: show what is being said, then join the
-       final fragments into a single command. A pause in the middle of a sentence
-       is not two commands. */
+    /* One result from the recogniser: interim words update the preview, but only
+       final words can trigger commands. Final fragments get a short joining grace;
+       if interim speech is still arriving, extend that grace so a pause cannot
+       split one spoken sentence into two commands. */
+    function scheduleHeardFlush(delay) {
+      clearTimeout(_pendingTimer);
+      _pendingTimer = setTimeout(flushHeard, delay);
+    }
+
     function handleHeard(evt) {
       if (!_micOn || _muted) return;
       let final = '', interim = '';
@@ -5291,12 +5492,12 @@
       if (_interim) {
         const inp = document.getElementById('chat-input');
         if (inp && !inp.value.trim()) inp.value = _interim;
+        renderListenBar();
+        if (_pendingWords) scheduleHeardFlush(LISTEN_INTERIM_HOLD_MS);
       }
-      if (interim.trim()) renderListenBar();
       if (!final.trim()) return;
       _pendingWords = (_pendingWords ? `${_pendingWords} ` : '') + final.trim();
-      clearTimeout(_pendingTimer);
-      _pendingTimer = setTimeout(flushHeard, 550);
+      scheduleHeardFlush(_interim ? LISTEN_INTERIM_HOLD_MS : LISTEN_FINAL_JOIN_MS);
     }
 
     /* Was this the speaker's own voice coming back through the microphone?
@@ -5335,6 +5536,7 @@
     }
 
     function flushHeard() {
+      _pendingTimer = null;
       const heard = _pendingWords.replace(/\s+/g, ' ').trim();
       _pendingWords = '';
       _interim = '';

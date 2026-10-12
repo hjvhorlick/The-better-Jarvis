@@ -43,11 +43,19 @@ also copy `.env.example` to `.env` by hand if you prefer.
   Camera switch in the rooms bar). The rooms keep two switches only — Tools and
   Camera — because a room is a place to work, not a control panel.
 - **The local drafting desk** — "draft an email to the plumber about the leak",
-  "write a short note to Sarah thanking her", `read my drafts`, `read draft 2`,
-  `delete draft 1`. A proper letter shape is built from your own words — greeting,
-  opening, the ask, closing, your name and the date — with the details only you can
-  fill in left in square brackets, never invented. **No AI call, no cost.** Drafts
-  are kept as plain text in `runtime/drafts/`.
+  "write a short note to Sarah thanking her", `read my drafts`, `read draft 2`, or
+  an explicit field edit such as `set subject of draft 2 to ...`. A proper letter
+  shape is built from your own words — greeting, opening, the ask, closing, your
+  name and the date — with the details only you can fill in left in square brackets,
+  never invented. **No AI call, no cost.** Drafts are kept as plain text in
+  `runtime/drafts/`; chat or voice cannot delete one without confirmation in Email.
+- **Email workspace** — open the Email room for Compose, Drafts, Recently edited,
+  Search drafts, and Settings / Help. Edit To, CC, BCC, Subject and Body separately;
+  save, reopen, duplicate, copy, or delete after an explicit confirmation. The same
+  stable draft ID and `runtime/drafts/` storage are shared with the local drafting
+  desk (no browser `localStorage` copy). **Preparation only:** there is no Gmail,
+  Outlook or other provider connection and no send action. “Open in mail app” makes
+  a correctly encoded `mailto:` handoff for you to review and send yourself.
 - Glass HUD, My Hands gesture tracking, camera stage, file browser
 - Chat with Gemini (the app's moving alias `gemini-flash-latest`), with your
   personality file `core/prompt.txt`
