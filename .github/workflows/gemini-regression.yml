@@ -36,3 +36,14 @@ jobs:
 
       - name: Test Gemini configuration, model fallback, and voice with a local stub
         run: node tests/config_harness.mjs --http-only
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python test runner
+        run: python -m pip install pytest
+
+      - name: Test Python Gemini model configuration and TTS
+        run: python -m pytest -q tests/test_gemini_model_config.py tests/test_gemini_tts.py
