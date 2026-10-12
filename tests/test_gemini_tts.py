@@ -5,13 +5,13 @@ a speaker or a network call:
 
   * the models are the CURRENT ones (gemini-3.8-flash-tts, then gemini-3.8-flash-lite-tts).
     Every name this app used before — gemini-2.5-flash-preview-tts, gemini-2.5-pro-preview-tts,
-    gemini-3.1-flash-tts-preview — is shut down on 17 November 2026
+    gemini-3.1-flash-tts-preview — is scheduled to shut down on 17 November 2026
     (ai.google.dev/gemini-api/docs/deprecations, Audio models table, read 2026-10-12);
   * a style direction travels in the part's speech metadata, never glued onto the words that
     are spoken (a directive in the transcript can be read aloud);
   * BOTH output shapes are decoded: the complete WAV the current models return, and the
     headerless PCM the older preview models returned — a WAV must never be re-wrapped;
-  * only a WITHDRAWN MODEL NAME moves on to the next model. A refused key, an exhausted
+  * only a withdrawn model name or explicit model-scoped access denial moves on. A refused key, an exhausted
     quota or a dead connection is not a retirement and must be reported as itself.
 """
 import io
@@ -32,10 +32,17 @@ def test_the_current_voice_models_are_offered_in_order(monkeypatch):
     assert g.voice_model_candidates() == ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
 
 
-def test_the_owner_setting_goes_first_and_the_current_models_follow(monkeypatch):
+def test_legacy_voice_settings_are_migrated_and_current_overrides_are_respected(monkeypatch):
     monkeypatch.setenv("SUPPER_VOICE_MODEL", "gemini-2.5-flash-preview-tts")
-    assert g.voice_model_candidates()[0] == "gemini-2.5-flash-preview-tts"
-    assert g.voice_model_candidates()[1:] == ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+    assert g.configured_voice_model() == "gemini-3.8-flash-tts"
+    assert g.voice_model_candidates() == ["gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"]
+    assert g.voice_model_candidates("gemini-2.5-pro-preview-tts") == [
+        "gemini-3.8-flash-tts", "gemini-3.8-flash-lite-tts"
+    ]
+    monkeypatch.delenv("SUPPER_VOICE_MODEL", raising=False)
+    monkeypatch.setenv("GEMINI_TTS_MODEL", "gemini-3.1-flash-tts-preview")
+    assert g.configured_voice_model() == "gemini-3.8-flash-tts"
+    monkeypatch.delenv("GEMINI_TTS_MODEL", raising=False)
     monkeypatch.setenv("SUPPER_VOICE_MODEL", "gemini-3.8-flash-lite-tts")
     assert g.voice_model_candidates() == ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts"]
 
@@ -140,6 +147,7 @@ class _Err(Exception):
 
 @pytest.mark.parametrize("error", [
     _Err("This model models/old-tts is no longer available to new users.", code=404),
+    _Err("Your account does not have permission to access model gemini-2.5-flash-preview-tts.", code=403),
     _Err("model not found", status="NOT_FOUND"),
     _Err("That model does not exist."),
     _Err("The model name is retired, use another."),
