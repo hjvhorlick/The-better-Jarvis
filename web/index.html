@@ -18,25 +18,16 @@
   </script>
 </head>
 <body>
-  <!-- QUARANTINE (2026-10-11): this page is the retired Python-era interface.
-       THE ONE BUILD is the Node dashboard (server.ts + dashboard/static/app.html)
-       on port 3000. This banner is fixed and cannot be dismissed, so nobody
-       mistakes this page for JARVIS again. -->
-  <div id="old-interface-banner" role="alert"
-       style="position:fixed; top:0; left:0; right:0; z-index:2147483647; background:#b00020; color:#fff;
-              font:600 15px/1.45 system-ui,-apple-system,'Segoe UI',sans-serif; text-align:center;
-              padding:12px 16px; box-shadow:0 2px 12px rgba(0,0,0,0.55);">
-    ⚠️ OLD INTERFACE — this is not JARVIS. The real JARVIS starts with "Start JARVIS.bat" (or npm run dev)
-    and lives at <a href="http://localhost:3000" style="color:#fff; text-decoration:underline;">http://localhost:3000</a>.
-  </div>
-  <div style="height:64px;" aria-hidden="true"></div>
-
   <!-- The top line: every function that is not tied to one environment has its
        button here, so the workspace underneath stays clear. -->
   <header class="topbar">
-    <div class="brand">Super AI Agent</div>
+    <div class="brand">Supper AI Agent</div>
+    <span class="service-note" role="note">JARVIS's local assistant service · Scenering remains separate</span>
+    <span class="active-topic-chip" id="active-topic-chip" role="status" aria-live="polite">Topic: none</span>
     <div class="status" id="status" role="status" aria-live="polite">checking…</div>
     <span class="quota-chip" id="quota-chip" title="Gemini calls counted by this app today">Gemini today: …</span>
+    <button type="button" id="btn-brain" aria-pressed="false" aria-controls="brain-panel">Brain</button>
+    <button type="button" id="btn-new-chat" title="Start a fresh conversation without deleting history">New chat</button>
     <button type="button" id="btn-diag" aria-pressed="false" aria-controls="diag-panel">Diagnostics</button>
 
     <!-- The environment switcher. The shell fills this in, one button per
@@ -128,11 +119,73 @@
     <div id="diag-body"></div>
   </aside>
 
+  <aside class="panel drawer brain-drawer" id="brain-panel" aria-label="Brain, memory and topics" hidden>
+    <header><h2>Brain</h2><button class="close" id="brain-close" aria-label="Close Brain panel">×</button></header>
+    <p id="brain-status" role="status">Checking local memory…</p>
+    <div class="brain-actions">
+      <button type="button" id="brain-provider-test">Test Gemini connection</button>
+      <button type="button" id="brain-backup">Back up memory</button>
+    </div>
+    <p id="brain-feedback" role="status" aria-live="polite"></p>
+
+    <details open>
+      <summary>Topics and project state</summary>
+      <label for="brain-topic-select">Saved topic</label>
+      <select id="brain-topic-select"></select>
+      <button type="button" id="brain-topic-resume">Resume selected topic</button>
+      <label for="brain-topic-goal">Goal</label>
+      <textarea id="brain-topic-goal" rows="2" maxlength="800"></textarea>
+      <label for="brain-topic-summary">Summary</label>
+      <textarea id="brain-topic-summary" rows="3" maxlength="1600"></textarea>
+      <label for="brain-topic-next">Next step</label>
+      <textarea id="brain-topic-next" rows="2" maxlength="800"></textarea>
+      <button type="button" id="brain-topic-save">Save topic state</button>
+      <form id="brain-topic-create" class="brain-form">
+        <input id="brain-topic-title" type="text" maxlength="160" placeholder="New topic title" required>
+        <button type="submit">Create topic</button>
+      </form>
+    </details>
+
+    <details open>
+      <summary>Persistent memory</summary>
+      <div class="brain-form">
+        <input id="brain-memory-search" type="search" maxlength="400" placeholder="Search memories">
+        <button type="button" id="brain-memory-search-go">Search</button>
+      </div>
+      <form id="brain-memory-create" class="brain-form brain-memory-form">
+        <select id="brain-memory-category" aria-label="Memory category">
+          <option value="notes">Note</option><option value="preferences">Preference</option>
+          <option value="identity">Identity</option><option value="projects">Project</option>
+          <option value="relationships">Relationship</option><option value="wishes">Plan</option>
+        </select>
+        <input id="brain-memory-key" type="text" maxlength="160" placeholder="Name, e.g. tea" required>
+        <textarea id="brain-memory-value" rows="2" maxlength="1200" placeholder="What should be remembered?" required></textarea>
+        <button type="submit">Save memory</button>
+      </form>
+      <div id="brain-memory-list" class="brain-list"></div>
+    </details>
+
+    <details open>
+      <summary>Tasks and next steps</summary>
+      <form id="brain-task-create" class="brain-form">
+        <input id="brain-task-title" type="text" maxlength="800" placeholder="Add a task to this topic" required>
+        <button type="submit">Add task</button>
+      </form>
+      <div id="brain-task-list" class="brain-list"></div>
+    </details>
+
+    <details>
+      <summary>Research and sources</summary>
+      <div id="brain-research-list" class="brain-list"></div>
+    </details>
+  </aside>
+
   <div class="hand-cursor" id="hand-cursor" aria-hidden="true" hidden></div>
 
   <script src="app.js"></script>
   <script src="shell.js"></script>
   <script src="environments/register.js"></script>
+  <script src="brain.js"></script>
   <script src="myhands.js"></script>
   <script src="control.js"></script>
   <script src="voice.js"></script>

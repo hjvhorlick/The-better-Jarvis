@@ -79,7 +79,7 @@ function startStub(models) {
         && body.generationConfig.responseModalities.includes('AUDIO');
       // Recorded BEFORE the scripted answer, so a call that FAILS is still
       // counted — that is the only way to prove what was and was not retried.
-      calls.push({ kind: method === 'streamGenerateContent' ? 'stream' : 'generate', model, wantsAudio });
+      calls.push({ kind: method === 'streamGenerateContent' ? 'stream' : 'generate', model, wantsAudio, body });
       if (script.retire) { send(404, { error: { code: 404, status: 'NOT_FOUND', message: `models/${model} is no longer available` } }); return; }
       if (script.boom) { send(500, { error: { code: 500, status: 'INTERNAL', message: `the model ${model} fell over` } }); return; }
       if (script.rateLimited) { send(429, { error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } }); return; }
@@ -208,10 +208,64 @@ function decodeWav(b64) {
     ok('brain check: it reports a real response time', typeof check.latencyMs === 'number' && check.latencyMs >= 0, `${check.latencyMs} ms`);
     ok('brain check: it reports the day\'s budget', check.quota && check.quota.limit === 20, JSON.stringify(check.quota && { used: check.quota.used, limit: check.quota.limit }));
 
-    const reply = (await post(srv, '/api/command', { text: 'hello' })).body;
-    ok('typing "hello" is answered by Gemini, not by a canned greeting',
+    // A real question still reaches the brain.
+    const reply = (await post(srv, '/api/command', { text: 'explain what a flyback diode does' })).body;
+    ok('a real question is answered by Gemini',
       /reactor is holding/.test(reply.reply || '') && !/my reasoning is offline/.test(reply.reply || ''),
       String(reply.reply).slice(0, 90));
+    const chatCall = srv.stub.calls.findLast((c) => c.kind === 'stream');
+    const gen = chatCall?.body?.generationConfig || {};
+    const sentPrompt = (chatCall?.body?.contents || []).flatMap((c) => c.parts || []).map((p) => p.text || '').join('\n');
+    ok('ordinary answers use a small output cap instead of a long-answer budget',
+      gen.maxOutputTokens === 128, JSON.stringify(gen));
+    ok('…and the model is explicitly asked to keep ordinary chat brief',
+      /35 words or fewer/.test(sentPrompt), sentPrompt.slice(-170));
+    const priorUserCopies = (chatCall?.body?.contents || []).slice(0, -1)
+      .filter((c) => c.role === 'user').flatMap((c) => c.parts || []).map((p) => p.text || '');
+    ok('the current command is sent once, not duplicated in conversation history',
+      !priorUserCopies.some((text) => /explain what a flyback diode does/i.test(text)), JSON.stringify(priorUserCopies));
+
+    const detailReply = (await post(srv, '/api/command', { text: 'explain in detail how an induction motor starts' })).body;
+    const detailCall = srv.stub.calls.filter((c) => c.kind === 'stream').at(-1);
+    const detailGen = detailCall?.body?.generationConfig || {};
+    const detailPrompt = (detailCall?.body?.contents || []).flatMap((c) => c.parts || []).map((p) => p.text || '').join('\n');
+    ok('an explicit request for detail keeps the larger output budget', detailGen.maxOutputTokens === 900, JSON.stringify(detailGen));
+    ok('…and is not forced into the short-answer rule', !/35 words or fewer/.test(detailPrompt), detailPrompt.slice(-120));
+    void detailReply;
+
+    // A GREETING is not: it is answered on the spot without a model call.
+    // Seed a stale long-form cache entry as earlier versions could have saved
+    // Gemini's greeting. The new fast path must take priority over that entry.
+    await post(srv, '/api/command', { text: 'learn: hello = This is a long old cached greeting that should not delay or replace the local one.' });
+    const callsBefore = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    const greet = (await post(srv, '/api/command', { text: 'hello' })).body;
+    const callsAfter = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    ok('a greeting is answered without asking Google at all',
+      callsAfter === callsBefore, `${callsAfter - callsBefore} call(s)`);
+    ok('…and it outranks a stale, long cached greeting',
+      /^Good day[^.]{0,40}\.$/.test(String(greet.reply).trim()), JSON.stringify(String(greet.reply).slice(0, 80)));
+
+    const localCallsBefore = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    const math = (await post(srv, '/api/command', { text: 'what is 15 percent of 80?' })).body;
+    const localCallsAfter = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    ok('a simple percentage question is calculated locally, with no Gemini call',
+      math.reply === '12.' && localCallsAfter === localCallsBefore,
+      `reply=${JSON.stringify(math.reply)}, calls=${localCallsAfter - localCallsBefore}`);
+    const present = (await post(srv, '/api/command', { text: 'are you there?' })).body;
+    ok('a local presence check is instant and honest', /I am here/.test(present.reply || '') && !/offline/.test(present.reply || ''), String(present.reply));
+    const beforeClock = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    const time = await post(srv, '/api/command', { text: 'what time is it?' });
+    const date = await post(srv, '/api/command', { text: "what is today's date?" });
+    ok('time and date questions are local and do not reach Gemini',
+      /It is/.test(time.body.reply || '') && /Today is/.test(date.body.reply || '')
+        && srv.stub.calls.filter((c) => c.kind !== 'list').length === beforeClock,
+      `${String(time.body.reply).slice(0, 45)} / ${String(date.body.reply).slice(0, 45)}`);
+    const beforeKnowledge = srv.stub.calls.filter((c) => c.kind !== 'list').length;
+    const known = await post(srv, '/api/command', { text: 'celsius to fahrenheit' });
+    ok('a stored local fact answers without using Gemini',
+      /Multiply the Celsius/.test(known.body.reply || '')
+        && srv.stub.calls.filter((c) => c.kind !== 'list').length === beforeKnowledge,
+      String(known.body.reply).slice(0, 70));
   } finally { await srv.stop(); }
 }
 
@@ -222,7 +276,7 @@ function decodeWav(b64) {
   const MODELS = { 'harness-text': { boom: true }, 'gemini-flash-latest': { boom: true } };
   const srv = await startDashboard({ models: MODELS, env: { SUPPER_TEXT_MODEL: 'harness-text' }, name: 'text-fails' });
   try {
-    const reply = (await post(srv, '/api/command', { text: 'hello' })).body;
+    const reply = (await post(srv, '/api/command', { text: 'explain what a flyback diode does' })).body;
     ok('a failed Gemini call is answered honestly, not with a canned greeting',
       !/Good day/.test(reply.reply || '') && !/my reasoning is offline/.test(reply.reply || ''),
       String(reply.reply).slice(0, 100));
@@ -231,6 +285,13 @@ function decodeWav(b64) {
     ok('…and the honest message names the model that failed',
       /harness-text|gemini-flash-latest/.test(reply.reply || '') && /cannot classify|failed/.test(reply.reply || ''),
       String(reply.reply).slice(0, 140));
+    // Fast must not mean dishonest: a greeting no longer spends a call, so it
+    // cannot discover a broken brain for itself — it must still say so.
+    await get(srv, '/api/brain-check');            // exactly what the page does on load
+    const greet = (await post(srv, '/api/command', { text: 'hello' })).body;
+    ok('…and small talk says so briefly, even though it never asked Google',
+      /reasoning core did not answer its last check/.test(greet.reply || '') && String(greet.reply).length < 100,
+      String(greet.reply).slice(0, 120));
     const check = (await get(srv, '/api/brain-check')).body;
     ok('…and the brain check fails with the same honesty', check.ok === false && check.code === 'failed', JSON.stringify({ ok: check.ok, code: check.code, error: String(check.error).slice(0, 60) }));
   } finally { await srv.stop(); }
@@ -324,7 +385,7 @@ for (const shape of ['wav', 'pcm']) {
     ok('a speech failure is reported separately from a text failure',
       speak.ok === false && /harness-voice/.test(speak.message || ''), String(speak.message).slice(0, 90));
     ok('…and an unexplained failure is not retried across every model name', tries === 1, `${tries} call(s)`);
-    const reply = (await post(srv, '/api/command', { text: 'are you there' })).body;
+    const reply = (await post(srv, '/api/command', { text: 'explain what a reactor does' })).body;
     ok('…while the text answer is unaffected', /Yes, sir/.test(reply.reply || ''), String(reply.reply).slice(0, 60));
   } finally { await srv.stop(); }
 }
@@ -344,8 +405,9 @@ if (!JSDOM) {
    * EXISTS. That is what arms the 800 ms watchdog, and it is the one thing jsdom
    * does not give us by default — which is why the defect survived every test.
    */
-  function makeDom({ audioMs = 2500, speakOk = true, browserVoiceStarts = false } = {}) {
-    const state = { voiceRequests: [], utterances: [], played: [], live: 0, maxLive: 0, ended: 0, t0: Date.now() };
+  function makeDom({ audioMs = 2500, speakOk = true, browserVoiceStarts = false,
+                     wsOpen = false, commandReply = '', commandDelayMs = 0, voiceDelayMs = 0 } = {}) {
+    const state = { voiceRequests: [], utterances: [], played: [], live: 0, maxLive: 0, ended: 0, sockets: [], commandIds: [], t0: Date.now() };
     const dom = new JSDOM(pageHtml, {
       url: 'https://jarvis.test/', runScripts: 'dangerously', pretendToBeVisual: false,
       beforeParse(window) {
@@ -362,16 +424,30 @@ if (!JSDOM) {
           if (p.includes('/api/voice/speak')) {
             const text = JSON.parse(opts.body).text;
             state.voiceRequests.push({ text, at: Date.now() - state.t0 });
+            if (voiceDelayMs) await new Promise((r) => setTimeout(r, voiceDelayMs));
             if (!speakOk) return { ok: true, status: 200, json: async () => ({ ok: false, code: 'boom', message: 'the voice model fell over' }) };
             const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.alloc(36), Buffer.from('WAVE'), Buffer.alloc(1600)]);
             return { ok: true, status: 200, json: async () => ({ ok: true, audio: wav.toString('base64'), mime: 'audio/wav', model: 'harness-tts', ms: 40 }) };
           }
+          if (p.includes('/api/command')) {
+            const sent = JSON.parse(opts.body || '{}');
+            if (sent.requestId) state.commandIds.push(sent.requestId);
+            if (commandDelayMs) await new Promise((r) => setTimeout(r, commandDelayMs));
+            return { ok: true, status: 200, json: async () => ({ ok: true, reply: commandReply, id: sent.requestId }) };
+          }
           if (p.includes('/api/settings/gemini-key')) {
-            return { ok: true, status: 200, json: async () => ({ present: true, tail: 'cdef', source: 'config/api_keys.json', model: 'harness-text', modelSource: 'SUPPER_TEXT_MODEL', quota: { used: 1, limit: 20 }, voice: { used: 1, limit: 400 }, assistantName: 'JARVIS', userName: '', build: '2026-10-12-voice-fix-1', configRoot: '/tmp/jarvis' }) };
+            return { ok: true, status: 200, json: async () => ({ present: true, tail: 'cdef', source: 'config/api_keys.json', model: 'harness-text', modelSource: 'SUPPER_TEXT_MODEL', quota: { used: 1, limit: 20 }, voice: { used: 1, limit: 400 }, assistantName: 'JARVIS', userName: '', build: '2026-10-12-brain-voice-fix-1', configRoot: '/tmp/jarvis' }) };
           }
           return { ok: true, status: 200, json: async () => ({}) };
         };
-        window.WebSocket = class { constructor() { this.readyState = 3; } send() {} close() {} };
+        window.WebSocket = class {
+          // The page compares readyState against WebSocket.OPEN, so the constant
+          // has to exist or "is the socket up?" is never true in these checks.
+          static OPEN = 1; static CLOSED = 3;
+          constructor() { this.readyState = wsOpen ? 1 : 3; this.onmessage = null; state.sockets.push(this); }
+          send() {} close() {}
+          deliver(frame) { if (this.onmessage) this.onmessage({ data: JSON.stringify(frame) }); }
+        };
         window.scrollTo = () => {};
         window.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
           get: (_t, k) => (k === 'canvas' ? null : (() => new Proxy({}, { get: () => () => {} }))), set: () => true,
@@ -382,8 +458,8 @@ if (!JSDOM) {
             state.played.push({ at: Date.now() - state.t0 });
             state.live++; state.maxLive = Math.max(state.maxLive, state.live);
           }
-          play() { setTimeout(() => { state.live--; state.ended++; this.onended && this.onended(); }, audioMs); return Promise.resolve(); }
-          pause() {}
+          play() { setTimeout(() => { if (this._done) return; this._done = true; state.live--; state.ended++; this.onended && this.onended(); }, audioMs); return Promise.resolve(); }
+          pause() { if (this._done) return; this._done = true; state.live--; }   // what stopSpeaking relies on
         };
         window.URL.createObjectURL = () => 'blob:harness-audio';
         window.URL.revokeObjectURL = () => {};
@@ -416,6 +492,200 @@ if (!JSDOM) {
     ok('…and the page does not claim the BROWSER voice failed when it was never used',
       !bubbles.some((t) => /computer’s own voice|computer's own voice/.test(t)), JSON.stringify(bubbles.map((b) => b.slice(0, 60))));
     ok('…and the browser synthesiser was not used at all', state.utterances.length === 0, JSON.stringify(state.utterances));
+    dom_close(window);
+  }
+
+  /* — the owner's report: "he talks when he connects, and that is it." —
+     A reply the brain could NOT answer is still a reply, and it is still
+     spoken. The offline message is exactly the one that must be heard, because
+     it is the one that says something is wrong. */
+  {
+    const OFFLINE = 'Good day, sir. One honest note: my reasoning is offline (no Gemini key), so I can only give built-in local replies.';
+    const CONNECTION = 'My reasoning is offline, sir. The Gemini service could not be reached, so I can only run the built-in local commands.';
+
+    // 1. The ordinary path: the answer arrives in pieces over the socket.
+    const { window, state } = makeDom({ audioMs: 300 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.__jarvisWs({ type: 'stream', id: 'r1', speaker: 'jarvis', text: 'Good day, sir. ', done: false, timestamp: Date.now() });
+    await sleep(200);
+    window.__jarvisWs({ type: 'stream', id: 'r1', speaker: 'jarvis', text: 'Good day, sir. The reactor is nominal.', done: true, timestamp: Date.now() });
+    await sleep(1200);
+    const streamedSpoken = state.voiceRequests.length;
+    ok('a reply the brain DID answer is spoken', streamedSpoken >= 1, `${streamedSpoken} sentence(s)`);
+
+    // 2. The same page, the next reply — and this one the brain could not answer.
+    window.__jarvisWs({ type: 'log', id: 'r2', speaker: 'jarvis', text: OFFLINE, timestamp: Date.now() });
+    await sleep(1200);
+    ok('…and the NEXT reply is spoken too — he does not go quiet after the first',
+       state.voiceRequests.length > streamedSpoken, JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 30))));
+
+    // 3. The reply that says the connection failed must be HEARD, not just printed.
+    window.__jarvisWs({ type: 'log', id: 'r3', speaker: 'jarvis', text: CONNECTION, timestamp: Date.now() });
+    await sleep(1200);
+    const spoken = state.voiceRequests.map((r) => r.text).join(' ');
+    ok('the message that says the brain is offline is spoken, not only printed',
+       /reasoning is offline/i.test(spoken), JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 40))));
+    dom_close(window);
+  }
+
+  /* — the race that makes him look unwilling: the reply travels BOTH ways. —
+     The server answers the POST and broadcasts the same reply on the socket. If
+     the HTTP answer is handled first, the page files the id as "already shown
+     and spoken" — and then the websocket frame, which is the only copy that ever
+     gets spoken, is thrown away as a duplicate. Measured 1-8 ms apart on a
+     loopback server, so which one wins is a coin toss: he talks, or he does not,
+     for no visible reason. */
+  {
+    const REPLY = 'The call to Gemini failed for a reason I cannot classify (model gemini-3.8-flash, key from environment). The key is fine; check the internet connection or a proxy, then try again.';
+    const { window, state, doc } = makeDom({ audioMs: 200, wsOpen: true, commandReply: REPLY });
+    await sleep(150);
+    state.t0 = Date.now();
+    // The socket is UP, so the page will wait for the frame. Deliver the HTTP
+    // answer first and the frame second — the ordering that used to silence him.
+    window.sendCommand('how is the reactor holding up');
+    await sleep(400);                       // the HTTP answer has been handled by now
+    ok('while the socket is up, the HTTP answer alone does not speak — the socket owns the reply',
+       state.voiceRequests.length === 0, `${state.voiceRequests.length} spoken`);
+    // …and it must NOT file the id as done, or the frame below is discarded.
+    const id = state.commandIds[0];
+    const socket = state.sockets[0];
+    socket.deliver({ type: 'log', id, speaker: 'jarvis', text: REPLY, timestamp: Date.now() });
+    await sleep(700);
+    ok('a reply is still spoken when the HTTP answer beats the websocket frame',
+       state.voiceRequests.length >= 1, JSON.stringify(state.voiceRequests.map((r) => r.text.slice(0, 40))));
+    const bubbles = [...doc.querySelectorAll('.chat-bubble.speaker-jarvis')].map((b) => b.textContent);
+    ok('…and the words appear on screen exactly once, not once per path',
+       bubbles.filter((t) => /cannot classify/.test(t)).length === 1, JSON.stringify(bubbles.map((b) => b.slice(0, 30))));
+    dom_close(window);
+  }
+
+  /* — if the open socket drops every frame, the HTTP reply still arrives — */
+  {
+    const REPLY = 'Good day, sir. The reactor is nominal.';
+    const { window, state, doc } = makeDom({ audioMs: 120, wsOpen: true, commandReply: REPLY });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.sendCommand('how is the reactor holding up');
+    await sleep(900);                         // the 700 ms socket fallback has fired
+    const id = state.commandIds[0];
+    ok('the HTTP answer is used when an apparently-open socket drops the reply',
+       state.voiceRequests.length >= 1, JSON.stringify(state.voiceRequests.map((r) => r.text)));
+    const socket = state.sockets[0];
+    // A late reconnect copy must not create a second bubble or second voice.
+    socket.deliver({ type: 'stream', id, speaker: 'jarvis', text: REPLY, done: true, timestamp: Date.now() });
+    socket.deliver({ type: 'log', id, speaker: 'jarvis', text: REPLY, timestamp: Date.now() });
+    await sleep(400);
+    const said = state.voiceRequests.map((r) => r.text).join(' ');
+    const bubbles = [...doc.querySelectorAll('.chat-bubble.speaker-jarvis')].map((b) => b.textContent);
+    ok('…and a late socket copy is not spoken a second time',
+       (said.match(/Good day/g) || []).length === 1, JSON.stringify(state.voiceRequests.map((r) => r.text)));
+    ok('…or displayed a second time',
+       bubbles.filter((t) => /reactor is nominal/.test(t)).length === 1, JSON.stringify(bubbles.map((b) => b.slice(0, 30))));
+    dom_close(window);
+  }
+
+  /* — two voices at once — */
+  {
+    // The owner heard two voices talking over each other. The cause: the mouth
+    // stops by emptying its queue and forgetting the sentence in progress — but
+    // a sound file that is already playing keeps playing, so the next sentence
+    // starts on top of it.
+    const { window, state } = makeDom({ audioMs: 2000 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.speakReply(THREE);
+    await sleep(700);                        // the first sentence is mid-flight
+    const midFlight = state.live;
+    window.__jarvisStopSpeaking();
+    await sleep(150);
+    ok('stopSpeaking silences the sentence already playing, not just the ones waiting',
+       state.live === 0, `mid-flight=${midFlight}, after stopping=${state.live}`);
+    window.speakReply('Good day, sir.');
+    await sleep(2600);
+    ok('…and the next reply is never spoken over the top of it',
+       state.maxLive === 1, `max concurrent=${state.maxLive}`);
+    dom_close(window);
+  }
+
+  {
+    // The other way to hear two voices: the same reply arrives on both paths.
+    const REPLY = 'Good day, sir. The reactor is nominal.';
+    const { window, state, doc } = makeDom({ audioMs: 200, wsOpen: true, commandReply: REPLY });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.sendCommand('hello');
+    await sleep(300);
+    const id = state.commandIds[0];
+    const socket = state.sockets[0];
+    socket.deliver({ type: 'log', id, speaker: 'jarvis', text: REPLY, timestamp: Date.now() });
+    await sleep(600);
+    socket.deliver({ type: 'log', id, speaker: 'jarvis', text: REPLY, timestamp: Date.now() });   // the same reply again
+    await sleep(700);
+    const said = state.voiceRequests.map((r) => r.text).join(' ');
+    const times = (said.match(/Good day/g) || []).length;
+    ok('the same reply is never read out twice, whichever path delivers it',
+       times === 1, `"Good day" spoken ${times} time(s)`);
+    const bubbles = [...doc.querySelectorAll('.chat-bubble.speaker-jarvis')].map((b) => b.textContent);
+    ok('…and it is not written to the screen twice either',
+       bubbles.filter((t) => /reactor is nominal/.test(t)).length === 1, JSON.stringify(bubbles.map((b) => b.slice(0, 30))));
+    dom_close(window);
+  }
+
+  /* — stream plus final/HTTP copy is one reply, not two — */
+  {
+    const { window, state } = makeDom({ audioMs: 160 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.speakStreamed('stream-once', 'One short sentence.');
+    window.finishStreamed('stream-once', 'One short sentence.');
+    window.speakReply('One short sentence.', 'stream-once');  // same id on the final path
+    window.speakReply('HTTP first sentence.', 'http-first');
+    window.speakStreamed('http-first', 'HTTP first sentence.'); // late stream is also the same id
+    window.finishStreamed('http-first', 'HTTP first sentence.');
+    await sleep(800);
+    const said = state.voiceRequests.map((r) => r.text);
+    ok('a streamed sentence and its final copy are spoken once, not twice',
+       said.filter((text) => text === 'One short sentence.').length === 1,
+       JSON.stringify(said));
+    ok('…and a late stream cannot re-read an HTTP reply',
+       said.filter((text) => text === 'HTTP first sentence.').length === 1,
+       JSON.stringify(said));
+    dom_close(window);
+  }
+
+  /* — stopping during a slow voice request cannot start an old voice later — */
+  {
+    const { window, state } = makeDom({ audioMs: 2000, voiceDelayMs: 400 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.speakReply('Old reply.');
+    await sleep(80);                        // the server has not returned its audio yet
+    window.__jarvisStopSpeaking();
+    await sleep(60);
+    window.speakReply('New reply.');
+    await sleep(550);                        // both ignored-abort fetches have returned
+    ok('an older in-flight voice response cannot begin after silence; only the new one plays',
+       state.live === 1 && state.maxLive === 1 && state.played.length === 1,
+       `live=${state.live}, max=${state.maxLive}, audio files=${state.played.length}`);
+    window.__jarvisStopSpeaking();
+    dom_close(window);
+  }
+
+  /* — a failure report is not a thing to read out loud character by character — */
+  {
+    const RAW = 'The call to Gemini failed for a reason I cannot classify (model gemini-3.8-flash, key from environment): '
+      + '{"error":{"message":"{\"error\":{\"code\":503,\"status\":\"UNAVAILABLE\",\"message\":\"the model is overloaded\"}}","code":503,"status":"Service Unavailable"}}.';
+    const { window, state } = makeDom({ audioMs: 200 });
+    await sleep(150);
+    state.t0 = Date.now();
+    window.__jarvisWs({ type: 'log', id: 'raw-1', speaker: 'jarvis', text: RAW, timestamp: Date.now() });
+    await sleep(700);
+    const said = state.voiceRequests.map((r) => r.text).join(' ');
+    ok('a failure is still spoken', state.voiceRequests.length >= 1, `${state.voiceRequests.length} sentence(s)`);
+    ok('…but the raw error body is NOT read aloud — a voice asked to say JSON may simply refuse, which sounds like silence',
+       !/[{}]/.test(said), said.slice(0, 120));
+    ok('…and he says where the detail can be found instead', /details are on screen/i.test(said), said.slice(0, 120));
     dom_close(window);
   }
 

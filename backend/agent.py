@@ -19,12 +19,14 @@ from __future__ import annotations
 
 import re
 import webbrowser
+from contextvars import ContextVar
 from datetime import datetime
 from typing import Callable
 
 from . import config, pairing, router
 from .chat import BackendNotConfigured, ChatService, UpstreamError
 from .pairing import PairingStore
+from .brain import BrainStorageError, BrainStore, BrainTurn
 from .permissions import ConfirmationStore, PermissionPolicy
 from .quota import DailyBudget
 from .knowledge import KnowledgeStore
@@ -80,6 +82,7 @@ class Agent:
         reminders: Reminders | None = None,
         knowledge: KnowledgeStore | None = None,
         pairing=None,
+        brain: BrainStore | None = None,
     ) -> None:
         self._voice = voice
         self._pairing = pairing if pairing is not None else PairingStore(config.RUNTIME_DIR / "paired_devices.json")
@@ -88,7 +91,12 @@ class Agent:
         self._reminders = reminders or Reminders(config.RUNTIME_DIR / "reminders.json", bus=bus)
         self._opener = opener or webbrowser.open
         self._knowledge = knowledge if knowledge is not None else KnowledgeStore()
+        self._brain = brain
+        self._brain_turn_context: ContextVar[BrainTurn | None] = ContextVar(
+            f"supper_brain_turn_{id(self)}", default=None)
         self._chat = chat
+        if self._brain is not None and hasattr(self._chat, "set_context_provider"):
+            self._chat.set_context_provider(self._brain.live_context)
         self._budget = budget
         self._policy = policy
         self._confirmations = confirmations
@@ -118,6 +126,13 @@ class Agent:
             "repair.list": self._repair_list,
             "repair.notices": self._repair_notices,
             "web.search": self._web_search,
+            "brain.remember": self._brain_remember,
+            "brain.correct": self._brain_correct,
+            "brain.forget": self._brain_forget,
+            "brain.decision": self._brain_decision,
+            "brain.goal": self._brain_goal,
+            "brain.next_step": self._brain_next_step,
+            "brain.task": self._brain_task,
             "reminder.add": self._reminder_add,
             "reminder.list": self._reminder_list,
             "reminder.cancel": self._reminder_cancel,
@@ -137,26 +152,82 @@ class Agent:
 
     # ----- entry point -----
 
-    def handle(self, text: str, workspace: str = DEFAULT_WORKSPACE, quiet: bool = False) -> dict:
-        """Answer one message. `quiet` skips the chat events; the voice path publishes its own."""
+    def handle(self, text: str, workspace: str = DEFAULT_WORKSPACE, quiet: bool = False,
+               conversation_id: str | None = None, topic_id: str | None = None,
+               channel: str = "text") -> dict:
+        """One Brain entry point for typed chat and local voice; `quiet` avoids duplicate bus events."""
         text = (text or "").strip()
         if not text:
             raise ValueError("empty message")
-        if not quiet:
-            self._publish("chat_turn", role="user", text=text, workspace=workspace)
-        result = None
+        turn = None
+        brain_warning = ""
         m = router.match(text)
-        if m is not None:
-            result = self._local(m)
-        if result is None:
-            result = self._known(text)
-        if result is None:
-            result = self._gemini(text, workspace)
-        if not quiet:
-            # "via", not "source": the bus stamps its own "source" (the stream name) on every event.
-            self._publish("chat_turn", role="assistant", text=result["reply"],
-                          via=result["source"], intent=result["intent"])
-        return result
+        if self._brain is not None:
+            meaningful = (m is None or m.action in {
+                "web.search", "brain.decision", "brain.goal", "brain.next_step", "brain.task"})
+            try:
+                turn = self._brain.begin_turn(text, conversation_id=conversation_id,
+                                              topic_id=topic_id, channel=channel,
+                                              create_topic=meaningful)
+                saved_text = ("[Owner explicitly updated or forgot a saved memory; the value was omitted from history.]"
+                              if m and m.action in ("brain.remember", "brain.correct", "brain.forget") else text)
+                self._brain.record_user_turn(turn, saved_text)
+                if m is not None and m.action == "brain.forget":
+                    # Confirmation runs after this request's ContextVar has been reset.
+                    m.args["brain_topic_id"] = turn.topic_id or ""
+            except BrainStorageError:
+                # Preserve chat/local tools if Brain history is unreadable or cannot be saved.
+                # Do not pass a partially initialized turn to Gemini as if it were persistent.
+                turn = None
+                brain_warning = "I could not save this conversation turn to local history."
+        token = self._brain_turn_context.set(turn)
+        result = None
+        try:
+            if not quiet:
+                self._publish("chat_turn", role="user", text=text, workspace=workspace,
+                              conversation_id=turn.conversation_id if turn else None,
+                              topic_id=turn.topic_id if turn else None)
+            if turn is not None and turn.clarification:
+                result = _answer(turn.clarification, "local", "brain.topic.clarify")
+            if result is None and m is not None:
+                result = self._local(m)
+            if result is None:
+                result = self._known(text)
+            if result is None and self._needs_web_search(text):
+                searched = self._web_search(router.Match("web.search", {"raw": text}), False)
+                result = _answer(searched["reply"], "local", "web.search",
+                                 sources=searched.get("sources"))
+            if result is None:
+                result = self._gemini(text, workspace, turn=turn)
+            if turn is not None:
+                try:
+                    self._brain.complete_turn(turn, result.get("reply", ""),
+                                              source=result.get("source", "assistant"),
+                                              sources=result.get("sources"))
+                    result.update({"conversation_id": turn.conversation_id,
+                                   "topic_id": turn.topic_id,
+                                   "topic_title": turn.topic_title})
+                except BrainStorageError:
+                    result["reply"] = (f"{result.get('reply', '')}\n\n"
+                                       "I could not verify that this conversation turn was saved locally.")
+            elif brain_warning and not (m and m.action in ("brain.remember", "brain.correct", "brain.forget")):
+                result["reply"] = f"{result.get('reply', '')}\n\n{brain_warning} This answer can be used, but it will not be available for future topic continuity."
+            if not quiet:
+                # The bus stamps its own `source` as the stream name.
+                self._publish("chat_turn", role="assistant", text=result["reply"],
+                              via=result["source"], intent=result["intent"],
+                              conversation_id=turn.conversation_id if turn else None,
+                              topic_id=turn.topic_id if turn else None)
+            return result
+        except (BackendNotConfigured, UpstreamError, BudgetExhausted) as exc:
+            if turn is not None:
+                try:
+                    self._brain.complete_turn(turn, str(exc), source="error", status="error")
+                except BrainStorageError:
+                    pass
+            raise
+        finally:
+            self._brain_turn_context.reset(token)
 
     # ----- local path -----
 
@@ -173,7 +244,8 @@ class Agent:
             return None                                  # declined: let Gemini answer instead
         if out.get("confirmation") is not None:
             return _answer(out["reply"], "confirmation", m.action, confirmation=out["confirmation"])
-        return _answer(out["reply"], "local", m.action, open_path=out.get("open_path"))
+        return _answer(out["reply"], "local", m.action, open_path=out.get("open_path"),
+                       sources=out.get("sources"))
 
     def _ask(self, m: router.Match) -> dict:
         summary = self._summary(m)
@@ -307,7 +379,11 @@ class Agent:
         if not self._budget.try_spend():
             return {"reply": "Today's Gemini budget is used up, so I cannot search the web. Local commands still work."}
         try:
-            answer = self._chat.complete(query, WEB_SYSTEM, grounded=True)
+            if hasattr(self._chat, "complete_grounded"):
+                grounded = self._chat.complete_grounded(query, WEB_SYSTEM)
+                answer, sources = grounded.text, grounded.sources
+            else:                                  # compatibility for existing injected test doubles
+                answer, sources = self._chat.complete(query, WEB_SYSTEM, grounded=True), []
         except UpstreamError as e:
             if e.quota:
                 self._budget.mark_exhausted()
@@ -316,7 +392,20 @@ class Agent:
         except BackendNotConfigured as e:
             return {"reply": str(e)}
         text = answer if len(answer) <= MAX_WEB_CHARS else answer[:MAX_WEB_CHARS - 1].rstrip() + "…"
-        return {"reply": f"Web search, sir: {text}"}
+        reply = f"Web search, sir: {text}"
+        turn = self._brain_turn_context.get()
+        if self._brain is not None and turn is not None and sources:
+            try:
+                self._brain.add_research(query, answer, sources, topic_id=turn.topic_id or "",
+                                         model=self._chat.model)
+            except (BrainStorageError, ValueError):
+                # A grounded answer can still be delivered; the UI and response do not claim it was saved.
+                pass
+        if sources:
+            reply += "\nSources: " + " · ".join(
+                f"[{i}] {source.get('title') or source['url']} — {source['url']}"
+                for i, source in enumerate(sources, 1))
+        return {"reply": reply, "sources": sources}
 
     def _reminder_add(self, m, confirmed):
         try:
@@ -532,6 +621,8 @@ class Agent:
                           "show folders · open <folder name> · turn on My Hands (asks first) · "
                           "turn off My Hands · test the sound (beeps and checks the microphone) · "
                           "what is my <thing> (answers from what you told me, if stored) · "
+                          "remember that <fact> · correction: category/key = new value · forget memory category/key (asks first) · "
+                          "task: <work item> · next step: <step> · we decided <decision> · "
                           "learn: <question> = <answer> · what have you learned · forget <number> · "
                           "propose a fix for <request> (asks before any change) · roll back the last change (asks first) · list snapshots · search archive for <text> · restore archive entry <number> (asks first) · pair my phone (asks first) · list phones · forget phone <number> · help. Anything else goes to Gemini, "
                           "within today's budget.")}
@@ -582,9 +673,118 @@ class Agent:
             return {"reply": "I have no local answer with that number."}
         return {"reply": f"Answer #{entry_id} moved to the archive. Nothing was deleted."}
 
+    # ----- Brain commands and integrations -----
+
+    def _brain_remember(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        turn = self._brain_turn_context.get()
+        try:
+            saved = self._brain.capture_explicit_memory(m.args.get("raw") or "",
+                                                        topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I did not save that: {exc}."}
+        return {"reply": (f"Remembered in local memory as {saved['category']}/{saved['key']}. "
+                           "You can inspect or correct it in the Brain panel.")}
+
+    def _brain_correct(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        try:
+            turn = self._brain_turn_context.get()
+            updated = self._brain.correct_explicit_memory(
+                m.args.get("raw") or "", topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not correct that memory: {exc}."}
+        if updated is None:
+            return {"reply": "I could not identify an existing saved memory to correct. Nothing was changed. "
+                             "Use category/key = corrected value, for example preferences/tea = rooibos."}
+        return {"reply": f"Corrected {updated['category']}/{updated['key']} in local memory."}
+
+    def _brain_forget(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        raw = (m.args.get("raw") or "").strip()
+        match = re.fullmatch(r"forget memory ([a-z_]{2,24})/(.{1,160})", raw, re.IGNORECASE)
+        category, key = ((match.group(1).casefold(), match.group(2).strip()) if match
+                         else (m.args.get("category", "notes"), m.args.get("key", "")))
+        try:
+            turn = self._brain_turn_context.get()
+            topic_id = (m.args.get("brain_topic_id") or (turn.topic_id if turn else "")) \
+                if category == "projects" else ""
+            deleted = self._brain.forget_memory(category, key, topic_id=topic_id)
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not forget that memory: {exc}."}
+        return {"reply": ("Forgot that memory from active storage." if deleted
+                           else "I could not find a matching saved memory; nothing was changed.")}
+
+    def _brain_decision(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        turn = self._brain_turn_context.get()
+        try:
+            decision = self._brain.record_decision_statement(
+                m.args.get("raw") or "", topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not save that decision: {exc}."}
+        return {"reply": "Saved that owner-stated decision to the current topic."}
+
+    def _brain_goal(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        turn = self._brain_turn_context.get()
+        try:
+            topic = self._brain.explicit_goal(m.args.get("raw") or "", topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not save that goal: {exc}."}
+        if topic is None:
+            return {"reply": "There is no active topic to attach that goal to. Start a topic first."}
+        return {"reply": "Saved the goal to the active topic."}
+
+    def _brain_next_step(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        turn = self._brain_turn_context.get()
+        try:
+            topic = self._brain.explicit_next_step(m.args.get("raw") or "", topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not save that next step: {exc}."}
+        if topic is None:
+            return {"reply": "There is no active topic to attach the next step to. Start a topic first."}
+        return {"reply": "Saved the next step to the active topic."}
+
+    def _brain_task(self, m, confirmed):
+        if self._brain is None:
+            return {"reply": "Persistent Brain memory is not available on this server."}
+        turn = self._brain_turn_context.get()
+        try:
+            task = self._brain.explicit_task(m.args.get("raw") or "", topic_id=turn.topic_id if turn else "")
+        except (ValueError, BrainStorageError) as exc:
+            return {"reply": f"I could not save that task: {exc}."}
+        return {"reply": f"Saved task #{task['id'][:8]} to the active topic."}
+
+    @staticmethod
+    def _needs_web_search(text: str) -> bool:
+        return bool(re.search(
+            r"\b(current|currently|latest|newest|today|tonight|tomorrow|yesterday|recent|news|"
+            r"price|prices|weather|forecast|score|stock|stocks|exchange rate|as of|this week|"
+            r"this month|this year|fact check|verify|verified|citation|citations|sources?)\b|\b20[2-9]\d\b",
+            text or "", re.IGNORECASE))
+
+    def record_live_turn(self, user_text: str, assistant_text: str) -> bool:
+        """The optional Gemini Live engine bypasses local tools; its transcripts still join Brain history."""
+        if self._brain is None:
+            return False
+        try:
+            self._brain.record_live_turn(user_text, assistant_text)
+            return True
+        except BrainStorageError as exc:
+            self._publish("chat_error", message=str(exc), via="voice-live")
+            return False
+
     # ----- Gemini path -----
 
-    def _gemini(self, text: str, workspace: str) -> dict:
+    def _gemini(self, text: str, workspace: str, *, turn: BrainTurn | None = None) -> dict:
         if not config.get_gemini_api_key():
             raise BackendNotConfigured(
                 "No Gemini API key. Set GEMINI_API_KEY or add gemini_api_key to config/api_keys.json.")
@@ -593,7 +793,11 @@ class Agent:
                 "Today's Gemini budget is used up. Local commands still work; "
                 "the budget resets at local midnight.")
         try:
-            reply = self._chat.reply(text, workspace=workspace)
+            if turn is not None:
+                reply = self._chat.reply(text, workspace=workspace, history=turn.history,
+                                         context_block=turn.context_block, brain_managed=True)
+            else:
+                reply = self._chat.reply(text, workspace=workspace)
         except UpstreamError as e:
             if e.quota:
                 self._budget.mark_exhausted()
@@ -613,9 +817,13 @@ class Agent:
             self._bus.publish("chat", {"type": kind, **data})
 
 
-def _answer(reply: str, source: str, intent: str | None, *, confirmation=None, open_path=None) -> dict:
-    return {"reply": reply, "source": source, "intent": intent,
-            "confirmation": confirmation, "open_path": open_path}
+def _answer(reply: str, source: str, intent: str | None, *, confirmation=None,
+            open_path=None, sources=None) -> dict:
+    result = {"reply": reply, "source": source, "intent": intent,
+              "confirmation": confirmation, "open_path": open_path}
+    if sources:
+        result["sources"] = sources
+    return result
 
 
 def _default_roots() -> list[dict]:

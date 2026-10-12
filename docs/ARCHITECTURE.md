@@ -19,7 +19,9 @@ Status: rules in force from 2026-10-09. Tests in `tests/test_architecture.py` en
    +---------------------------------------------------------------------------+
 ```
 
-My Hands is one feature in this picture. It is not a separate program. It uses the same bus, the same device registry, the same policy and the same confirmation queue as voice, reminders and search.
+My Hands is one feature in this picture. It is not a separate program. It uses the same bus, the same device registry, the same policy and the same confirmation queue as voice, reminders and search. Scenering remains a separate service; the Studio only prepares material for it.
+
+The Persistent Brain is layered over the existing `memory/memory_manager.py` store and dialogue archive. It adds topic-scoped continuity, explicit owner-stated facts, tasks and sourced research without creating a second database. Memory corrections are atomic; forgetting a fact requires confirmation; verified local backup sets are made before the first Brain write and before explicit overwrite/removal operations. Conversation context is bounded and labeled as untrusted data, and legacy global dialogue is not mixed into a Brain-managed prompt.
 
 ## The rules
 
@@ -33,6 +35,7 @@ My Hands is one feature in this picture. It is not a separate program. It uses t
 8. **Stable surfaces.** The API paths, event shapes and skill interface are the contract between parts. Changing one needs a note here and a test that shows the old callers still work.
 9. **Every new feature adds a row to the feature map below**, a test, and a provenance row in `docs/V2_PROVENANCE.md` if it was ported from the legacy app.
 10. **Gemini is the last resort.** A message is answered locally first: a matching command, a stored fact that clearly holds the answer (`backend/recall.py`), a status or time reading, or a stored local answer (`backend/knowledge.py`, `docs/LOCAL_KNOWLEDGE.md`). Only when no local step can answer does the message go to Gemini, and only after the daily budget takes a unit. A local step that declines must say so by returning nothing, so the question moves on. Voice turns use the same order. The default voice engine is local (`docs/LOCAL_VOICE.md`): speech is heard and spoken on this computer, and the text goes to the same agent. Gemini Live is used only if the owner sets `SUPPER_VOICE_ENGINE=live`.
+11. **Brain writes are deliberate and recoverable.** Ordinary conversation does not automatically become a saved fact. Topic/task/decision state is local; explicit memories carry provenance; forget is confirmation-gated; provider availability is only reported after a real, budget-counted request. Grounding citations are stored only when the provider supplies safe HTTP(S) source metadata.
 
 ## Known debt (to fix before the next big feature)
 
@@ -56,16 +59,17 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 |---|---|---|
 | `backend/__init__.py` | package marker | none |
 | `backend/__main__.py` | start-up (`python -m backend`) | `app`, `config` |
-| `backend/app.py` | the one server: routes, lifespan (starts and stops reminders), wiring of all parts, phone pairing page and code exchange | `agent`, `pairing`, `chat`, `config`, `devices`, `diagnostics`, `events`, `files`, `memory_view`, `media`, `myhands_api`, `permissions`, `quota`, `reminders`, `repair`, `security`, `stream`, `voice`, `workspaces` |
+| `backend/app.py` | the one server: routes, lifespan (starts and stops reminders), wiring of all parts, phone pairing page and code exchange | `agent`, `brain`, `pairing`, `chat`, `config`, `devices`, `diagnostics`, `events`, `files`, `memory_view`, `media`, `myhands_api`, `permissions`, `quota`, `reminders`, `repair`, `security`, `stream`, `voice`, `workspaces` |
 | `backend/config.py` | paths and settings (env vars, saved keys) | none |
 | `backend/events.py` | the event bus: sequenced, bounded, replayable | none |
 | `backend/stream.py` | the bus over one WebSocket (`/ws/events`) | `events` |
 | `backend/permissions.py` | tiers (SAFE, CONFIRM, BLOCKED) and the confirmation queue; reads the skill list inside a function, so there is no start-up cycle | `skills` (lazy) |
 | `backend/quota.py` | the daily Gemini budget | none |
-| `backend/chat.py` | Gemini text: persona chat, stateless `complete()` (proposals, web search) | `config`, `persona`, `workspaces` |
-| `backend/persona.py` | builds the persona instruction from `core/prompt.txt` and memory | none |
+| `backend/chat.py` | Gemini text: persona chat, topic-scoped persistent history/context, stateless `complete()` (proposals, web search), actual provider probe and Google Search citation extraction | `config`, `persona`, `workspaces` |
+| `backend/persona.py` | builds the persona instruction from `core/prompt.txt` and memory; quotes retrieved memory/dialogue as untrusted data | none |
 | `backend/router.py` | local phrases -> actions (before Gemini) | none |
-| `backend/agent.py` | runs a message: router, policy, handlers, local knowledge, phone pairing commands, Gemini last | `chat`, `config`, `files`, `knowledge`, `pairing`, `permissions`, `quota`, `recall`, `reminders`, `repair`, `router`, `skills`, `workspaces` |
+| `backend/agent.py` | runs a message: router, policy, handlers, local knowledge, phone pairing commands, topic-scoped Brain context, Gemini last | `brain`, `chat`, `config`, `files`, `knowledge`, `pairing`, `permissions`, `quota`, `recall`, `reminders`, `repair`, `router`, `skills`, `workspaces` |
+| `backend/brain.py` | topic continuity, owner-scoped local memories, corrections, decisions, tasks, sourced research, bounded dialogue context and verified backup sets; extends the existing `memory_manager` store | `memory.memory_manager` |
 | `backend/recall.py` | answers "what is my ..." from stored facts, only when every word of the question matches; read-only | none (reads memory when called) |
 | `backend/knowledge.py` | local answers: starter, taught and kept-from-Gemini entries in `runtime/knowledge.json`; 30-day expiry for Gemini answers; time-sensitive and personal questions never kept; forget archives | `recall` (keyword rules), `config` |
 | `knowledge/starter.json` | the starter answers (coding, marketing, design, everyday); written by the assistant and marked for checking | none (data) |
@@ -108,11 +112,13 @@ Every file in `backend/`, `myhands/` and `web/` has a row here. "Uses" lists the
 | `myhands/handframe.py` | reads a whole hand: palm centre, normal, tilt, per-finger curl, spread, depth | none |
 | `myhands/filters.py` | smoothing of the cursor | none |
 | `myhands/session.py` | My Hands session: start, stop, events, grabs; publishes as `my_hands` | `backend.events` |
-| `web/index.html`, `web/styles.css` | the screen: the top line of function buttons, the thin left rail (the voice visualiser on top, the conversation below it, squeezable to almost nothing), the environment rail and its tool tabs, and the camera picture behind them | none |
+| `web/index.html`, `web/styles.css` | the screen: the top line of function buttons, the Brain drawer (topics, memory, tasks, research), the thin left rail (the voice visualiser on top, the conversation below it, squeezable to almost nothing), the environment rail and its tool tabs, and the camera picture behind them | none |
 | `web/shell.js` | the environment shell: slides whole workspaces left and right, fetches each one's code only when it is first opened, keeps exactly one live at a time, and lends each one its tool strip (`env._tools`) so it can add controls when it mounts | page globals: provides `Shell` |
 | `web/environments/*.js` | one workspace each: Coding (code tree, ask Jarvis about the open file), Design (the 3D room), Flat (the 2D room: layers, drawing tools, image and video frames), **Studio** (Jarvis writes the script and the title; Pollinations makes a picture per shot; a canvas plays the shot list and `MediaRecorder` records it; the title and script are laid out for Scenering), Files (browse and read) | `three`, loaded on demand by Design only |
 | `web/vendor/**` | the 3D engine and its model loaders, kept in the repo so the Design room works with no internet (three.js, Apache-2.0; see THIRD_PARTY_NOTICES.md) | none |
-| `web/app.js` | glass desktop tiles, file panel, chat log; loads first | page globals: provides `SupperUI`, uses `SupperCtl` if present |
+| `web/app.js` | glass desktop tiles, file panel, citation links, local conversation restore/new-chat flow; loads first | page globals: provides `SupperUI`, `SupperConversation`, uses `SupperCtl` if present |
+| `web/brain.js` | Brain drawer client: topic state, explicit memory correction/forget requests, tasks, sourced research, verified backup and provider test | page globals: uses `SupperConversation`, `SupperCtl`, provides `SupperBrain` |
+| `web/camera.js` | keeps the owner's camera picture consistent across rooms; uses a parent stream when available, otherwise browser capture, then local My Hands preview | page globals: `JarvisRoomsCamera`; same-origin postMessage |
 | `web/myhands.js` | moves tiles from My Hands gesture events; shows and hides the camera picture with My Hands | page globals: uses `SupperUI` |
-| `web/control.js` | shared event stream, confirmations, budget chip, diagnostics | page globals: provides `SupperCtl`, uses `SupperUI`, `SupperVoice` |
+| `web/control.js` | shared event stream, confirmations, budget chip, diagnostics | page globals: provides `SupperCtl`, uses `SupperUI`, `SupperVoice`, `SupperBrain` |
 | `web/voice.js` | voice buttons and voice messages | page globals: provides `SupperVoice`, uses `SupperCtl`, `SupperUI` |

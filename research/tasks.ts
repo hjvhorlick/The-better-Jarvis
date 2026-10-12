@@ -24,8 +24,10 @@ interface TaskRecord {
   updatedAt: string;
   report: ResearchDocument | null;
   savedReportId: string | null;
+  topicId: string;
   updateReportId: string | null;
   error: string | null;
+  warning: string | null;
 }
 
 function publicSnapshot(task: TaskRecord, includeReport: boolean): ResearchTaskSnapshot {
@@ -39,7 +41,9 @@ function publicSnapshot(task: TaskRecord, includeReport: boolean): ResearchTaskS
     updatedAt: task.updatedAt,
     report: includeReport ? task.report : null,
     savedReportId: task.savedReportId,
+    topicId: task.topicId,
     error: task.error,
+    warning: task.warning,
   };
 }
 
@@ -47,6 +51,7 @@ export class ResearchTaskManager {
   private readonly tasks = new Map<string, TaskRecord>();
   private readonly execute: TaskExecutor;
   private readonly store: ResearchStore;
+  private readonly onReportSaved?: (report: ResearchDocument, topicId: string) => void;
   private readonly now: () => Date;
   private readonly maxActive: number;
   private readonly maxRetained: number;
@@ -54,18 +59,20 @@ export class ResearchTaskManager {
   constructor(options: {
     execute: TaskExecutor;
     store: ResearchStore;
+    onReportSaved?: (report: ResearchDocument, topicId: string) => void;
     now?: () => Date;
     maxActive?: number;
     maxRetained?: number;
   }) {
     this.execute = options.execute;
     this.store = options.store;
+    this.onReportSaved = options.onReportSaved;
     this.now = options.now || (() => new Date());
     this.maxActive = Math.max(1, options.maxActive ?? 2);
     this.maxRetained = Math.max(this.maxActive, options.maxRetained ?? 20);
   }
 
-  start(question: string, updateReportId: string | null = null): ResearchTaskSnapshot {
+  start(question: string, updateReportId: string | null = null, topicId = ''): ResearchTaskSnapshot {
     const clean = String(question || '').trim();
     if (clean.length < 8 || clean.length > 1_200) throw new ResearchTasksError('Enter a research question between 8 and 1,200 characters.', 400);
     if (updateReportId && !this.store.get(updateReportId)) throw new ResearchTasksError('The saved report to update could not be found.', 404);
@@ -85,8 +92,10 @@ export class ResearchTaskManager {
       updatedAt: now,
       report: null,
       savedReportId: updateReportId,
+      topicId: String(topicId || '').slice(0, 64),
       updateReportId,
       error: null,
+      warning: null,
     };
     this.tasks.set(task.id, task);
     void this.run(task);
@@ -118,7 +127,11 @@ export class ResearchTaskManager {
     if (!task || task.status !== 'complete' || !task.report) throw new ResearchTasksError('Only a completed report can be saved.', 409);
     if (task.savedReportId) {
       const saved = this.store.get(task.savedReportId);
-      if (saved) return saved;
+      if (saved) {
+        try { this.onReportSaved?.(saved, task.topicId); task.warning = null; }
+        catch { task.warning = 'The research report is saved, but its central Brain index could not be refreshed.'; }
+        return saved;
+      }
       task.savedReportId = null;
     }
     const { id: _taskId, createdAt: _createdAt, updatedAt: _updatedAt, ...content } = task.report;
@@ -127,6 +140,8 @@ export class ResearchTaskManager {
       task.savedReportId = saved.id;
       task.report = saved;
       task.updatedAt = this.now().toISOString();
+      try { this.onReportSaved?.(saved, task.topicId); }
+      catch { task.warning = 'The research report was saved, but its central Brain index could not be refreshed.'; }
       return saved;
     } catch (error) {
       if (error instanceof ResearchStoreError) throw new ResearchTasksError(error.message, 500);
@@ -159,6 +174,10 @@ export class ResearchTaskManager {
       task.title = report.title;
       task.status = 'complete';
       task.progress = task.updateReportId ? 'Saved report updated with fresh search evidence.' : 'Research complete. Save the report to keep it on this computer.';
+      if (task.updateReportId && this.onReportSaved) {
+        try { this.onReportSaved(report, task.topicId); task.warning = null; }
+        catch { task.warning = 'The report update is saved, but its central Brain index could not be refreshed.'; }
+      }
     } catch (error) {
       task.status = 'failed';
       task.error = error instanceof ResearchTasksError ? error.message

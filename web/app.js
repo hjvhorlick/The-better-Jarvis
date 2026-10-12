@@ -12,13 +12,18 @@
 
   const el = {
     status: $("#status"), ring: $("#ring"), ringLabel: $("#ring-label"),
+    topicChip: $("#active-topic-chip"), send: $("#send"),
     surface: $("#surface"), hint: $("#surface-hint"), crumb: $("#crumb-path"),
     up: $("#btn-up"), log: $("#log"), composer: $("#composer"), input: $("#input"),
     preview: $("#preview"),
     sidebar: $("#sidebar"), railToggle: $("#rail-toggle"),
   };
 
-  const state = { path: null, parent: null, workspace: "general" };
+  const CONVERSATION_KEY = "supper.brain.conversation.v1";
+  const TOPIC_KEY = "supper.brain.topic.v1";
+  function stored(key) { try { return localStorage.getItem(key) || ""; } catch (_) { return ""; } }
+  const state = { path: null, parent: null, workspace: "general",
+    conversationId: stored(CONVERSATION_KEY), topicId: stored(TOPIC_KEY), topicTitle: "", chatBusy: false };
 
   // ---------- helpers ----------
   async function api(path, options = {}) {
@@ -57,11 +62,33 @@
     try { localStorage.setItem(RAIL_KEY, thin ? "1" : "0"); } catch (_) { /* storage off */ }
   }
 
-  // tag: optional short label showing where an answer came from (text only).
-  function addMsg(kind, text, tag) {
+  // All provider and memory text uses textContent. Source links are allow-listed to HTTP(S).
+  function addMsg(kind, text, tag, sources) {
     const div = document.createElement("div");
     div.className = `msg ${kind}`;
-    div.textContent = text;
+    const body = document.createElement("span");
+    body.textContent = String(text || "");
+    div.appendChild(body);
+    if (Array.isArray(sources) && sources.length) {
+      const list = document.createElement("div");
+      list.className = "msg-sources";
+      const heading = document.createElement("strong");
+      heading.textContent = "Sources";
+      list.appendChild(heading);
+      sources.forEach((source, index) => {
+        try {
+          const url = new URL(String(source.url || ""), location.href);
+          if (!(["http:", "https:"].includes(url.protocol)) || url.username || url.password) return;
+          const link = document.createElement("a");
+          link.href = url.href;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = `[${index + 1}] ${String(source.title || url.hostname)}`;
+          list.appendChild(link);
+        } catch (_) { /* malformed citation is omitted, not rendered as a link */ }
+      });
+      if (list.querySelector("a")) div.appendChild(list);
+    }
     if (tag) {
       const t = document.createElement("span");
       t.className = "tag";
@@ -95,9 +122,12 @@
   async function refreshStatus() {
     try {
       const s = await api("/api/status");
-      const parts = [s.api_key_configured ? "Gemini key set" : "no Gemini key"];
-      parts.push(`${s.file_roots_available} folder${s.file_roots_available === 1 ? "" : "s"} allowed`);
-      const cls = s.api_key_configured ? "ok" : "warn";
+      const provider = s.provider || {};
+      const providerLabel = provider.state === "connected" ? "Gemini connection verified"
+        : provider.state === "failed" ? "Gemini connection failed"
+        : s.api_key_configured ? "Gemini configured · not tested" : "Gemini not configured";
+      const parts = [providerLabel, `${s.file_roots_available} folder${s.file_roots_available === 1 ? "" : "s"} allowed`];
+      const cls = provider.state === "connected" ? "ok" : provider.state === "failed" ? "bad" : "warn";
       setStatus(`backend online · ${parts.join(" · ")}`, cls);
     } catch (_) {
       setStatus("backend offline — start it with: python -m backend", "bad");
@@ -226,20 +256,111 @@
   const SOURCE_TAGS = {
     local: "local",
     gemini: "Gemini",
+    knowledge: "saved knowledge",
     confirmation: "needs your OK",
     blocked: "blocked",
   };
 
+  function persistConversation() {
+    try {
+      if (state.conversationId) localStorage.setItem(CONVERSATION_KEY, state.conversationId);
+      else localStorage.removeItem(CONVERSATION_KEY);
+      if (state.topicId) localStorage.setItem(TOPIC_KEY, state.topicId);
+      else localStorage.removeItem(TOPIC_KEY);
+    } catch (_) { /* browser storage may be disabled */ }
+  }
+
+  function updateTopicChip(title) {
+    state.topicTitle = title || "";
+    if (el.topicChip) el.topicChip.textContent = `Topic: ${state.topicTitle || "none"}`;
+    if (el.topicChip) el.topicChip.title = state.topicTitle || "No active topic";
+  }
+
+  function setConversation(data, { clear = true, load = false } = {}) {
+    state.conversationId = data && data.conversation_id ? String(data.conversation_id) : "";
+    state.topicId = data && data.topic_id ? String(data.topic_id) : "";
+    persistConversation();
+    updateTopicChip(data && data.topic_title ? data.topic_title : "");
+    if (clear) el.log.textContent = "";
+    if (load) loadConversationHistory();
+  }
+
+  function applyAnswerContext(data) {
+    if (!data) return;
+    if (data.conversation_id) state.conversationId = String(data.conversation_id);
+    if (data.topic_id !== undefined) state.topicId = data.topic_id ? String(data.topic_id) : "";
+    persistConversation();
+    updateTopicChip(data.topic_title || "");
+  }
+
+  async function ensureConversation() {
+    if (state.conversationId) return state.conversationId;
+    const data = await api("/api/brain/conversations", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
+    });
+    setConversation(data, { clear: false, load: false });
+    return state.conversationId;
+  }
+
+  async function loadConversationHistory() {
+    const id = state.conversationId;
+    if (!id) return;
+    try {
+      const data = await api(`/api/brain/conversations/${encodeURIComponent(id)}`);
+      if (state.conversationId !== id) return;
+      el.log.textContent = "";
+      data.turns.forEach((turn) => {
+        const kind = turn.status === "error" ? "error" : (turn.role === "user" ? "user" : "assistant");
+        addMsg(kind, turn.text, turn.source || "", turn.sources || []);
+      });
+      if (data.topic_id) state.topicId = data.topic_id;
+      if (data.topic_title) updateTopicChip(data.topic_title);
+      persistConversation();
+    } catch (e) {
+      if (e.message.includes("not available")) {
+        state.conversationId = "";
+        state.topicId = "";
+        persistConversation();
+        updateTopicChip("");
+      } else {
+        addMsg("error", `Could not restore conversation: ${e.message}`);
+      }
+    }
+  }
+
+  async function startFreshConversation() {
+    try {
+      const data = await api("/api/brain/conversations", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({}),
+      });
+      setConversation(data, { clear: true, load: false });
+      addMsg("system", "New conversation started. Your saved topics and history were kept.");
+    } catch (e) {
+      addMsg("error", `Could not start a new conversation: ${e.message}`);
+    }
+  }
+
   async function ask(text, workspace) {
+    if (state.chatBusy) return;
+    const previousConversationId = state.conversationId;
+    state.chatBusy = true;
+    if (el.send) el.send.disabled = true;
     addMsg("user", text);
     setRing("thinking", "thinking");
     try {
+      await ensureConversation();
       const data = await api("/api/chat", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ text, workspace }),
+        body: JSON.stringify({ text, workspace, conversation_id: state.conversationId }),
       });
-      addMsg("assistant", data.reply, SOURCE_TAGS[data.source] || "");
+      if (previousConversationId && data.conversation_id && data.conversation_id !== previousConversationId) {
+        el.log.textContent = "";
+        addMsg("system", `Switched to ${data.topic_title || "a new saved topic"}; the previous topic history is kept.`);
+        addMsg("user", text);
+      }
+      applyAnswerContext(data);
+      addMsg("assistant", data.reply, SOURCE_TAGS[data.source] || "", data.sources || []);
       if (data.open_path) openPath(data.open_path);
       if (window.SupperCtl) window.SupperCtl.onAnswer(data);
       setRing("", "ready");
@@ -247,6 +368,9 @@
       addMsg("error", e.message);
       setRing("error", "error");
       if (window.SupperCtl) window.SupperCtl.refresh();
+    } finally {
+      state.chatBusy = false;
+      if (el.send) el.send.disabled = false;
     }
   }
 
@@ -309,16 +433,25 @@
     });
   }
 
-  // Small surface for myhands.js (loaded after this file).
+  // Small surface for the companion scripts loaded after this file.
   window.SupperUI = { addMsg, savePosition, surface: el.surface };
-  // The voice visualiser, so voice.js can show listening and speaking on it.
   window.SupperRing = setRing;
+  window.SupperConversation = {
+    get: () => ({ conversation_id: state.conversationId, topic_id: state.topicId, topic_title: state.topicTitle }),
+    set: setConversation,
+    load: loadConversationHistory,
+    startFresh: startFreshConversation,
+    updateTopic: (id, title) => { state.topicId = id || ""; persistConversation(); updateTopicChip(title || ""); },
+  };
+  const newChatButton = $("#btn-new-chat");
+  if (newChatButton) newChatButton.addEventListener("click", startFreshConversation);
 
   // ---------- start ----------
   $$(".panel").forEach((p) => { p.hidden = true; });
   try { setRailThin(localStorage.getItem(RAIL_KEY) === "1"); } catch (_) { /* storage off */ }
   setRing("", "ready");
   refreshStatus();
+  if (state.conversationId) loadConversationHistory();
   showRoots();
   setInterval(refreshStatus, 15000);
   window.addEventListener("resize", () => { if (state.path === null) showRoots(); });

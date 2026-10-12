@@ -105,6 +105,7 @@ class LiveRelay:
         spend_reconnect: Callable[[], bool],
         on_activity: Callable[[], None],
         on_error: Callable[[str], None],
+        on_turn: Callable[[str, str], bool | None] | None = None,
         client_factory=default_client,
         connect=default_connect,
         config_factory=default_config,
@@ -119,6 +120,7 @@ class LiveRelay:
         self._spend = spend_reconnect
         self._activity = on_activity
         self._error_cb = on_error
+        self._on_turn = on_turn
         self._client_factory = client_factory
         self._connect = connect
         self._config_factory = config_factory
@@ -266,6 +268,13 @@ class LiveRelay:
             self._bus.publish("voice", {"type": "voice_turn", "role": "user", "text": user})
         if assistant:
             self._bus.publish("voice", {"type": "voice_turn", "role": "assistant", "text": assistant})
+        if user and self._on_turn is not None:
+            try:
+                saved = self._on_turn(user, assistant)
+                if saved is False:
+                    self._report("memory", "voice transcript could not be saved")
+            except Exception as exc:
+                self._report("memory", f"voice transcript could not be saved ({type(exc).__name__})")
 
     def _report(self, code: str, message: str) -> None:
         self.last_error = message

@@ -119,7 +119,7 @@
       spread = clamp((span / (scale * 2.6) - 0.25) / 0.75, 0, 1);
     }
     const halfCurled = curl.every((v) => v >= 0.22 && v <= 0.78);
-    // Match Barehands' measured pinch geometry: compare the thumb/index gap
+    // Match My Hands' measured pinch geometry: compare the thumb/index gap
     // with the wrist-to-middle-MCP palm axis in the image plane. MediaPipe z
     // is relative depth, not a metric pixel axis; mixing it into the pinch
     // distance makes the threshold vary with hand orientation and depth.
@@ -136,7 +136,7 @@
     const indexReach = fingerReach(8, 5);
     const backReach = (fingerReach(12, 9) + fingerReach(16, 13) + fingerReach(20, 17)) / 3;
     const thumbToRingBase = scale2D > 1e-6 ? dist2(points[4], points[13]) / scale2D : 0;
-    // Barehands' false-pinch rejection: a real thumb/index OK pinch curls
+    // My Hands' false-pinch rejection: a real thumb/index OK pinch curls
     // index inward while the other three remain arched, or has the measured
     // near-on profile-hand silhouette. Gate only pinch START; do not make an
     // ongoing hold depend on noisy per-frame shape estimates.
@@ -226,7 +226,7 @@
         (quality && (p.qualityPrev || p.qualityEma > 0.55));
       p.qualityPrev = quality;
       const garbage = Boolean(frame.handGarbage);
-      // Barehands protects a moving grab from one-frame blur spikes by asking
+      // My Hands protects a moving grab from one-frame blur spikes by asking
       // the hand to open farther at speed; stationary release stays responsive.
       const releaseAt = handSpeed > 800 ? Math.max(pinchOff, 0.70) : pinchOff;
 

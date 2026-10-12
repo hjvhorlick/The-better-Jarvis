@@ -319,7 +319,8 @@ function freePort() {
     const brain = await get(srv, '/api/brain-check');
     ok('a retired model falls through to the next candidate', brain.body.ok === true && brain.body.model === 'gemini-flash-latest', `${brain.body.model} (${brain.body.modelSource})`);
     ok('…and the fall-through is reported, not hidden', brain.body.modelSource && /current model|moving alias/.test(String(brain.body.modelSource)), String(brain.body.modelSource));
-    const chat = await post(srv, '/api/command', { text: 'hello there' });
+    // A real question (not a greeting — greetings never reach Gemini now).
+    const chat = await post(srv, '/api/command', { text: 'explain what a flyback diode does' });
     ok('…and a chat reply still arrives', typeof chat.body.reply === 'string' && chat.body.reply.startsWith('answered by'), String(chat.body.reply).slice(0, 60));
   } finally { await srv.stop(); }
 
@@ -334,7 +335,7 @@ function freePort() {
     ok('…and the message blames the model name, not the key', /withdrawn/i.test(message) && /key is fine/i.test(message), message.slice(0, 120));
     ok('…and it never blames the connection', !/connection/i.test(message), message.slice(0, 80));
     ok('…and it points at the setting', /SUPPER_TEXT_MODEL|GEMINI_MODEL/.test(message), message.slice(0, 120));
-    const chat = await post(srv2, '/api/command', { text: 'hello there' });
+    const chat = await post(srv2, '/api/command', { text: 'explain this model availability error' });
     ok('…and the dialogue says the same thing', /withdrawn/i.test(String(chat.body.reply)) && /key is fine/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
     const voice = await post(srv2, '/api/voice/transcribe', { rate: 48000, pcm: Buffer.alloc(48000 * 2).toString('base64') });
     ok('…and the server ear says it too', voice.body.ok === false && /withdrawn/i.test(String(voice.body.message)), String(voice.body.message).slice(0, 100));
@@ -357,9 +358,15 @@ function freePort() {
     ok('…and naming ./.env', /\.env/.test(message), message.slice(0, 160));
     const settings = await get(srv, '/api/settings/gemini-key');
     ok('…and Settings agrees there is no key', settings.body.present === false && settings.body.source === null, JSON.stringify({ present: settings.body.present, source: settings.body.source }));
-    const chat = await post(srv, '/api/command', { text: 'hello' });
-    ok('…and the local reply names every place checked', /GEMINI_API_KEY/.test(String(chat.body.reply)) && /config\/api_keys\.json/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
+    const greeting = await post(srv, '/api/command', { text: 'hello' });
+    ok('…and an offline greeting stays brief and honest', /no Gemini key is set/.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
+       String(greeting.body.reply));
+    const chat = await post(srv, '/api/command', { text: 'what can you tell me offline' });
+    ok('…and an unanswered offline question names every place checked', /GEMINI_API_KEY/.test(String(chat.body.reply)) && /config\/api_keys\.json/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
     ok('…and no call was made without a key', !srv.stub.calls.some((c) => c.kind === 'generate'), `calls=${srv.stub.calls.length}`);
+    const saved = await post(srv, '/api/settings/gemini-key', { key: 'a-new-harness-key-012345' });
+    ok('saving a key clears the previous no-key status', saved.body.ok === true && !/no Gemini key is set|did not answer|offline/i.test(String((await post(srv, '/api/command', { text: 'hello' })).body.reply)),
+       String(saved.body.ok));
   } finally { await srv.stop(); }
 }
 

@@ -6,6 +6,12 @@ __pycache__/
 config/api_keys.json
 config/certs/
 memory/long_term.json
+memory/recent_dialogue.json
+memory/dialogue_archive.jsonl
+memory/memory_archive.json
+memory/backups/
+memory/*.lock
+memory/*.corrupt-*
 memory/dashboard_history.json
 memory/dashboard_memory.json
 memory/dashboard_reminders.json
