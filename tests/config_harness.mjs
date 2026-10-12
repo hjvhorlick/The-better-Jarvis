@@ -625,15 +625,17 @@ function freePort() {
       ok('speed: …after one refusal, retried without the setting', refused.length >= 2, `${refused.length} attempts`);
     } finally { await picky.stop(); }
 
-    // The OLD generation still wants the OLD parameter. Writing 'gemini-3.8'
-    // into the defaults must not quietly break a Gemini 2.5 model, which is the
-    // whole reason the preference is read from the model name.
-    const old25 = await startDashboard({ models: { 'gemini-2.5-flash': { streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'gemini-2.5-flash' }, name: 'old-2.5' });
+    // A stale Gemini 2.5 setting must be migrated before thinking options are
+    // selected. The replacement is Gemini 3.8 Flash, which uses thinkingLevel.
+    const old25 = await startDashboard({ models: { 'gemini-3.8-flash': { streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'gemini-2.5-flash' }, name: 'old-2.5' });
     try {
       await post(old25, '/api/command', { text: 'explain what a flyback diode does' });
       const call25 = old25.stub.calls.filter((c) => c.kind === 'stream').pop();
-      ok('speed: a Gemini 2.5 model still gets the numeric thinkingBudget it understands',
-         call25 && call25.thinkingBudget === 0 && call25.thinkingLevel === undefined,
+      ok('speed: a legacy Gemini 2.5 setting is migrated before the request',
+         call25 && call25.model === 'gemini-3.8-flash',
+         call25 ? `model=${call25.model}` : 'no call');
+      ok('speed: the migrated Gemini 3.8 request uses thinkingLevel, not thinkingBudget',
+         call25 && call25.thinkingLevel === 'LOW' && call25.thinkingBudget === undefined,
          call25 ? `thinkingBudget=${call25.thinkingBudget} thinkingLevel=${call25.thinkingLevel}` : 'no call');
       ok('speed: …and it is answered on the FIRST attempt, with nothing refused',
          old25.stub.calls.filter((c) => c.kind === 'stream').length === 1,
