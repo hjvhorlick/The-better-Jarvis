@@ -2229,7 +2229,7 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
  * `gemini-3.8-flash-tts`: Google's flagship TTS model (released 22 September 2026,
  * no shutdown announced). It is the recommended replacement for every voice model
  * this app used before — `gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`
- * and `gemini-3.1-flash-tts-preview` all shut down on 17 November 2026.
+ * and `gemini-3.1-flash-tts-preview` are scheduled to shut down on 17 November 2026.
  * Source: ai.google.dev/gemini-api/docs/deprecations (Audio models) and
  * ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts, read 2026-10-12.
  *
@@ -2255,7 +2255,7 @@ const RETIRED_VOICE_MODELS: Record<string, string> = {
 function voiceRetirementNote(model: string): string {
   const when = RETIRED_VOICE_MODELS[String(model || '').trim()];
   if (!when) return '';
-  return ` ${model} is switched off on ${when}; the app uses ${DEFAULT_VOICE_MODEL} instead, `
+  return ` ${model} is scheduled to be switched off on ${when}; the app uses ${DEFAULT_VOICE_MODEL} instead, `
     + `and moves on to it by itself if ${model} stops answering.`;
 }
 const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
@@ -2287,11 +2287,10 @@ function resolveVoiceModel(): { model: string; source: string; note: string } {
 }
 
 /**
- * The models the mouth may use, in order. The owner's own setting always wins and is
- * never second-guessed; the current names follow it. Only a withdrawal (404 /
- * "no longer available") moves on to the next one — a refused key, an exhausted
- * quota or a dead connection is final, because another model cannot mend any of them
- * (see synthesizeVoice, which checks the classified code before trying the next name).
+ * The models the mouth may use, in order. Valid owner settings are respected, while
+ * known legacy preview TTS settings are migrated before a request. A withdrawn model
+ * name or model-specific access denial may move to the next candidate; a refused key,
+ * exhausted quota or dead connection is final because another model cannot mend it.
  *
  * The fallbacks are offered even when the owner pinned a name: if their pin is one of
  * the models Google switches off, the app keeps speaking instead of going silent.
@@ -2436,9 +2435,8 @@ async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: stri
     } catch (err) {
       const failure = err as Error & { code?: string };
       lastError = failure;
-      // Only a WITHDRAWN NAME is worth another model. A refused key, a spent quota
-      // or a dead connection fails the same way everywhere, and retrying those
-      // would just spend the voice's budget twice for the same silence.
+      // Only a withdrawn name or model-specific access denial is worth another model.
+      // A refused key, spent quota or dead connection fails every model the same way.
       if (failure.code !== 'model-unavailable') break;
       if (!withdrawal) withdrawal = failure;
       console.warn(`[voice] ${candidate.model} is unavailable (${failure.message.slice(0, 120)}) — trying the next voice model.${voiceRetirementNote(candidate.model)}`);
