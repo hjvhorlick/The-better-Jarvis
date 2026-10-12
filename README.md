@@ -24,6 +24,12 @@ dashboard, paste the key, press Save. It is stored only in the local, git-ignore
 `.env` file on your machine and takes effect immediately — no restart. You can
 also copy `.env.example` to `.env` by hand if you prefer.
 
+**If JARVIS ever says he has no key when you have just saved one, read the build
+line at the bottom of Settings → Voice.** It prints the page's build, the
+server's build, and the folder this server is reading its settings from. When
+the page and the server disagree, the browser is holding an older copy — press
+Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
+
 ## What the main build does
 
 - **Clear glass, thin yellow lines** — one look on every surface (dashboard and
@@ -67,7 +73,10 @@ also copy `.env.example` to `.env` by hand if you prefer.
   spoken sentence is one voice call, counted in its own daily budget
   (`runtime/voice_quota.json`, see `SUPPER_GEMINI_VOICE_BUDGET`) so speaking can
   never use up the day's answers; a sentence already spoken is replayed from
-  memory and costs nothing. *This computer's voice* (free, offline) remains in
+  memory and costs nothing. The voice has its **own model**, separate from the
+  text model (`SUPPER_VOICE_MODEL`, see `.env.example`), and its own budget, so
+  a refused sentence can never stop the answers.
+  *This computer's voice* (free, offline) remains in
   Settings → Voice as an explicit choice — nothing ever falls back to it by
   itself, so a failure is always reported instead of quietly sounding different.
 - **Voice in** 🎤 — one dictated command (browser speech recognition, with a

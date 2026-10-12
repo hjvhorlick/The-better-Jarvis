@@ -85,7 +85,8 @@ function startStub(models) {
         if (script0.rateLimited) { res.writeHead(429).end(JSON.stringify({ error: { code: 429, status: 'RESOURCE_EXHAUSTED', message: 'Quota exceeded' } })); return; }
         if (script0.noStream) { res.writeHead(400).end(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'streaming is not supported here' } })); return; }
         calls.push({ kind: 'stream', model, key: req.headers['x-goog-api-key'] || url.searchParams.get('key') || '', body: bodyText ? JSON.parse(bodyText) : {},
-          thinkingBudget: (() => { try { return JSON.parse(bodyText)?.generationConfig?.thinkingConfig?.thinkingBudget; } catch { return undefined; } })() });
+          thinkingBudget: (() => { try { return JSON.parse(bodyText)?.generationConfig?.thinkingConfig?.thinkingBudget; } catch { return undefined; } })(),
+          thinkingLevel: (() => { try { return JSON.parse(bodyText)?.generationConfig?.thinkingConfig?.thinkingLevel; } catch { return undefined; } })() });
         if (script0.rejectsThinking) {
           const asked = (() => { try { return JSON.parse(bodyText || '{}')?.generationConfig?.thinkingConfig; } catch { return undefined; } })();
           if (asked) { res.writeHead(400).end(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Unknown name "thinkingConfig": Cannot find field.' } })); return; }
@@ -317,7 +318,7 @@ function freePort() {
   try {
     const brain = await get(srv, '/api/brain-check');
     ok('a retired model falls through to the next candidate', brain.body.ok === true && brain.body.model === 'gemini-flash-latest', `${brain.body.model} (${brain.body.modelSource})`);
-    ok('…and the fall-through is reported, not hidden', brain.body.modelSource && /default alias/.test(String(brain.body.modelSource)), String(brain.body.modelSource));
+    ok('…and the fall-through is reported, not hidden', brain.body.modelSource && /current model|moving alias/.test(String(brain.body.modelSource)), String(brain.body.modelSource));
     const chat = await post(srv, '/api/command', { text: 'hello there' });
     ok('…and a chat reply still arrives', typeof chat.body.reply === 'string' && chat.body.reply.startsWith('answered by'), String(chat.body.reply).slice(0, 60));
   } finally { await srv.stop(); }
@@ -428,11 +429,26 @@ function freePort() {
       await sleep(400);
 
       const buildLine = window.document.getElementById('jarvis-build-line');
-      ok('Settings → Voice shows the build marker', /Build 2026-10-11-simple-hud-4/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
+      // The marker is only worth printing if it proves the PAGE and the SERVER
+      // are the same build. Hard-coding the string here would pass on a stale
+      // page and fail on every honest bump, so the server's own marker is asked
+      // for and the two are compared.
+      const serverBuild = (await get(srv, '/api/system-status')).body.build;
+      ok('the server reports the build it is running', typeof serverBuild === 'string' && serverBuild.length > 0, String(serverBuild));
+      ok('…and the folder it reads its settings from',
+         /configRoot/.test(JSON.stringify((await get(srv, '/api/system-status')).body)), String((await get(srv, '/api/system-status')).body.configRoot));
+      ok('Settings → Voice shows the build marker', /Build page/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
       ok('…with the assistant\'s configured name', /Tessa/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
 
       await window.refreshGeminiKeyStatus();
       await sleep(150);
+      ok('…and once the server answers, the line compares the page with the server',
+         new RegExp(`page and server both ${serverBuild.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(buildLine.textContent),
+         `server=${serverBuild} line=${buildLine.textContent.slice(0, 110)}`);
+      ok('…so a stale page would be called out instead of silently lying',
+         !/BUT THE SERVER IS/.test(buildLine.textContent), buildLine.textContent.slice(0, 110));
+      ok('…and it names the folder the server reads its settings from',
+         new RegExp(path.basename(srv.cwd)).test(buildLine.textContent), buildLine.textContent.slice(0, 170));
       const status = window.document.getElementById('gemini-key-status').textContent;
       ok('Settings → "The Brain" shows the key\'s source', /config\/api_keys\.json/.test(status), status.slice(0, 110));
       ok('…and the model in use', new RegExp(String((await get(srv, '/api/settings/gemini-key')).body.model)).test(status), status.slice(0, 140));
@@ -498,8 +514,12 @@ function freePort() {
        reply.body.id === requestId && String(reply.body.reply).trim().length > 0, JSON.stringify({ id: reply.body.id, reply: reply.body.reply }).slice(0, 120));
 
     const streamCall = srv.stub.calls.filter((c) => c.kind === 'stream').pop();
-    ok('speed: thinking is switched off (thinkingBudget 0)', streamCall && streamCall.thinkingBudget === 0,
-       streamCall ? `thinkingBudget=${streamCall.thinkingBudget}` : 'no streaming call');
+    // The generation decides the parameter. gemini-3.8-flash is Gemini 3, and
+    // Gemini 3 deprecated thinking_budget — it wants thinking_level. Sending the
+    // 2.5 parameter here is what cost a failed round trip on every reply.
+    ok('speed: a Gemini 3 model gets thinkingLevel, not the deprecated thinkingBudget',
+       streamCall && streamCall.thinkingLevel === 'LOW' && streamCall.thinkingBudget === undefined,
+       streamCall ? `thinkingLevel=${streamCall.thinkingLevel} thinkingBudget=${streamCall.thinkingBudget}` : 'no streaming call');
     ok('speed: the answer length is capped so it is written sooner',
        streamCall && streamCall.body && streamCall.body.generationConfig && streamCall.body.generationConfig.maxOutputTokens > 0,
        streamCall ? JSON.stringify(streamCall.body.generationConfig).slice(0, 100) : 'no call');
@@ -513,6 +533,34 @@ function freePort() {
       const refused = picky.stub.calls.filter((c) => c.kind === 'stream');
       ok('speed: …after one refusal, retried without the setting', refused.length >= 2, `${refused.length} attempts`);
     } finally { await picky.stop(); }
+
+    // The OLD generation still wants the OLD parameter. Writing 'gemini-3.8'
+    // into the defaults must not quietly break a Gemini 2.5 model, which is the
+    // whole reason the preference is read from the model name.
+    const old25 = await startDashboard({ models: { 'gemini-2.5-flash': { streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'gemini-2.5-flash' }, name: 'old-2.5' });
+    try {
+      await post(old25, '/api/command', { text: 'explain what a flyback diode does' });
+      const call25 = old25.stub.calls.filter((c) => c.kind === 'stream').pop();
+      ok('speed: a Gemini 2.5 model still gets the numeric thinkingBudget it understands',
+         call25 && call25.thinkingBudget === 0 && call25.thinkingLevel === undefined,
+         call25 ? `thinkingBudget=${call25.thinkingBudget} thinkingLevel=${call25.thinkingLevel}` : 'no call');
+      ok('speed: …and it is answered on the FIRST attempt, with nothing refused',
+         old25.stub.calls.filter((c) => c.kind === 'stream').length === 1,
+         `${old25.stub.calls.filter((c) => c.kind === 'stream').length} attempts`);
+    } finally { await old25.stop(); }
+
+    // A model whose name gives the generation away must not pay for a guess:
+    // the first reply discovers the setting, every reply after it reuses it.
+    const levelOnly = await startDashboard({ models: { 'harness-level': { rejectsThinking: true, streamText: 'Noted, sir.' } }, env: { SUPPER_TEXT_MODEL: 'harness-level' }, name: 'level-only' });
+    try {
+      await post(levelOnly, '/api/command', { text: 'explain what a flyback diode does' });
+      const firstAttempts = levelOnly.stub.calls.filter((c) => c.kind === 'stream').length;
+      await post(levelOnly, '/api/command', { text: 'explain semiconductor doping briefly' });
+      const totalAttempts = levelOnly.stub.calls.filter((c) => c.kind === 'stream').length;
+      ok('speed: the working thinking setting is remembered, so the refusal is paid for once — not on every reply',
+         firstAttempts >= 2 && totalAttempts === firstAttempts + 1,
+         `first reply ${firstAttempts} attempts, second reply +${totalAttempts - firstAttempts}`);
+    } finally { await levelOnly.stop(); }
 
     // A model that refuses to stream must still answer, in one piece.
     const noStream = await startDashboard({ models: { 'harness-no-stream': { noStream: true } }, env: { SUPPER_TEXT_MODEL: 'harness-no-stream' }, name: 'no-stream' });

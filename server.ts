@@ -24,6 +24,7 @@ import {
   classifyGeminiError,
   explainBrainFailure,
   markBudgetExhausted,
+  markVoiceBudgetExhausted,
   trySpendGeminiBudget,
   trySpendVoiceBudget,
   voiceQuotaSnapshot,
@@ -60,6 +61,16 @@ import type { ResearchTaskStatus } from './research/types.js';
 // SUPPER_DASHBOARD_PORT so its own server can never collide with a live one.
 const PORT = Number.parseInt(process.env.SUPPER_DASHBOARD_PORT || '', 10) || 3000;
 const HOST = '0.0.0.0';
+/**
+ * The SERVER's build marker. Settings → Voice prints this next to the page's
+ * own marker, so a browser holding an older copy of the dashboard is obvious
+ * instead of a mystery — that mismatch is what makes a server look like it has
+ * "no key" while the key is sitting in the file beside it. Bump it with the
+ * page's JARVIS_BUILD whenever either side changes.
+ */
+const SERVER_BUILD = '2026-10-12-voice-fix-1';
+/** Where this server is reading its settings from, printed for the same reason. */
+const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
 const AES_SALT = 'JARVIS-DASHBOARD-v1';
 
@@ -350,10 +361,6 @@ function brainCaller(): BrainCaller | null {
           if (piece) yield piece;
         }
       };
-      const withoutThinking = { ...(config || {}) };
-      delete withoutThinking.thinkingConfig;
-      const retryPlain = config !== undefined && 'thinkingConfig' in config;
-
       return (async function* (): AsyncIterable<string> {
         let text = '';
         try {
@@ -362,18 +369,17 @@ function brainCaller(): BrainCaller | null {
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           if (text) throw err;                       // the words that arrived are real: keep them
-          if (retryPlain && /thinking|invalid[_ ]argument|unknown name|unsupported|cannot find field/i.test(message)) {
-            console.warn(`[JARVIS] ${model} refused the speed settings (${message}) — retrying without them.`);
-            try {
-              for await (const piece of streamWith(Object.keys(withoutThinking).length ? withoutThinking : undefined)) { text += piece; yield piece; }
-              return;
-            } catch (err2) {
-              if (text) throw err2;
-              console.warn(`[JARVIS] the stream failed again (${err2 instanceof Error ? err2.message : err2}).`);
-            }
-          } else {
-            console.warn(`[JARVIS] streaming failed for ${model} (${message}).`);
-          }
+          // A refused SETTING is not this layer's business: config.ts owns the
+          // thinking ladder and must see the refusal, or it keeps re-sending the
+          // parameter this model just rejected (and remembers the wrong one as
+          // the one that worked). Only a transport that cannot stream at all is
+          // answered here, by asking the ordinary way.
+          // Only when the refusal NAMES the setting. A bare 400 INVALID_ARGUMENT
+          // is the generic status Google puts on every bad request (including
+          // "streaming is not supported here"), which must still fall through to
+          // the ordinary call below.
+          if (/thinking/i.test(message)) throw err;
+          console.warn(`[JARVIS] streaming failed for ${model} (${message}) — asking the ordinary way.`);
           yield* plainAnswer();
         }
       })();
@@ -1715,7 +1721,18 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
 // the words are turned into real audio on the server by Gemini's voice model and
 // played by the page as an ordinary sound file — no dependence on what the
 // computer happens to have installed.
+/**
+ * The app's own voice model — UNCHANGED. This is the name the owner's voice is
+ * working with today, so it stays the default and is only ever replaced when
+ * Google stops serving it (see FALLBACK_VOICE_MODELS, tried on a 404).
+ *
+ * For the record: `gemini-2.5-flash-preview-tts` has a shutdown date of
+ * 17 November 2026 and its replacement is `gemini-3.8-flash-tts`, so this name
+ * will have to move — but it moves when it stops answering, not before.
+ */
 const DEFAULT_VOICE_MODEL = 'gemini-2.5-flash-preview-tts';
+/** Tried in order when the name above is withdrawn — never at the same time. */
+const FALLBACK_VOICE_MODELS = ['gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts'];
 const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
 
 function resolveVoiceModel(): { model: string; source: string } {
@@ -1725,6 +1742,26 @@ function resolveVoiceModel(): { model: string; source: string } {
     source: model ? 'SUPPER_VOICE_MODEL' : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
   };
 }
+
+/**
+ * The models the mouth may use, in order. The owner's own setting always wins
+ * and is never second-guessed; the app's default comes next, then the names
+ * Google lists as still served. Only a withdrawal (404 / "no longer available")
+ * moves on to the next one — a refused key or a dead connection is final,
+ * because another model cannot mend either.
+ */
+function voiceModelCandidates(): Array<{ model: string; source: string }> {
+  const configured = resolveVoiceModel();
+  const pinned = (process.env.SUPPER_VOICE_MODEL || process.env.GEMINI_TTS_MODEL || '').trim();
+  const list = [{ model: configured.model, source: configured.source }];
+  if (!pinned) {
+    for (const name of FALLBACK_VOICE_MODELS) {
+      if (!list.some((c) => c.model === name)) list.push({ model: name, source: `the app's fallback voice model (${name})` });
+    }
+  }
+  return list;
+}
+
 function resolveVoiceName(): string {
   return (process.env.SUPPER_VOICE_NAME || '').trim() || DEFAULT_VOICE_NAME;
 }
@@ -1743,28 +1780,35 @@ function resolveVoiceName(): string {
 const voiceCache = new Map<string, { wav: Buffer; model: string }>();
 const VOICE_CACHE_MAX = 80;
 
-async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: string; ms: number; cached: boolean }> {
-  const { client } = buildGeminiClient();
-  if (!client) {
-    throw Object.assign(new Error('no Gemini key is set, so the server cannot speak — add it in Settings → "The Brain"'), { code: 'no-key' });
+/**
+ * Turn one model's answer into bytes the browser can play.
+ *
+ * Two shapes reach this function and they must not be confused. The older
+ * preview TTS models answer with RAW PCM and a mime type carrying the rate
+ * (`audio/L16;codec=pcm;rate=24000`) — those bytes need the 44-byte WAV header
+ * built here. The current TTS models answer with a COMPLETE WAV file (it
+ * already begins with `RIFF`), as Google's own cookbook notes when it branches
+ * on `pcm[:4] == b"RIFF"`. Wrapping a WAV in a second WAV header produces a
+ * file the browser refuses to play — a request that reports success and is
+ * heard as silence, which is the worst possible failure for a voice.
+ */
+function wavFromVoiceAnswer(data: Buffer, mimeType: string): { wav: Buffer; rate: number } {
+  if (data.length > 12 && data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WAVE') {
+    // Already a container: play it exactly as it arrived.
+    const rate = data.readUInt32LE(24) || 24000;
+    return { wav: data, rate };
   }
-  const spoken = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
-  if (!spoken) throw Object.assign(new Error('there was nothing to say'), { code: 'empty' });
-  const { model } = resolveVoiceModel();
-  // A sentence already said is replayed from memory — checked BEFORE the budget,
-  // because remembering costs nothing and must not spend a unit.
-  const cacheKey = `${model}|${resolveVoiceName()}|${spoken}`;
-  const cached = voiceCache.get(cacheKey);
-  if (cached) return { wav: cached.wav, model: cached.model, ms: 0, cached: true };
+  const rate = Number((/rate=(\d+)/i.exec(mimeType || '') || [])[1]) || 24000;
+  return { wav: pcmToWav(data, rate), rate };
+}
 
-  const voiceBudget = trySpendVoiceBudget();
-  if (!voiceBudget.allowed) {
-    const snap = voiceQuotaSnapshot();
-    throw Object.assign(new Error(
-      `the voice's own daily budget is used up (${snap.used} of ${snap.limit} spoken sentences; the count is runtime/voice_quota.json and it resets at local midnight). ` +
-      `Text answers are unaffected — this is the voice's own counter. Raise SUPPER_GEMINI_VOICE_BUDGET for more, or switch the voice engine to this computer's voice (that one is free).`,
-    ), { code: 'voice-budget' });
-  }
+/** One attempt at one model. Throws an error carrying the classified code. */
+async function speakOnce(
+  client: NonNullable<ReturnType<typeof buildGeminiClient>['client']>,
+  model: string,
+  modelSource: string,
+  spoken: string,
+): Promise<{ wav: Buffer; model: string; ms: number; rate: number }> {
   const started = Date.now();
   let raw: GeminiRaw;
   try {
@@ -1778,9 +1822,12 @@ async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: stri
     } as never) as unknown as GeminiRaw;
   } catch (err) {
     const classified = classifyGeminiError(err);
-    if (classified.code === 'rate-limited') markBudgetExhausted();
+    // A refused SENTENCE may only close the VOICE's own counter. It used to
+    // close the brain's, so one quota message from the mouth stopped every
+    // answer for the rest of the day.
+    if (classified.code === 'rate-limited') markVoiceBudgetExhausted();
     let message = explainBrainFailure({
-      code: classified.code, model, modelSource: resolveVoiceModel().source, key: resolveGeminiKey(), raw: classified.raw, attempts: [],
+      code: classified.code, model, modelSource, key: resolveGeminiKey(), raw: classified.raw, attempts: [],
     });
     if (classified.code === 'model-unavailable') {
       // The brain's message names the brain's settings; the mouth has its own.
@@ -1802,11 +1849,53 @@ async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: stri
         : `${model} sent nothing back that can be played. Set SUPPER_VOICE_MODEL to a voice model your key may use.`,
     ), { code: 'failed' });
   }
-  const rate = Number((/rate=(\d+)/.exec(audio.inlineData.mimeType || '') || [])[1]) || 24000;
-  const wav = pcmToWav(Buffer.from(audio.inlineData.data, 'base64'), rate);
-  voiceCache.set(cacheKey, { wav, model });
-  while (voiceCache.size > VOICE_CACHE_MAX) voiceCache.delete(voiceCache.keys().next().value as string);
-  return { wav, model, ms: Date.now() - started, cached: false };
+  const { wav, rate } = wavFromVoiceAnswer(Buffer.from(audio.inlineData.data, 'base64'), audio.inlineData.mimeType || '');
+  return { wav, model, ms: Date.now() - started, rate };
+}
+
+async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: string; ms: number; cached: boolean }> {
+  const { client } = buildGeminiClient();
+  if (!client) {
+    throw Object.assign(new Error('no Gemini key is set, so the server cannot speak — add it in Settings → "The Brain"'), { code: 'no-key' });
+  }
+  const spoken = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
+  if (!spoken) throw Object.assign(new Error('there was nothing to say'), { code: 'empty' });
+  const candidates = voiceModelCandidates();
+  // A sentence already said is replayed from memory — checked BEFORE the budget,
+  // because remembering costs nothing and must not spend a unit. The cache key
+  // names the first choice only: remembering is about the WORDS, and a sentence
+  // already spoken is replayed whatever model happened to say it first.
+  const cacheKey = `${resolveVoiceName()}|${spoken}`;
+  const cached = voiceCache.get(cacheKey);
+  if (cached) return { wav: cached.wav, model: cached.model, ms: 0, cached: true };
+
+  const voiceBudget = trySpendVoiceBudget();
+  if (!voiceBudget.allowed) {
+    const snap = voiceQuotaSnapshot();
+    throw Object.assign(new Error(
+      `the voice's own daily budget is used up (${snap.used} of ${snap.limit} spoken sentences; the count is runtime/voice_quota.json and it resets at local midnight). ` +
+      `Text answers are unaffected — this is the voice's own counter. Raise SUPPER_GEMINI_VOICE_BUDGET for more, or switch the voice engine to this computer's voice (that one is free).`,
+    ), { code: 'voice-budget' });
+  }
+
+  let lastError: (Error & { code?: string }) | null = null;
+  for (const candidate of candidates) {
+    try {
+      const result = await speakOnce(client, candidate.model, candidate.source, spoken);
+      voiceCache.set(cacheKey, { wav: result.wav, model: result.model });
+      while (voiceCache.size > VOICE_CACHE_MAX) voiceCache.delete(voiceCache.keys().next().value as string);
+      return { wav: result.wav, model: result.model, ms: result.ms, cached: false };
+    } catch (err) {
+      const failure = err as Error & { code?: string };
+      lastError = failure;
+      // Only a WITHDRAWN NAME is worth another model. A refused key or a dead
+      // connection fails the same way everywhere, and retrying those would just
+      // spend the voice's budget twice for the same silence.
+      if (failure.code !== 'model-unavailable') break;
+      console.warn(`[voice] ${candidate.model} is unavailable (${failure.message.slice(0, 120)}) — trying the next voice model.`);
+    }
+  }
+  throw lastError || Object.assign(new Error('the voice model could not be reached'), { code: 'failed' });
 }
 
 // POST /api/voice/speak -> the server says one sentence out loud, as a WAV file.
@@ -2119,6 +2208,8 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
   const mem = process.memoryUsage();
   res.json({
     ok: true,
+    build: SERVER_BUILD,          // the page compares this with its own marker
+    configRoot: CONFIG_ROOT,      // where config/api_keys.json is being read from
     state: jarvisState,
     uptime: Math.round(process.uptime()),
     activeSockets: wss.clients.size,
@@ -2153,6 +2244,8 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     tail: status.key.tail,
     source: status.key.source,                             // 'config/api_keys.json' | '.env' | 'environment' | null
     sourceDetail: status.key.detail,
+    build: SERVER_BUILD,                                   // the page's marker is compared against this
+    configRoot: CONFIG_ROOT,                               // the folder this server reads its settings from
     model: status.model.text,                              // the model in use for chat, voice and the brain check
     knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
     drafts: { count: drafts.list().length, dir: 'runtime/drafts' },

@@ -1603,7 +1603,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-11-simple-hud-4 — the model and the key's source appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-12-voice-fix-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1740,7 +1740,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-11-simple-hud-4';
+    const JARVIS_BUILD = '2026-10-12-voice-fix-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1797,7 +1797,19 @@
       const key = info && info.present ? keySourceLine(info) : 'no key set';
       const quota = info && info.quota ? `${info.quota.used}/${info.quota.limit} Gemini calls used today` : 'budget not measured';
       const owner = _userName ? `, for ${_userName}` : '';
-      el.textContent = `Build ${JARVIS_BUILD} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}`;
+      // The server's own marker against this page's. When they differ the
+      // browser is holding a different build than the process answering it —
+      // and that is the one honest explanation for "the settings say a key is
+      // saved but JARVIS says there is none".
+      let builds = `page ${JARVIS_BUILD}`;
+      if (info && info.build) {
+        builds = info.build === JARVIS_BUILD
+          ? `page and server both ${JARVIS_BUILD}`
+          : `page ${JARVIS_BUILD} — BUT THE SERVER IS ${info.build}: this page is stale, press Ctrl/Cmd+Shift+R (or restart the server if it is the older one)`;
+      }
+      const root = info && info.configRoot ? ` · settings read from ${info.configRoot}` : '';
+      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}${root}`;
+      el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : '';
     }
 
     async function refreshGeminiKeyStatus() {
@@ -2225,7 +2237,11 @@
         const res = await _authFetch('/api/brain-check');
         const info = await res.json().catch(() => ({}));
         if (info.ok) {
-          lines.push(`Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
+          // Name the version that ACTUALLY answered, not just the alias that was
+          // asked for — "gemini-flash-latest" reads the same whichever
+          // generation Google points it at.
+          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
+          lines.push(`Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
         } else {
           lines.push(`Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
@@ -2250,11 +2266,19 @@
       }
 
       appendChat('system', 'Senses check:\n' + lines.join('\n'));
-      // Finally, the proof: speak one line out loud.
+      // Finally, the proof: speak one line out loud — through the engine that is
+      // actually in force. This used to go straight to speechSynthesis, so on a
+      // machine with no voices installed (the very case the server voice exists
+      // for) the page announced "I just spoke a test line" while nothing at all
+      // came out of the speakers.
       try {
-        const u = new SpeechSynthesisUtterance('Voice check. If you hear this, my speakers work.');
-        speechSynthesis.speak(u);
-        appendChat('system', 'I just spoke a test line — did you hear it?');
+        const engine = engineUsesServer() ? 'the JARVIS server voice' : "this computer's own voice";
+        if (!_speakOn) {
+          appendChat('system', `The speakers are switched off (🔊 in Settings → Voice), so I said nothing. Turn them on and run the check again to hear ${engine}.`);
+        } else {
+          speakReply('Voice check. If you hear this, my speakers work.');
+          appendChat('system', `I am speaking a test line through ${engine} — did you hear it? If not, press 🔊 Test Speakers in Settings → Voice: it proves the tones, this computer's voice and the server voice one at a time, and names the one that is silent.`);
+        }
       } catch (err) {
         appendChat('system', `Could not even try to speak: ${err.message}`);
       }
@@ -2342,7 +2366,8 @@
         const res = await _authFetch('/api/brain-check');
         const info = await res.json().catch(() => ({}));
         if (info.ok) {
-          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource}) answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
+          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
+          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
         } else {
           appendChat('system', `Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
@@ -4859,7 +4884,17 @@
 
     const Speech = {
       queue: [],          // sentences waiting to be read out
-      speaking: false,    // the browser's mouth is busy right now
+      speaking: false,    // a mouth is busy right now — see engine, below
+      /** Which throat owns the sentence in progress: 'browser' or 'server'. */
+      engine: null,
+      /**
+       * A spoken sentence may legitimately take longer than the watchdog's
+       * 1.4 s: the server voice is a round trip to Gemini plus a sound file
+       * several seconds long. The watchdog below only polices the BROWSER's
+       * synthesiser, and this is a long stop for the server voice so a request
+       * that never answers at all cannot wedge the mouth forever.
+       */
+      SERVER_SENTENCE_TIMEOUT_MS: 45000,
       startedAt: 0,
       voice: null,
       streams: {},        // streamId -> { spoken: characters already queued }
@@ -4901,6 +4936,19 @@
         const synth = window.speechSynthesis;
         if (!synth) return;
         try { if (synth.paused) synth.resume(); } catch (_) {}
+        if (Speech.speaking && Speech.engine === 'server') {
+          // The server voice is a fetched sound file, not a synthesiser: nothing
+          // here can say whether it is working, and the browser-voice test below
+          // would fire on EVERY sentence (synth.speaking is false when the
+          // browser's own mouth is not the one talking) and cut each one off
+          // after 1.4 s. Only a call that never answers at all is a failure.
+          if (performance.now() - Speech.startedAt > Speech.SERVER_SENTENCE_TIMEOUT_MS) {
+            console.warn('[speech] the server voice never answered — giving the sentence up');
+            Speech.serverTimeouts = (Speech.serverTimeouts || 0) + 1;
+            finishUtterance('server-timeout');
+          }
+          return;
+        }
         if (Speech.speaking && !synth.speaking && !synth.pending && performance.now() - Speech.startedAt > 1400) {
           // The synthesiser took the sentence and never made a sound. That is the
           // exact failure this app's voice engine is meant to avoid, so it is
@@ -4991,6 +5039,7 @@
       try { window.speechSynthesis.cancel(); } catch (_) {}
       try { window.speechSynthesis.resume(); } catch (_) {}
       Speech.speaking = false;
+      Speech.engine = null;
       resumeListeningAfterSpeech();
     }
     window.__jarvisStopSpeaking = stopSpeaking;
@@ -5040,6 +5089,23 @@
        page. This is the path that works when the computer has no voice of its
        own — the sound does not depend on what the browser can synthesise. */
     const _serverVoiceCache = new Map();     // sentence -> object URL (this page's copy)
+    // ONE report per run of failures. A broken server voice fails every single
+    // sentence of a reply, and a bubble per sentence drowns the answer it was
+    // meant to explain — so the first failure speaks for the whole reply and the
+    // rest are only logged until one sentence actually plays.
+    let _serverVoiceReportAt = 0;
+    function reportServerVoiceFailure(message) {
+      const now = Date.now();
+      if (now - _serverVoiceReportAt > 15000) {
+        _serverVoiceReportAt = now;
+        micReport(`🔊 The server voice could not speak: ${message}`, [
+          { label: '🗣 Use this computer’s own voice', run: () => setVoiceEngine('browser') },
+          { label: '🔊 Test speakers', run: () => testSpeakersNow() },
+        ]);
+      } else {
+        console.warn('[speech] the server voice refused again:', message);
+      }
+    }
     async function speakViaServer(text) {
       const sentence = String(text || '').slice(0, 1200);
       const remembered = _serverVoiceCache.get(sentence);
@@ -5064,7 +5130,7 @@
       }
       if (!data || !data.ok || !data.audio) {
         console.warn('[speech] the server voice refused:', data && data.message);
-        micReport(`🔊 The server voice could not speak: ${(data && data.message) || 'no reason given'}.`, []);
+        reportServerVoiceFailure((data && data.message) || 'no reason given');
         return false;
       }
       try {
@@ -5080,6 +5146,7 @@
         el.onended = () => finishUtterance('end');       // the URL is kept for the cache
         el.onerror = () => { console.warn('[speech] the audio file would not play'); finishUtterance('error'); };
         await el.play();
+        _serverVoiceReportAt = 0;                        // it spoke: the next failure is news again
         return true;
       } catch (err) {
         toast('🔇 The browser refused to play the audio — click the page once, then try again');
@@ -5133,6 +5200,7 @@
 
       if (engineUsesServer()) {
         Speech.speaking = true;                           // the file's own end continues the queue
+        Speech.engine = 'server';                         // so the watchdog above leaves it alone
         Speech.startedAt = performance.now();
         speakViaServer(next).then((played) => { if (!played) finishUtterance('server-failed'); });
         return;
@@ -5145,6 +5213,7 @@
       const v = Speech.voice || pickVoice();
       if (v) { u.voice = v; u.lang = v.lang; }
       Speech.speaking = true;
+      Speech.engine = 'browser';                          // the watchdog below owns this one
       Speech.startedAt = performance.now();
       u.onstart = () => { Speech.startedAt = performance.now(); };
       u.onend = () => finishUtterance('end');
@@ -5171,6 +5240,7 @@
     function finishUtterance(reason) {
       if (!Speech.speaking) return;
       Speech.speaking = false;
+      Speech.engine = null;
       void reason;
       setTimeout(pumpSpeech, 30);
     }
@@ -5194,6 +5264,8 @@
       supported: speechSupported(),
       engine: _voiceEngine,
       usingServer: engineUsesServer(),
+      speakingEngine: Speech.engine,      // which throat owns the sentence in progress
+      timedOutServerSentences: Speech.serverTimeouts || 0,
       browserVoiceStarted: _browserVoiceFailed,
       voice: Speech.voice ? `${Speech.voice.name} (${Speech.voice.lang})` : 'browser default',
       voiceCount: speechSupported() ? (window.speechSynthesis.getVoices() || []).length : 0,
@@ -5201,7 +5273,8 @@
       queued: Speech.queue.length,
       lastSpoken: _lastSpokenText.slice(0, 120),
     });
-    refreshBuildLine(null);   // the build marker + the settings in force, before the pane is opened
+    refreshBuildLine(null);   // the marker at once, so the line is never blank…
+    refreshGeminiKeyStatus(); // …then the server's own marker, so a stale page says so before Settings is opened
 
     /* ══ THE EARS — always listening, and one button to silence them ═════════
        The owner's report: "the mic works but it does not stay on — I have to
