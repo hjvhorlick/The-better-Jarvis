@@ -90,7 +90,7 @@ def voice_model_candidates(configured: str | None = None) -> list[str]:
     """The current configured model first, then stable fallbacks.
 
     Known legacy preview TTS settings are migrated before a request can use them.
-    Only an actually withdrawn name is allowed to move on to a fallback.
+    Only a withdrawn or explicitly model-inaccessible name is allowed to move on.
     """
     first = _current_voice_model((configured or configured_voice_model()).strip())
     order = [first]
@@ -106,7 +106,7 @@ def retirement_note(model: str) -> str:
     if not entry:
         return ""
     when, replacement = entry
-    return (f"{model} is switched off on {when}; the app uses {replacement} instead, "
+    return (f"{model} is scheduled to be switched off on {when}; the app uses {replacement} instead, "
             f"and moves on to it by itself if {model} stops answering.")
 
 
