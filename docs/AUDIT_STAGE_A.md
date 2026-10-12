@@ -50,6 +50,14 @@ speakers are available in this sandbox, so no runtime testing was possible).
   `dev_agent`, `file_processor`, `youtube_video`, `flight_finder`, `desktop`,
   `computer_control`). Each reads the key from the same file. **Several model names
   are `-latest` aliases, which can change behaviour without notice.**
+- **Update, 2026-10-12:** the identifiers recorded above are what the audit found,
+  and are kept as the record. The code has since moved to Google's current models:
+  Live `models/gemini-3.8-live`, actions `gemini-3.8-flash` (and
+  `gemini-3.5-flash-lite` for the small cheap tasks), speech
+  `gemini-3.8-flash-tts` with `gemini-3.8-flash-lite-tts` as the fallback. The
+  `gemini-3.1-flash-live-preview` and `gemini-3.1-flash-tts-preview` names above
+  are shut down on 17 November 2026. Sources: ai.google.dev/gemini-api/docs/models,
+  /deprecations and /models/gemini-3.8-live, read 2026-10-12.
 - **Free tier:** the README says "Free Gemini API key" [doc]. Nothing in the code
   enforces, checks, or reports free-tier quota. Rate-limit handling exists only in
   `dev_agent.py` (retries on 429 with a 20 s wait) [code]. Actual quotas must be

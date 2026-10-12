@@ -10,12 +10,21 @@
  *
  * Both halves of the project share ONE file, in the engine room's own format:
  *
- *   runtime/knowledge.json   { "entries": [...], "archive": [...], "next_id": N }
+ *   runtime/knowledge.json   { "version": 2, "entries": [...], "archive": [...], "next_id": N }
  *     entry: { id, kind, key, question, keywords, answer, created, last_used,
  *              uses, expires }
  *     kind:  "starter"  written by the assistant, from knowledge/starter.json
  *            "owner"    taught by the owner with "learn: <question> = <answer>"
- *            "gemini"   an answer Gemini gave earlier, kept and shown with its date
+ *            "gemini"   an answer Gemini gave earlier, kept and shown with its date,
+ *                        and now with `provenance` ({ schema, source, model, recorded })
+ *                        recording WHICH MODEL produced it.
+ *
+ * Version 2 added `provenance` to new Gemini answers. Both halves of the project still
+ * read version 1 (and a file with no version at all): an entry with no provenance is
+ * simply STALE, not trusted — it can never silently stand in for an answer from the
+ * model in use now. A stale entry is only used when the model cannot be reached at all,
+ * and then it is described as out of date (`describeStale`). When a fresh answer takes
+ * its place the old entry moves to the archive (`superseded by ...`); nothing is deleted.
  *
  * The matching rules, the wording of the replies and the file shape are the
  * engine room's, deliberately: an entry taught in the desktop app answers a
@@ -29,6 +38,7 @@
  * Provenance: written for this project, mirroring backend/knowledge.py (the
  * owner's own module, written 2026-10-10). No code taken from other projects.
  */
+import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { RUNTIME_DIR, REPO_ROOT } from './config.js';
@@ -36,6 +46,9 @@ import { RUNTIME_DIR, REPO_ROOT } from './config.js';
 export const KNOWLEDGE_FILE = path.join(RUNTIME_DIR, 'knowledge.json');
 export const STARTER_FILE = path.join(REPO_ROOT, 'knowledge', 'starter.json');
 export const DEFAULT_KNOWLEDGE_DAYS = 30;
+/** The file's schema version — 2 adds `provenance` to new Gemini answers (see above). */
+export const KNOWLEDGE_VERSION = 2;
+export const PROVENANCE_SCHEMA = 2;
 const MAX_QUESTION_CHARS = 200;
 const MAX_ANSWER_CHARS = 2000;
 const MIN_OVERLAP = 0.75;
@@ -79,6 +92,14 @@ const UNSURE_ANSWER = /as of my|real[- ]time|up[- ]to[- ]date|knowledge cutoff|i
 
 const STARTER_NOTE = ' [starter answer written by the assistant: please check]';
 
+export interface KnowledgeProvenance {
+  schema: number;
+  source: string;
+  /** The model that produced the answer; '' when it was not recorded. */
+  model: string;
+  recorded: string;
+}
+
 export interface KnowledgeEntry {
   id: number;
   kind: 'starter' | 'owner' | 'gemini';
@@ -90,11 +111,12 @@ export interface KnowledgeEntry {
   last_used: string;
   uses: number;
   expires: string;
+  provenance?: KnowledgeProvenance;
   archived_at?: string;
   archive_reason?: string;
 }
 
-interface KnowledgeFile { entries: KnowledgeEntry[]; archive: KnowledgeEntry[]; next_id: number; }
+interface KnowledgeFile { version?: number; entries: KnowledgeEntry[]; archive: KnowledgeEntry[]; next_id: number; }
 
 function nowIso(): string {
   const d = new Date();
@@ -174,23 +196,81 @@ export class KnowledgeStore {
 
   count(): number { return this.listEntries().length; }
 
-  /** The reply text for a stored entry — the same wording as the engine room. */
+  /** The reply text for a stored entry that may be answered directly — the engine room's wording. */
   describe(entry: KnowledgeEntry): string {
     if (entry.kind === 'starter') return entry.answer + STARTER_NOTE;
     if (entry.kind === 'gemini') return `${entry.answer} (saved from an earlier Gemini answer, ${String(entry.created).slice(0, 10)})`;
     return entry.answer;
   }
 
-  /** Keep a Gemini answer so the same question is never paid for twice. */
-  learn(question: string, answer: string): KnowledgeEntry | null {
+  /** The recorded model information for an entry; an empty object when there is none. */
+  provenanceOf(entry: KnowledgeEntry): Partial<KnowledgeProvenance> {
+    const provenance = entry && typeof entry === 'object' ? (entry as KnowledgeEntry).provenance : undefined;
+    return provenance && typeof provenance === 'object' ? provenance : {};
+  }
+
+  /**
+   * True when a stored GEMINI answer must not answer in place of the current model.
+   *
+   * Starter and taught answers are the owner's (or the assistant's) own words — no model
+   * made them, so they are never stale. A Gemini answer is stale when it does not record
+   * which model produced it (every entry written before provenance existed) or when it
+   * records a different model from the one this app uses now.
+   */
+  isStale(entry: KnowledgeEntry, currentModel: string): boolean {
+    if (!entry || entry.kind !== 'gemini') return false;
+    const madeBy = String(this.provenanceOf(entry).model || '').trim();
+    if (!madeBy) return true;                       // no record of its model: never trusted silently
+    const now = String(currentModel || '').trim();
+    if (!now) return false;                         // nothing to compare with; cannot call it out of date
+    return madeBy !== now;
+  }
+
+  /**
+   * The reply for a stored Gemini answer used only because the model could not be reached.
+   * It says exactly what it is: an earlier answer, from a recorded (or unrecorded) model,
+   * not re-checked just now, so possibly out of date.
+   */
+  describeStale(entry: KnowledgeEntry, currentModel = ''): string {
+    const madeBy = String(this.provenanceOf(entry).model || '').trim() || 'a model this app no longer records';
+    const madeOn = String(entry.created || '').slice(0, 10);
+    const now = String(currentModel || '').trim();
+    const rechecked = now ? `not re-checked with ${now}` : 'not re-checked';
+    return `${entry.answer} (saved from an earlier Gemini answer on ${madeOn}, made by ${madeBy}; `
+      + `${rechecked} — the AI could not be reached just now, so please check anything that may have changed since)`;
+  }
+
+  /**
+   * Keep a Gemini answer so the same question is never paid for twice.
+   *
+   * `model` is the model that produced the answer and is recorded with the entry.
+   * Nothing is overwritten blindly: an entry the owner taught, or a starter answer, is
+   * never replaced; the same model's existing answer is not paid for twice; and a STALE
+   * Gemini entry moves to the archive (with the reason) as the fresh answer takes its place.
+   */
+  learn(question: string, answer: string, model = ''): KnowledgeEntry | null {
     if (!learningEnabled()) return null;
     const q = String(question || '').trim();
     const a = String(answer || '').trim();
     if (!q || !a || !mayKeepAnswer(q, a)) return null;
     this.ensureLoaded();
-    if (this.findExact(q)) return null;
+    const existing = this.findExact(q);
+    if (existing) {
+      if (existing.kind !== 'gemini') return null;          // the owner's or the assistant's answer wins
+      if (!String(model || '').trim() || !this.isStale(existing, model)) return null;
+      this.moveToArchive(existing, `superseded by ${model}`);
+    }
     const expires = new Date(Date.now() + knowledgeDays() * 86400000);
-    return this.add('gemini', q, a, expires.toISOString().slice(0, 19));
+    return this.add('gemini', q, a, expires.toISOString().slice(0, 19), '', model);
+  }
+
+  /** Move one entry to the archive. Nothing is ever deleted. */
+  private moveToArchive(entry: KnowledgeEntry, reason: string): void {
+    const i = this.entries.indexOf(entry);
+    if (i >= 0) this.entries.splice(i, 1);
+    entry.archived_at = nowIso();
+    entry.archive_reason = reason;
+    this.archive.push(entry);
   }
 
   /** Teach an answer by hand: "learn: <question> = <answer>". */
@@ -219,12 +299,18 @@ export class KnowledgeStore {
 
   // ── internals ─────────────────────────────────────────────────────────────
 
-  private add(kind: KnowledgeEntry['kind'], question: string, answer: string, expires: string, key = ''): KnowledgeEntry {
+  private add(kind: KnowledgeEntry['kind'], question: string, answer: string, expires: string, key = '',
+              model = ''): KnowledgeEntry {
     const entry: KnowledgeEntry = {
       id: this.nextId, kind, key,
       question, keywords: keywords(question), answer,
       created: nowIso(), last_used: '', uses: 0, expires,
     };
+    if (kind === 'gemini') {
+      // Which model produced this answer. An empty name is recorded honestly: the entry
+      // is then treated as stale next time rather than trusted silently.
+      entry.provenance = { schema: PROVENANCE_SCHEMA, source: 'gemini', model: String(model || '').trim(), recorded: nowIso() };
+    }
     this.nextId += 1;
     this.entries.push(entry);
     this.save();
@@ -275,8 +361,10 @@ export class KnowledgeStore {
       if (!data) return;
       const onDiskEntries = Array.isArray(data.entries) ? data.entries : [];
       const mine = new Map(this.entries.map((e) => [String(e.id), e]));
+      const archived = this.archivedIds();
       const merged: KnowledgeEntry[] = [];
       for (const theirs of onDiskEntries) {
+        if (archived.has(String(theirs.id))) continue;             // superseded here: not re-activated
         const ours = mine.get(String(theirs.id));
         if (!ours) { merged.push(theirs); continue; }
         const newer = String(ours.last_used || ours.created) >= String(theirs.last_used || theirs.created) ? ours : theirs;
@@ -292,6 +380,53 @@ export class KnowledgeStore {
         for (const e of theirsArchive) if (!seen.has(`${e.id}:${e.archived_at || ''}`)) this.archive.push(e);
       }
     } catch { /* a file being written right now is read on the next call */ }
+  }
+
+  /**
+   * A hash-verified copy of the older file, taken before the first version 2 write.
+   *
+   * The Persistent Brain makes a verified backup set before it rewrites a store; the
+   * knowledge file gets the same treatment when its shape first changes. The upgrade
+   * only ADDS a field — every entry and archive row is carried over — so a backup that
+   * cannot be made is warned about and the save continues rather than losing an answer.
+   */
+  private backupBeforeUpgrade(): void {
+    try {
+      const backupDir = path.join(path.dirname(this.path), 'backups');
+      fs.mkdirSync(backupDir, { recursive: true });
+      const before = fs.readFileSync(this.path);
+      const stamp = new Date().toISOString().replace(/[-:.]/g, '').slice(0, 15) + 'Z';
+      const stem = path.basename(this.path, path.extname(this.path));
+      const name = `${stem}.v1-${stamp}-${crypto.randomBytes(4).toString('hex')}.json`;
+      const copy = path.join(backupDir, name);
+      fs.writeFileSync(copy, before, { mode: 0o600 });
+      const digest = crypto.createHash('sha256').update(before).digest('hex');
+      const copied = crypto.createHash('sha256').update(fs.readFileSync(copy)).digest('hex');
+      const after = crypto.createHash('sha256').update(fs.readFileSync(this.path)).digest('hex');
+      if (digest !== copied || digest !== after) {
+        fs.rmSync(copy, { force: true });
+        console.warn('[knowledge] the file changed while its backup was being checked; the backup was removed');
+        return;
+      }
+      fs.writeFileSync(path.join(backupDir, `${stem}.v1-${stamp}.manifest.json`),
+        JSON.stringify({ created: stamp, source: path.basename(this.path), backup: name, sha256: digest,
+          size_bytes: before.length,
+          reason: 'taken before the knowledge file was first written in schema version 2' }, null, 2), { mode: 0o600 });
+      console.log(`[knowledge] backed up the version 1 store as ${name} before the version 2 upgrade`);
+    } catch (err) {
+      console.warn('[knowledge] could not make a verified backup before the version 2 upgrade:',
+        err instanceof Error ? err.message : err);
+    }
+  }
+
+  /**
+   * Ids this store has archived itself. The merge with the file on disk must not
+   * re-activate one of these: a superseded answer stays superseded.
+   */
+  private archivedIds(): Set<string> {
+    const ids = new Set<string>();
+    for (const entry of this.archive) ids.add(String(entry.id));
+    return ids;
   }
 
   private ensureLoaded(): void {
@@ -364,10 +499,14 @@ export class KnowledgeStore {
         try { return JSON.parse(fs.readFileSync(this.path, 'utf-8')) as KnowledgeFile; } catch { return null; }
       })() : null;
 
+      if (onDisk && Number(onDisk.version || 1) < KNOWLEDGE_VERSION) this.backupBeforeUpgrade();
+
       if (onDisk && Array.isArray(onDisk.entries)) {
         const mine = new Map(this.entries.map((e) => [String(e.id), e]));
+        const archived = this.archivedIds();
         const merged: KnowledgeEntry[] = [];
         for (const theirs of onDisk.entries) {
+          if (archived.has(String(theirs.id))) continue;           // superseded here: not re-activated
           const ours = mine.get(String(theirs.id));
           if (!ours) { merged.push(theirs); continue; }           // written by the other half: keep it
           const newer = String(ours.last_used || ours.created) >= String(theirs.last_used || theirs.created) ? ours : theirs;
@@ -384,7 +523,7 @@ export class KnowledgeStore {
         }
       }
 
-      const payload: KnowledgeFile = { entries: this.entries, archive: this.archive, next_id: this.nextId };
+      const payload: KnowledgeFile = { version: KNOWLEDGE_VERSION, entries: this.entries, archive: this.archive, next_id: this.nextId };
       fs.writeFileSync(tmp, JSON.stringify(payload, null, 2), { mode: 0o600 });
       fs.renameSync(tmp, this.path);
       try {

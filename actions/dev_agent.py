@@ -16,8 +16,10 @@ BASE_DIR         = get_base_dir()
 API_CONFIG_PATH  = BASE_DIR / "config" / "api_keys.json"
 PROJECTS_DIR     = Path.home() / "Desktop" / "JarvisProjects"
 MAX_FIX_ATTEMPTS = 5
-MODEL_PLANNER    = "gemini-flash-latest"
-MODEL_WRITER     = "gemini-flash-latest"
+# gemini-3.8-flash: Google's current stable Flash model (GA 2 September 2026, no shutdown
+# announced). Verified at ai.google.dev/gemini-api/docs/models, read 2026-10-12.
+MODEL_PLANNER    = "gemini-3.8-flash"
+MODEL_WRITER     = "gemini-3.8-flash"
 
 def _get_api_key() -> str:
     with open(API_CONFIG_PATH, "r", encoding="utf-8") as f:

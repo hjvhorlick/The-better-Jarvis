@@ -29,8 +29,9 @@ These come from the master prompt and the audit. They are not negotiable for any
 - The personality file `core/prompt.txt`. Not edited until the owner finishes reworking it.
 - Persistent memory (`long_term.json`, `recent_dialogue.json`). Never cleared, reset,
   overwritten or reinitialised. Migration waits for the Stage B review and a backup.
-- Gemini integration and current configuration (live model `models/gemini-3.1-flash-live-preview`,
-  key read from the server side only).
+- Gemini integration and current configuration (live model `models/gemini-3.8-live` — updated
+  2026-10-12 from `models/gemini-3.1-flash-live-preview`, which Google shuts down on
+  17 November 2026; key read from the server side only).
 - Every feature in the audit table (§8 below), or an explicit owner decision to drop it.
 - The original app stays runnable until v2 reaches parity. Backups and rollback are kept.
 - The CC BY-NC 4.0 licence and the attribution to FatihMakes / Mark LIII (see §6).

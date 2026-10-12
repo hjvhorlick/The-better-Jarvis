@@ -18,7 +18,9 @@ API_CONFIG_PATH    = BASE_DIR / "config" / "api_keys.json"
 DESKTOP            = Path.home() / "Desktop"
 BACKUPS_DIR        = BASE_DIR / "memory" / "code_backups"
 MAX_BUILD_ATTEMPTS = 3
-GEMINI_MODEL       = "gemini-flash-latest"
+# gemini-3.8-flash: Google's current stable Flash model (GA 2 September 2026, no shutdown
+# announced). Verified at ai.google.dev/gemini-api/docs/models, read 2026-10-12.
+GEMINI_MODEL       = "gemini-3.8-flash"
 
 
 def _get_api_key() -> str:
@@ -791,7 +793,7 @@ Be specific and actionable. If you see an error message, quote it exactly."""
         ]
 
         response = client.models.generate_content(
-            model="gemini-flash-latest",
+            model="gemini-3.8-flash",
             contents=contents,
         )
 

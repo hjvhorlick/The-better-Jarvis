@@ -1889,6 +1889,10 @@
       const el = document.getElementById('jarvis-build-line');
       if (!el) return;
       const model = info && info.model ? `${info.model}${info.modelSource ? ` (from ${info.modelSource})` : ''}` : 'not measured yet';
+      // The mouth has its own model, separate from the brain's — named here so a
+      // retired voice name can never be a mystery.
+      const voice = info && info.voiceModel ? `${info.voiceModel}${info.voiceModelSource ? ` (from ${info.voiceModelSource})` : ''}` : 'not measured yet';
+      const voiceNote = info && info.voiceModelNote ? ` · ${String(info.voiceModelNote).trim()}` : '';
       const key = info && info.present ? keySourceLine(info) : 'no key set';
       const quota = info && info.quota ? `${info.quota.used}/${info.quota.limit} Gemini calls used today` : 'budget not measured';
       const owner = _userName ? `, for ${_userName}` : '';
@@ -1903,7 +1907,7 @@
           : `page ${JARVIS_BUILD} — BUT THE SERVER IS ${info.build}: this page is stale, press Ctrl/Cmd+Shift+R (or restart the server if it is the older one)`;
       }
       const root = info && info.configRoot ? ` · settings read from ${info.configRoot}` : '';
-      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · key from: ${key} · ${quota}${root}`;
+      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · voice model: ${voice} · key from: ${key} · ${quota}${root}${voiceNote}`;
       el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : '';
     }
 
@@ -2303,6 +2307,11 @@
         lines.push(`Speech out (TTS): available, ${voices.length} voices loaded${voices.length === 0 ? ' — ZERO voices is why nothing is heard' : ''}`);
         lines.push(`Speakers in the app: ${st && st.on ? 'ON' : 'OFF — the 🔊 button (or Settings → Voice) turns the voice back on'}; voice: ${st ? st.voice : 'browser default'}${st && st.speaking ? '; speaking now' : ''}`);
         lines.push(`Voice engine: ${st && st.usingServer ? "the server's Gemini voice (real audio files)" : "this computer's own voice"}${st && st.engine === 'auto' ? ' (automatic)' : ''}${st && st.browserVoiceStarted === false && st.engine === 'auto' && !st.usingServer ? '; the browser voice never started here, so the server voice takes over on the first reply' : ''}`);
+        if (st && st.usingServer && _voiceInfo) {
+          // Name the spoken model too, and say plainly when the configured name is
+          // one Google is switching off — the same honesty the brain line gives.
+          lines.push(`Voice model: ${_voiceInfo.model} (from ${_voiceInfo.source})${_voiceInfo.note ? ` — ${_voiceInfo.note}` : ''}`);
+        }
       } else {
         lines.push('Speech out (TTS): MISSING in this browser');
       }
@@ -2337,6 +2346,7 @@
         lines.push(`Mic open test: FAILED — ${err.name}: ${err.message}`);
       }
 
+      let _voiceInfo = null;
       // ── The senses around the browser: server, brain, replies channel, cameras ──
       // "voice test" checks the whole body, not just the mouth and ears, and every
       // line says what the reading MEANS — a failure is never a mystery.
@@ -2357,6 +2367,7 @@
           : info.source === '.env' ? './.env (GEMINI_API_KEY)'
           : info.source === 'environment' ? 'the environment (GEMINI_API_KEY)'
           : 'nowhere';
+        _voiceInfo = { model: info.voiceModel || 'not reported', source: info.voiceModelSource || 'unknown', note: String(info.voiceModelNote || '').trim() };
         if (info.present) {
           lines.push(`Brain key: set, ending in …${info.tail} — from ${source}; model in use: ${info.model} (from ${info.modelSource})`);
         } else {

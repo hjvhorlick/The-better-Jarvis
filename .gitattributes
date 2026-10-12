@@ -1,0 +1,7 @@
+# These bundled action modules are stored with CRLF line endings: they came from the
+# original Windows-era desktop app, and the whole files are that way. Tell git that the
+# carriage return at the end of a line is the line terminator here, not trailing
+# whitespace — otherwise `git diff --check` reports every edited line of every one of
+# these files as an error and the real whitespace problems hide among them.
+# (The attribute changes only the whitespace check; it never rewrites the files.)
+actions/*.py whitespace=cr-at-eol

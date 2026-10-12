@@ -15,7 +15,24 @@ There are three kinds of entry:
 |---|---|---|
 | starter | written by the assistant for common tasks in coding, marketing and design, and everyday sums and conversions (`knowledge/starter.json`). Marked "please check" in the reply | no |
 | owner | you teach it: `learn: <question> = <answer>` | no |
-| gemini | a Gemini answer, kept so the same question is not paid for twice. Shown as "saved from an earlier Gemini answer, <date>" | yes, after 30 days (`SUPPER_KNOWLEDGE_DAYS`) |
+| gemini | a Gemini answer, kept so the same question is not paid for twice. Shown as "saved from an earlier Gemini answer, <date>". Every one records **which model made it** | yes, after 30 days (`SUPPER_KNOWLEDGE_DAYS`) |
+
+## A kept Gemini answer from a different model is not used silently
+
+Every Gemini answer is kept with the model that produced it (`provenance`: the model's
+name, the time, and the schema version). That record decides what happens next:
+
+- an answer that records **the model in use now** answers directly, as before — no Gemini
+  call, no budget unit;
+- an answer with **no record** (written before the app kept provenance) or from a
+  **different model** is *stale*: the model is asked first. The stored words are used only
+  when the model cannot be reached (no key, spent budget, a failed call), and then they
+  are labelled plainly: made by which model, on what date, and "not re-checked with
+  <current model> — the AI could not be reached just now, so please check anything that
+  may have changed since".
+- When the current model does answer, it **replaces** the stale entry; the old words are
+  moved to the archive with the reason ("superseded by <model>"). Nothing is deleted, and
+  an answer you taught is never replaced by a model's answer.
 
 ## What is never kept
 
@@ -43,6 +60,14 @@ rather than giving a wrong stored answer.
 
 - `runtime/knowledge.json`: all entries and the archive. It is git-ignored. Deleting the `runtime`
   folder deletes the learned answers. It does not touch your memory (`memory/long_term.json`).
+- The file's `version` is 2 (provenance-aware), but a version 1 file — everything written
+  before the model was recorded — is read whole and each Gemini entry in it is simply
+  treated as stale, not as current. Nothing is rewritten or lost on the first read.
+- The first time an older file is written in the new shape, a **hash-verified copy** is
+  taken first (`runtime/backups/knowledge.v1-<time>-<id>.json`, with a manifest recording
+  the sha256 and the reason). It is the same rule the Persistent Brain follows before it
+  rewrites a store. The upgrade only adds a field, so entries and archive rows are carried
+  over exactly as they were; the copy is there so that "nothing was lost" can be checked.
 - A damaged file is kept aside as `knowledge.json.bad-<time>`, and the store starts again. Nothing is lost.
 - Expired and forgotten entries go to the archive list in the same file.
 
@@ -83,3 +108,14 @@ one Gemini call (say "… — use the AI") — rather than quietly spending it.
 - General facts (for example, a country's capital) are answered from Gemini the first time, not from
   an offline encyclopedia. A fully offline answer for those would need a large local dataset or a
   local language model. That is a decision for you (download size, speed, licence).
+
+## What works with no internet
+
+Saved answers (starter, taught, and kept Gemini answers) work with no internet at all —
+they are words on this computer. Local commands do too: the time and date, notes,
+reminders, the rooms, the windows, My Hands, diagnostics, and *this computer's voice* as
+well as the browser's own voice. **Fresh, open-ended answers do not**: they are written by
+Gemini, which needs the internet. There is no on-device generative model in this app — a
+stale answer used because Gemini could not be reached is labelled as exactly that, never
+passed off as a fresh one. (`core/llm_client.py` is an unwired client for a local model
+such as Ollama; nothing in the app calls it yet.)

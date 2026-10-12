@@ -13,8 +13,9 @@ and starts the app after that.
   variable. The file stays on this computer. Do not share it.
 - **About 2 GB of free disk space** for the packages (they took 1.5 GB in the build environment).
   The speech models download later and add more.
-- **Internet** for the first install. Later starts work offline, apart from chat answers
-  that use Gemini.
+- **Internet** for the first install. Later starts work offline: local commands, saved
+  answers and this computer's voice keep working. Fresh answers from Gemini, the Live
+  voice session and transcription do not — they are online features.
 
 ## Windows
 

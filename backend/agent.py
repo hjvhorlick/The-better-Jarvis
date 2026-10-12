@@ -182,6 +182,11 @@ class Agent:
                 brain_warning = "I could not save this conversation turn to local history."
         token = self._brain_turn_context.set(turn)
         result = None
+        # A stored Gemini answer from an older model (or from before the app recorded
+        # which model made it) must not silently stand in for the current model. It is
+        # held here and used ONLY if the model cannot be reached at all — and then it is
+        # said to be out of date (see KnowledgeStore.describe_stale).
+        stale_knowledge: dict | None = None
         try:
             if not quiet:
                 self._publish("chat_turn", role="user", text=text, workspace=workspace,
@@ -192,13 +197,25 @@ class Agent:
             if result is None and m is not None:
                 result = self._local(m)
             if result is None:
-                result = self._known(text)
+                entry = self._lookup_entry(text)
+                if entry is not None:
+                    if self._knowledge.is_stale(entry, self._current_text_model()):
+                        stale_knowledge = entry
+                    else:
+                        result = self._stored_answer(entry)
             if result is None and self._needs_web_search(text):
                 searched = self._web_search(router.Match("web.search", {"raw": text}), False)
                 result = _answer(searched["reply"], "local", "web.search",
                                  sources=searched.get("sources"))
             if result is None:
-                result = self._gemini(text, workspace, turn=turn)
+                try:
+                    result = self._gemini(text, workspace, turn=turn)
+                except (BackendNotConfigured, UpstreamError, BudgetExhausted):
+                    if stale_knowledge is None:
+                        raise                       # nothing stored to fall back on: report as before
+                    result = _answer(
+                        self._knowledge.describe_stale(stale_knowledge, self._current_text_model()),
+                        "knowledge", "knowledge.lookup.stale")
             if turn is not None:
                 try:
                     self._brain.complete_turn(turn, result.get("reply", ""),
@@ -629,14 +646,24 @@ class Agent:
 
     # ----- local knowledge -----
 
-    def _known(self, text: str) -> dict | None:
-        """A stored answer for this question (starter, taught or kept from Gemini), or None."""
+    def _current_text_model(self) -> str:
+        """The model this Brain's chat actually calls."""
+        return getattr(self._chat, "model", "") or config.get_text_model()
+
+    def _lookup_entry(self, text: str) -> dict | None:
+        """The best stored entry for this question, or None (an unreadable file must not stop chat)."""
         try:
-            entry = self._knowledge.lookup(text)
+            return self._knowledge.lookup(text)
         except OSError:
-            return None                                  # an unreadable file must not stop chat
-        if entry is None:
             return None
+
+    def _stored_answer(self, entry: dict) -> dict:
+        """The reply for a stored entry that may be answered directly (no model involved).
+
+        Only reached for a starter answer, an answer the owner taught, or a Gemini answer
+        kept from the model in use now. A Gemini answer from a different (or unrecorded)
+        model is never described from here — see handle(), which asks the model first.
+        """
         return _answer(self._knowledge.describe(entry), "knowledge", "knowledge.lookup")
 
     def _knowledge_teach(self, m, confirmed):
@@ -805,7 +832,9 @@ class Agent:
                     "Gemini reports its limit is reached for now. Local commands still work.") from None
             raise
         try:
-            self._knowledge.learn(text, reply)           # keep it, so the same question is free next time
+            # Keep it, so the same question is free next time — with the model that
+            # produced it, so a later question can tell whether it is still current.
+            self._knowledge.learn(text, reply, model=self._current_text_model())
         except OSError:
             pass                                         # saving is a bonus; the answer still goes out
         return _answer(reply, "gemini", None)

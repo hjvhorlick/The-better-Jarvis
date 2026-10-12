@@ -93,7 +93,16 @@ def get_base_dir():
 BASE_DIR        = get_base_dir()
 API_CONFIG_PATH = BASE_DIR / "config" / "api_keys.json"
 PROMPT_PATH     = BASE_DIR / "core" / "prompt.txt"
-LIVE_MODEL          = "models/gemini-3.1-flash-live-preview"
+# Live voice model. Google's current Live model is gemini-3.8-live — stable, released
+# 15 September 2026, no shutdown announced. The name this app used before,
+# models/gemini-3.1-flash-live-preview, is shut down on 17 November 2026, and
+# gemini-3.8-live is Google's recommended replacement.
+# Source: ai.google.dev/gemini-api/docs/deprecations (Live API models table) and
+# ai.google.dev/gemini-api/docs/models/gemini-3.8-live, both read 2026-10-12.
+LIVE_MODEL          = "models/gemini-3.8-live"
+# Text model for the side calls outside the Live session (the session and rolling
+# summaries). The same current stable Flash model the rest of the app uses.
+TEXT_MODEL          = "gemini-3.8-flash"
 CHANNELS            = 1
 SEND_SAMPLE_RATE    = 16000 
 RECEIVE_SAMPLE_RATE = 24000
@@ -311,6 +320,18 @@ TOOL_DECLARATIONS = [
         },
     },
 ]
+
+def _blocking_declarations(declarations: list[dict]) -> list[dict]:
+    """Every tool declaration with `behavior: BLOCKING` added.
+
+    gemini-3.8-live runs function calling asynchronously (NON_BLOCKING) by default;
+    Google's migration notes keep synchronous blocking mode available by asking for
+    it on the declaration. This app executes a tool and returns its response before
+    the answer is spoken, so it asks for BLOCKING on every declaration — the tools
+    themselves are unchanged. Declarations that already set a behavior keep it.
+    """
+    return [{**decl, "behavior": decl.get("behavior", "BLOCKING")} for decl in declarations]
+
 
 class _ReconnectSignal(Exception):
     """Raised inside the session TaskGroup to force a clean, voluntary reconnect
@@ -731,7 +752,14 @@ class JarvisLive:
             output_audio_transcription={},
             input_audio_transcription={},
             system_instruction="\n".join(parts),
-            tools=[{"function_declarations": (
+            # Function calling shape for gemini-3.8-live. Google's migration notes for
+            # 3.8 Live say asynchronous execution (NON_BLOCKING) is now the DEFAULT,
+            # and synchronous blocking mode is kept for backwards compatibility by
+            # asking for it per declaration. This app is written for blocking: it runs
+            # the tool, returns the function response, and only then expects the spoken
+            # answer (`_turn_done_event`). Asking for BLOCKING therefore keeps the
+            # behaviour of the 3.1 session it replaced instead of quietly changing it.
+            tools=[{"function_declarations": _blocking_declarations(
                 TOOL_DECLARATIONS
                 + self._action_registry.get_tool_declarations()
                 + self._plugin_registry.get_tool_declarations()
@@ -747,6 +775,9 @@ class JarvisLive:
             context_window_compression=types.ContextWindowCompressionConfig(
                 sliding_window=types.SlidingWindow(),
             ),
+            # `thinking_config` is deliberately absent: gemini-3.8-live does not
+            # support thinking levels, and Google's migration notes say to leave
+            # thinking_level / thinking_config out of the session setup entirely.
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -758,9 +789,12 @@ class JarvisLive:
         if self._enhanced_live:
             # Proactive audio: JARVIS stays silent when speech isn't addressed
             # to it (background chatter, talking to someone else in the room).
-            # (Affective dialog was dropped: gemini-3.1-flash-live does not
-            #  support it, and it never reliably detected tone in practice.
-            #  To restore it on a 2.5 native-audio model, add back:
+            # On gemini-3.8-live this is permanently ON in the model itself —
+            # Google's migration notes say asking for it to be OFF is an error, so
+            # the field is only ever sent as True and the reconnect path below drops
+            # it altogether if a server rejects the field.
+            # (Affective dialog is gone from the Live API on 3.8 — it must not be
+            #  sent at all. To restore it on a 2.5 native-audio model, add back:
             #  cfg["enable_affective_dialog"] = True )
             cfg["proactivity"] = types.ProactivityConfig(proactive_audio=True)
         return types.LiveConnectConfig(**cfg)
@@ -1386,7 +1420,7 @@ class JarvisLive:
             client = _genai.Client(api_key=_get_api_key())
             resp   = await asyncio.to_thread(
                 client.models.generate_content,
-                model="gemini-flash-latest",
+                model=TEXT_MODEL,
                 contents=prompt,
             )
             summary = (resp.text or "").strip()
@@ -1414,7 +1448,7 @@ class JarvisLive:
             client = _genai.Client(api_key=_get_api_key())
             resp = await asyncio.to_thread(
                 client.models.generate_content,
-                model="gemini-flash-latest",
+                model=TEXT_MODEL,
                 contents=prompt,
             )
             summary = (resp.text or "").strip()
@@ -1622,12 +1656,14 @@ class JarvisLive:
                 _resumed_with = self._resume_handle is not None
                 config = self._build_config()
 
-                # Fresh client on every reconnect — avoids stale HTTP session state
-                # v1alpha carries proactive audio; if it gets rejected we fall
-                # back to v1beta.
+                # Fresh client on every reconnect — avoids stale HTTP session state.
+                # v1beta, always: gemini-3.8-live is a stable model whose proactive
+                # audio is built into the model (Google's migration notes), so there
+                # is no preview surface left that needs v1alpha. The proactivity field
+                # is still sent and dropped automatically if a server rejects it.
                 client = genai.Client(
                     api_key=_get_api_key(),
-                    http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
+                    http_options={"api_version": "v1beta"}
                 )
 
                 async with (

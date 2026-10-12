@@ -1613,34 +1613,57 @@ class CustomizeOverlay(QWidget):
                 import numpy as _np, sounddevice as _sd
                 from google import genai as _g
                 from google.genai import types as _t
+                from core import gemini_tts as _tts
                 from memory.config_manager import VOICE_STYLES, get_gemini_key
                 user = (self._user_input.text().strip() or "sir")
                 style_txt = VOICE_STYLES.get(style, "")
                 line = (f"Hello {user}, what are we working on today? "
                         f"Systems are online and I am at your disposal.")
-                prompt = ((style_txt + " ") if style_txt else "") + "Say naturally: " + line
+                # The style direction travels in the part's speech metadata, never in the
+                # words: a directive glued onto the spoken text can be read aloud.
+                contents = _t.Content(**(_tts.preview_contents(line, style_txt)[0]))
+                config = _t.GenerateContentConfig(**_tts.preview_config(voice))
                 client = _g.Client(api_key=get_gemini_key())
-                resp = None
-                for model in ("gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"):
+                resp, last_error, used_model = None, None, ""
+                for model in _tts.voice_model_candidates():
                     try:
                         resp = client.models.generate_content(
-                            model=model, contents=prompt,
-                            config=_t.GenerateContentConfig(
-                                response_modalities=["AUDIO"],
-                                speech_config=_t.SpeechConfig(voice_config=_t.VoiceConfig(
-                                    prebuilt_voice_config=_t.PrebuiltVoiceConfig(voice_name=voice)))))
+                            model=model, contents=contents, config=config)
+                        used_model = model
                         break
                     except Exception as _e:
-                        last = _e
+                        last_error = _e
+                        # Only a WITHDRAWN model name is worth another model: a refused
+                        # key, a spent quota or a dead connection fails the same way
+                        # everywhere and is reported as itself.
+                        if not _tts.is_model_unavailable(_e):
+                            raise
                 if resp is None:
-                    raise last
-                pcm = resp.candidates[0].content.parts[0].inline_data.data
-                audio = _np.frombuffer(pcm, dtype=_np.int16)
-                QTimer.singleShot(0, lambda: self._set_preview_status(f"playing {voice}…", False))
-                _sd.play(audio, samplerate=24000, blocking=True)
-                QTimer.singleShot(0, lambda: self._set_preview_status("done — pick another or SAVE"))
+                    raise last_error if last_error is not None else RuntimeError(
+                        "no voice model could be reached")
+                candidates = resp.candidates or []
+                parts = (candidates[0].content.parts or []) if candidates and candidates[0].content else []
+                said = next((p for p in parts
+                             if getattr(p, "inline_data", None) and p.inline_data.data), None)
+                if said is None:
+                    words = next((p.text for p in parts if getattr(p, "text", None)), "")
+                    raise RuntimeError(
+                        f"the voice model answered with words instead of sound: {str(words)[:80]!r}")
+                # A complete WAV (current models) or headerless PCM (older ones) — the
+                # decoder decides from the bytes, and honours the rate it finds.
+                pcm, rate = _tts.decode_audio(said.inline_data.data,
+                                              getattr(said.inline_data, "mime_type", "") or "")
+                samples = _np.frombuffer(pcm, dtype="<i2")
+                note = _tts.retirement_note(used_model)
+                model_used = used_model
+                QTimer.singleShot(0, lambda: self._set_preview_status(
+                    f"playing {voice} via {model_used}…", False))
+                _sd.play(samples, samplerate=rate, blocking=True)
+                QTimer.singleShot(0, lambda: self._set_preview_status(
+                    f"done — {model_used}" + (f" ({note})" if note else "")
+                    + " — pick another or SAVE"))
             except Exception as e:
-                msg = str(e)[:90]
+                msg = str(e)[:120]
                 QTimer.singleShot(0, lambda: self._set_preview_status(f"preview failed: {msg}"))
 
         threading.Thread(target=_work, daemon=True).start()

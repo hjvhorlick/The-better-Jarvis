@@ -10,7 +10,7 @@ The dashboard carried its own configuration next to the application's:
 | Setting | The application | The dashboard (before) |
 |---|---|---|
 | Gemini key | `GEMINI_API_KEY`, else `config/api_keys.json` → `gemini_api_key` (`backend/config.py`, `config/__init__.py`, every `actions/*.py`) | `process.env.GEMINI_API_KEY` only — the `.env` written by Settings |
-| Model | `SUPPER_TEXT_MODEL`, else `DEFAULT_TEXT_MODEL = "gemini-flash-latest"` (a moving alias) | hardcoded `gemini-2.5-flash` / `gemini-2.5-flash-image` at each call site |
+| Model | `SUPPER_TEXT_MODEL`, else the app's pinned current model `CURRENT_TEXT_MODEL = "gemini-3.8-flash"` (the moving alias `gemini-flash-latest` is only the fallback if the pinned name is ever withdrawn) | hardcoded `gemini-2.5-flash` / `gemini-2.5-flash-image` at each call site |
 | Budget | `SUPPER_GEMINI_DAILY_BUDGET` + `runtime/quota.json`, fail closed (`backend/quota.py`) | nothing — the guard was bypassed |
 | Names | `assistant_name` / `user_name` from `config/api_keys.json` | hardcoded "JARVIS" |
 
@@ -28,7 +28,7 @@ these settings are decided. Every Gemini call path — `processCommand()`,
 | Setting | Order (first match wins) | Reported source |
 |---|---|---|
 | **Key** | `GEMINI_API_KEY` from `./.env`, then from the shell/launcher, then `config/api_keys.json` → `gemini_api_key` | `.env` / `environment` / `config/api_keys.json` / none |
-| **Text model** | `SUPPER_TEXT_MODEL` → `GEMINI_MODEL` (kept working from an earlier session) → the app's alias `gemini-flash-latest` → the model that last worked (`runtime/dashboard_models.json`) → **discovery last** (`ai.models.list()`) | named for every call |
+| **Text model** | `SUPPER_TEXT_MODEL` → `GEMINI_MODEL` (kept working from an earlier session) → the app's current pinned model `gemini-3.8-flash` → the app's moving alias `gemini-flash-latest` (fallback if the pin is withdrawn) → the model that last worked (`runtime/dashboard_models.json`) → **discovery last** (`ai.models.list()`) | named for every call |
 | **Picture model** | `SUPPER_IMAGE_MODEL` → the model that last worked → discovery (`ai.models.list()`, ids naming an image model) | named for every call |
 | **Names** | `config/api_keys.json` → `assistant_name` / `user_name` (defaults `JARVIS` / empty) | `config/api_keys.json` |
 | **Base URL** | `SUPPER_GEMINI_BASE_URL` — unset in normal use; the test harness points the client at a stub | — |
@@ -41,9 +41,12 @@ Rules that are enforced, not just intended:
 - **Remember what worked, re-discover when it disappears.** The model that
   answered is written to `runtime/dashboard_models.json`; a model that fails is
   forgotten before re-discovery.
-- **Nothing is pinned by version number.** The only model name in the source is
-  the app's moving alias; `grep -n "gemini-2\|gemini-3" server.ts` returns
-  nothing, and `config.ts` has no model name in a call path.
+- **The current model is pinned; the alias is only the fallback.** `config.ts`
+  names `gemini-3.8-flash` (Google's current stable Flash, GA 2 September 2026) and
+  `server.ts` names `gemini-3.8-flash-tts` for speech. Both keep Google's moving
+  alias as the next candidate, so a withdrawn pin steps back onto Google's own
+  pointer instead of breaking — but the app never again drifts to a superseded
+  generation because an alias was re-pointed.
 
 ## 3. The daily budget: shared, deliberately
 
@@ -86,7 +89,7 @@ sentence. The rules:
 
 | What Google said | Code | What the dashboard says |
 |---|---|---|
-| `404 NOT_FOUND`, "no longer available" | `model-unavailable` | "The model name was withdrawn, sir — my key is fine, so do not change it." … names `SUPPER_TEXT_MODEL` / `GEMINI_MODEL` and the app alias |
+| `404 NOT_FOUND`, "no longer available" | `model-unavailable` | "The model name was withdrawn, sir — my key is fine, so do not change it." … names `SUPPER_TEXT_MODEL` / `GEMINI_MODEL`, the app's current model and its alias fallback |
 | `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — names where the key came from and its last four characters |
 | `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own limit — the day is marked used up; the key and the model are not at fault |
 | `ENOTFOUND`, `ECONNREFUSED`, "fetch failed" | `connection` | the call never left the machine; neither key nor model is at fault |
