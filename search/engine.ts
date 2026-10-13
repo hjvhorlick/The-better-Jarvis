@@ -790,6 +790,21 @@ export async function searchModels(query: string, options: EngineOptions = {}): 
   return searchMedia('model', query, options);
 }
 
+/**
+ * The keyed suppliers that could serve THIS kind and have no key yet — so a
+ * reply can suggest the right ones. Naming a music or mapping key after a failed
+ * picture search is noise, and it is the registry's job to know the difference.
+ *
+ * This is a suggestion, never a gate: the key-free suppliers behind them already
+ * ran, and their silence is what is being reported.
+ */
+export function missingKeysFor(kind: MediaKind): string[] {
+  const keys = resolveImageServiceKeys();
+  return MEDIA_SOURCES
+    .filter((source) => source.key && source.kinds.includes(kind) && !keys[source.key].key)
+    .map((source) => source.label);
+}
+
 /** Which of the optional keys are set — for Settings, never the key itself. */
 export function imageKeyStatus(): Array<{ service: ImageService; label: string; present: boolean; tail: string | null; detail: string }> {
   const keys = resolveImageServiceKeys();

@@ -15,7 +15,7 @@ import {
   searchImages, searchVideos, searchAudio, searchBooks, searchMedia, searchWeb,
   wikiFact, answerFromWeb, imageKeyStatus, explainFetchError, parseJamendo,
   parseGutendex, describeSources, MEDIA_KINDS,
-  searchModels, parseThingiverse, parseCommonsModels,
+  searchModels, parseThingiverse, parseCommonsModels, missingKeysFor,
 } from '../search/engine.ts';
 
 /* ── DuckDuckGo: the exact shape its HTML endpoint returns ───────────────── */
@@ -515,4 +515,35 @@ test('models is a kind in the registry, and Commons covers it with no key', () =
   const sources = describeSources();
   const keyFree = sources.filter((s) => s.kinds.includes('model') && !s.needsKey);
   assert.ok(keyFree.length, 'a missing Thingiverse token must not block a model search');
+});
+
+/* ── a suggestion must name only suppliers that can serve that kind ──────────
+ * The bug this guards: a failed PICTURE search listed Jamendo (music), Geoapify
+ * and LocationIQ (places) and Thingiverse (models) as keys to add. None of them
+ * can serve a photograph, so the advice was noise that read like a gate.
+ */
+test('missingKeysFor names only the suppliers that can serve that kind', (t) => {
+  t.after(() => {
+    for (const k of ['PEXELS_API_KEY', 'PIXABAY_API_KEY', 'JAMENDO_CLIENT_ID',
+                     'GEOAPIFY_API_KEY', 'LOCATIONIQ_API_KEY', 'THINGIVERSE_APP_TOKEN']) delete process.env[k];
+  });
+  for (const k of ['PEXELS_API_KEY', 'PIXABAY_API_KEY', 'JAMENDO_CLIENT_ID',
+                   'GEOAPIFY_API_KEY', 'LOCATIONIQ_API_KEY', 'THINGIVERSE_APP_TOKEN']) delete process.env[k];
+
+  const pics = missingKeysFor('image');
+  assert.deepEqual(pics, ['Pexels', 'Pixabay'],
+    'only picture suppliers — no music, mapping or model keys');
+
+  const sound = missingKeysFor('audio');
+  assert.deepEqual(sound, ['Jamendo'], 'neither Pexels nor Pixabay serves audio');
+
+  const models = missingKeysFor('model');
+  assert.deepEqual(models, ['Thingiverse']);
+
+  // A kind with no keyed supplier suggests nothing at all.
+  assert.deepEqual(missingKeysFor('book'), [], 'Gutenberg needs no key, so nothing to suggest');
+
+  process.env.PEXELS_API_KEY = 'pexels-test-key';
+  const after = missingKeysFor('image');
+  assert.deepEqual(after, ['Pixabay'], 'a loaded key drops out of the suggestion');
 });
