@@ -551,7 +551,12 @@ function freePort() {
     ok('429: …and the message blames Google, names the time, and promises midnight', /Google, not this app/.test(String(next.body.error)) && /key 1 was stopped at \d\d:\d\d/.test(String(next.body.error)) && /local midnight/.test(String(next.body.error)), String(next.body.error).slice(0, 160));
     ok('429: …and the count is not pretended to be used up', next.body.quota.used === 1 && next.body.quota.stoppedByGoogle === true, JSON.stringify({ used: next.body.quota.used, stoppedByGoogle: next.body.quota.stoppedByGoogle }));
     const chat = await post(srv3, '/api/command', { text: 'explain how a transistor works' });
-    ok('429: the dialogue says the same — Google stopped us', /Google has stopped our calls for today/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
+    // The owner's rule: a 429 is a WARNING, not a block. The chat does not stop
+    // and it does not dump the provider error — the app goes OFFLINE, answers
+    // from this computer, and says so in one line.
+    ok('429: the chat does NOT stop — it goes offline and answers locally', !/Google has stopped our calls for today/.test(String(chat.body.reply)) && /offline/i.test(String(chat.body.reply)) && /answered from this computer/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 120));
+    ok('429: …and the reply is a warning, not a wall of provider error', !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)) && /429/.test(String(chat.body.reply)) && /local midnight/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 140));
+    ok('429: …and it offers the local way forward (teach it, or wait for midnight)', /learn:/i.test(String(chat.body.reply)), 'offers "learn:"');
     // Local answers never go near the gate.
     const time = await post(srv3, '/api/command', { text: 'what time is it' });
     ok('429: local answers still work while Google has stopped us (the time)', !/Google/.test(String(time.body.reply)) && /\d/.test(String(time.body.reply)), String(time.body.reply).slice(0, 80));
@@ -708,6 +713,96 @@ function freePort() {
     const empty = await post(srv, '/api/voice/speak', { text: '   ' });
     ok('voice: empty text is refused politely', empty.body.code === 'empty', JSON.stringify(empty.body).slice(0, 80));
   } finally { await srv.stop(); }
+}
+
+/* ── 5e. OFFLINE MODE: quota spent means LOCAL ONLY, and the chat carries on ──
+ * The owner's rule, proved end to end:
+ *   - a 429 is a WARNING, never a block: the chat answers from this computer;
+ *   - when every key is spent the app is OFFLINE and nothing is fetched from
+ *     the internet — research and pictures are refused before a call is made;
+ *   - everything local keeps working and costs nothing;
+ *   - the owner can switch offline (and back) by chat, by API and by
+ *     SUPPER_OFFLINE, and the switch survives a restart.                     */
+{
+  const readCounter = (srv) => (fs.existsSync(path.join(srv.cwd, 'runtime', 'quota.json'))
+    ? JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'quota.json'), 'utf-8')) : { used: 0 });
+
+  // (a) Google spent BOTH keys: the app is offline, local only, chat still answering.
+  const spent = await startDashboard({
+    models: { 'harness-text-model': { rateLimitedKeys: [KEY1, KEY2] }, 'harness-image-model': { picture: true } },
+    env: { SUPPER_TEXT_MODEL: 'harness-text-model' },
+    config: { gemini_api_key_2: KEY2 },
+    name: 'offline-quota',
+  });
+  try {
+    const chat = await post(spent, '/api/command', { text: 'explain how a transistor works' });
+    const sentAfterQuota = spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length;
+    ok('offline: the chat answers instead of stopping', chat.status === 200 && /offline/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 90));
+    const state = await get(spent, '/api/offline');
+    ok('offline: /api/offline says offline, and why (Google\'s 429, not this app)', state.body.offline === true && state.body.reason === 'google-stopped' && /429/.test(String(state.body.why)), `${state.body.reason} — ${String(state.body.why).slice(0, 70)}`);
+    ok('offline: …and lists what still works and what is refused', Array.isArray(state.body.works) && state.body.works.length > 3 && Array.isArray(state.body.refused) && state.body.refused.length > 2, `${state.body.works.length} work / ${state.body.refused.length} refused`);
+    const status = await get(spent, '/api/system-status');
+    ok('offline: telemetry carries the state, so the page can show a banner', status.body.offline && status.body.offline.offline === true && status.body.offline.reason === 'google-stopped', String(status.body.offline && status.body.offline.reason));
+    const settings = await get(spent, '/api/settings/gemini-key');
+    ok('offline: Settings carries it too', settings.body.offline && settings.body.offline.offline === true, String(settings.body.offline && settings.body.offline.summary).slice(0, 90));
+
+    // Nothing that needs the internet may be fetched — and nothing is counted.
+    const research = await post(spent, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
+    ok('offline: Internet Research is refused before anything is fetched', research.status === 503 && /offline/i.test(String(research.body.error)) && /Nothing was fetched/.test(String(research.body.error)), String(research.body.error).slice(0, 100));
+    const picture = await post(spent, '/api/ai/image', { prompt: 'a teapot, glass, studio light' });
+    ok('offline: …and so are AI pictures', picture.status === 503 && /offline/i.test(String(picture.body.error)), String(picture.body.error).slice(0, 100));
+    const researchChat = await post(spent, '/api/command', { text: 'research the history of the steam engine' });
+    ok('offline: …and by chat, before a task is queued', /needs the internet/.test(String(researchChat.body.reply)) && !/started/.test(String(researchChat.body.reply)), String(researchChat.body.reply).slice(0, 100));
+
+    // Local work carries on, and costs nothing at all.
+    const local = await post(spent, '/api/command', { text: 'what time is it' });
+    ok('offline: local answers still work (the time)', /\d/.test(String(local.body.reply)) && !/offline/i.test(String(local.body.reply)), String(local.body.reply).slice(0, 70));
+    const room = await post(spent, '/api/command', { text: 'open the files room' });
+    ok('offline: …and local PC commands are not swallowed by a topic question', /files room/.test(String(room.body.reply)), String(room.body.reply).slice(0, 80));
+    const learn = await post(spent, '/api/command', { text: 'learn: the coolant pump is in bay three' });
+    const recall = await post(spent, '/api/command', { text: 'where is the coolant pump' });
+    ok('offline: …and the knowledge base answers for free', /bay three/.test(String(recall.body.reply)) && /Learned/.test(String(learn.body.reply)), String(recall.body.reply).slice(0, 70));
+    const draft = await post(spent, '/api/command', { text: 'draft an email to Pepper about the reactor review' });
+    ok('offline: …and the drafting desk writes here', /draft/i.test(String(draft.body.reply)) && /no AI/i.test(String(draft.body.reply)), String(draft.body.reply).slice(0, 80));
+    const small = await post(spent, '/api/command', { text: 'hello' });
+    ok('offline: …and small talk stays small talk', /Good day/.test(String(small.body.reply)), String(small.body.reply).slice(0, 60));
+    ok('offline: none of that reached Google or counted a call', spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length === sentAfterQuota && readCounter(spent).used === 2, `stub=${spent.stub.calls.length} used=${readCounter(spent).used}`);
+    ok('offline: the terminal announced it once, as a warning not a block', /OFFLINE — local only/.test(spent.log()) && /This is a warning, not a block/.test(spent.log()), (spent.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 130));
+    const who = await post(spent, '/api/command', { text: 'are you offline' });
+    ok('offline: asking says so plainly, with what still works', /OFFLINE/.test(String(who.body.reply)) && /Still working/.test(String(who.body.reply)), String(who.body.reply).slice(0, 100));
+  } finally { await spent.stop(); }
+
+  // (b) The owner's own switch: offline on purpose, then back — no quota involved.
+  const manual = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'offline-manual' });
+  try {
+    const online = await get(manual, '/api/offline');
+    ok('offline switch: online to begin with', online.body.offline === false && online.body.reason === null, `${online.body.offline} / ${online.body.reason}`);
+    const before = manual.stub.calls.length;
+    const on = await post(manual, '/api/offline', { on: true });
+    ok('offline switch: switching offline says what still works', on.body.offline === true && on.body.reason === 'manual' && on.body.forced === true, `${on.body.reason}`);
+    const chat = await post(manual, '/api/command', { text: 'explain how a transistor works' });
+    ok('offline switch: the chat answers locally and calls nothing', /offline/i.test(String(chat.body.reply)) && manual.stub.calls.length === before, String(chat.body.reply).slice(0, 90));
+    const research = await post(manual, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
+    ok('offline switch: …and the internet stays out of it', research.status === 503, String(research.body.error).slice(0, 80));
+    ok('offline switch: …and nothing was counted', !fs.existsSync(path.join(manual.cwd, 'runtime', 'quota.json')), 'no counter file written');
+    ok('offline switch: it is remembered in runtime/offline.json', fs.existsSync(path.join(manual.cwd, 'runtime', 'offline.json')) && JSON.parse(fs.readFileSync(path.join(manual.cwd, 'runtime', 'offline.json'), 'utf-8')).forced === true, 'runtime/offline.json');
+    const byVoice = await post(manual, '/api/command', { text: 'come back online' });
+    ok('offline switch: "come back online" returns to automatic', /back to automatic/.test(String(byVoice.body.reply)) && !fs.existsSync(path.join(manual.cwd, 'runtime', 'offline.json')), String(byVoice.body.reply).slice(0, 90));
+    const after = await post(manual, '/api/command', { text: 'explain how a transistor works' });
+    ok('offline switch: …and the next question reaches Gemini again', after.body.reply === 'answered by harness-text-model' && manual.stub.calls.length === before + 1, String(after.body.reply).slice(0, 70));
+    const goOffline = await post(manual, '/api/command', { text: 'go offline' });
+    ok('offline switch: "go offline" works by chat too', /Offline, sir/.test(String(goOffline.body.reply)), String(goOffline.body.reply).slice(0, 80));
+  } finally { await manual.stop(); }
+
+  // (c) SUPPER_OFFLINE=1: offline from boot, and the switch survives a restart.
+  const boot = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model', SUPPER_OFFLINE: '1' }, name: 'offline-boot' });
+  try {
+    const state = await get(boot, '/api/offline');
+    ok('offline from boot: SUPPER_OFFLINE=1 means local only from the first moment', state.body.offline === true && state.body.reason === 'manual', `${state.body.reason}`);
+    const chat = await post(boot, '/api/command', { text: 'explain how a transistor works' });
+    ok('offline from boot: …and no call is made', /offline/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
+    ok('offline from boot: the terminal said so at startup', /OFFLINE — local only/.test(boot.log()), (boot.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 110));
+  } finally { await boot.stop(); }
 }
 
 /* ── 6. Settings → "The Brain" and the voice check, in the real page ──────── */
