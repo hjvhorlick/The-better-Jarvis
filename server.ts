@@ -26,6 +26,8 @@ import {
   clearGeminiKey2,
   clearImageServiceKey,
   saveImageServiceKey,
+  IMAGE_KEY_SERVICES,
+  type ImageService,
   explainBrainFailure,
   onQuotaEvent,
   quotaSnapshot,
@@ -3240,8 +3242,8 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
 // The switch is remembered in runtime/offline.json, so a deliberate "stay on
 // this computer today" survives a restart.
 // ── Pictures, video and sound: the optional free keys ───────────────────────
-// GET  /api/settings/image-keys        -> which of Pexels / Pixabay are set
-// POST /api/settings/image-keys        -> { service: 'pexels'|'pixabay', key }
+// GET  /api/settings/image-keys        -> which keyed suppliers have a key
+// POST /api/settings/image-keys        -> { service, key } for any of them
 //                                         or { service, clear: true }
 // Neither key is required: with neither set, pictures still come from Wikimedia
 // Commons and Openverse, and sound from those plus the Internet Archive. The
@@ -3252,14 +3254,23 @@ app.get('/api/settings/image-keys', requireAuth, (_req: Request, res: Response) 
 
 app.post('/api/settings/image-keys', requireAuth, (req: Request, res: Response) => {
   const service = String(req.body?.service || '').toLowerCase();
-  if (service !== 'pexels' && service !== 'pixabay') {
-    res.status(400).json({ ok: false, error: 'Say which service: "pexels" or "pixabay".' });
+  // Every supplier that takes a key, not just the first two. This list was
+  // hardcoded to 'pexels' and 'pixabay' while four more keyed suppliers were
+  // added — so a Jamendo, Geoapify, LocationIQ or Thingiverse key could not be
+  // pasted at all, and the Settings page was offering rows the server refused.
+  const known = IMAGE_KEY_SERVICES;
+  if (!known.includes(service as ImageService)) {
+    res.status(400).json({
+      ok: false,
+      error: `Say which service. One of: ${known.join(', ')}.`,
+    });
     return;
   }
+  const serviceId = service as ImageService;
   try {
     if (req.body?.clear === true) {
-      const cleared = clearImageServiceKey(service);
-      res.json({ ok: true, service, cleared: cleared.removed, keys: imageKeyStatus() });
+      const cleared = clearImageServiceKey(serviceId);
+      res.json({ ok: true, service: serviceId, cleared: cleared.removed, keys: imageKeyStatus() });
       return;
     }
     const key = String(req.body?.key || '');
@@ -3267,9 +3278,9 @@ app.post('/api/settings/image-keys', requireAuth, (req: Request, res: Response) 
       res.status(400).json({ ok: false, error: 'Paste the key itself, or send clear: true to remove it.' });
       return;
     }
-    const saved = saveImageServiceKey(service, key);
+    const saved = saveImageServiceKey(serviceId, key);
     console.log(`[JARVIS] ${saved.info.label} key saved (${saved.savedTo.join(', ')}) — ending …${saved.info.tail}.`);
-    res.json({ ok: true, service, savedTo: saved.savedTo, keys: imageKeyStatus() });
+    res.json({ ok: true, service: serviceId, savedTo: saved.savedTo, keys: imageKeyStatus() });
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }

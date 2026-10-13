@@ -364,6 +364,14 @@ export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
  */
 export type ImageService = 'pexels' | 'pixabay' | 'jamendo' | 'geoapify' | 'locationiq' | 'thingiverse';
 
+// The same six suppliers as the union above, as a value a caller can test
+// against. A union exists only at compile time, so without this the route that
+// accepts a key has to restate the names by hand — and it did, with two of the
+// six, which meant four suppliers could not be given a key at all.
+export const IMAGE_KEY_SERVICES: readonly ImageService[] = [
+  'pexels', 'pixabay', 'jamendo', 'geoapify', 'locationiq', 'thingiverse',
+];
+
 const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
   pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
   pixabay: { env: 'PIXABAY_API_KEY', field: 'pixabay_api_key', label: 'Pixabay', signup: 'https://pixabay.com/api/docs/' },
