@@ -15,6 +15,7 @@ import {
   searchImages, searchVideos, searchAudio, searchBooks, searchMedia, searchWeb,
   wikiFact, answerFromWeb, imageKeyStatus, explainFetchError, parseJamendo,
   parseGutendex, describeSources, MEDIA_KINDS,
+  searchModels, parseThingiverse, parseCommonsModels,
 } from '../search/engine.ts';
 
 /* ── DuckDuckGo: the exact shape its HTML endpoint returns ───────────────── */
@@ -430,4 +431,88 @@ test('searchMedia walks only the suppliers that cover that kind', async () => {
   const pics = await searchMedia('image', 'ocean', stub);
   assert.equal(pics[0].source, 'Wikimedia Commons');
   assert.ok(!stub.seen.some((u) => u.includes('gutendex.com')), 'a book supplier is not asked for a picture');
+});
+
+/* ── 3D printable models ────────────────────────────────────────────────────
+ * Thingiverse is the one supplier here whose live response shape I could not
+ * confirm, because this sandbox cannot reach api.thingiverse.com. So the parser
+ * is written to accept both shapes that real code in the wild reports — a bare
+ * array and a `hits` wrapper — and both are asserted.
+ */
+const THINGIVERSE_ARRAY = [{
+  id: 2238443, name: 'Cable clip', public_url: 'https://www.thingiverse.com/thing:2238443',
+  thumbnail: 'https://cdn.thingiverse.com/thumb.png', creator: { name: 'maker' }, like_count: 12,
+}];
+
+test('Thingiverse: a bare array and a hits wrapper both parse', () => {
+  const a = parseThingiverse(THINGIVERSE_ARRAY);
+  const b = parseThingiverse({ hits: THINGIVERSE_ARRAY });
+  for (const [model] of [a, b]) {
+    assert.equal(model.kind, 'model');
+    assert.equal(model.title, 'Cable clip');
+    assert.equal(model.page, 'https://www.thingiverse.com/thing:2238443');
+    assert.equal(model.author, 'maker');
+  }
+  assert.deepEqual(parseThingiverse({ hits: [] }), []);
+  assert.deepEqual(parseThingiverse(null), []);
+});
+
+test('Thingiverse: the page is offered, never an invented download URL', () => {
+  const [model] = parseThingiverse([{ id: 99, name: 'Bracket' }]);
+  // The listing carries no STL link, and a file path built from the id would be
+  // a guess. The page is the honest answer.
+  assert.equal(model.url, 'https://www.thingiverse.com/thing:99');
+  assert.equal(model.thumb, null);
+  assert.match(model.license, /licence on the model page/i, 'the terms are per model, so they are not asserted here');
+});
+
+test('models: Commons needs no token, and SVG is not offered as printable', async (t) => {
+  t.after(() => { delete process.env.THINGIVERSE_APP_TOKEN; });
+  delete process.env.THINGIVERSE_APP_TOKEN;
+  const payload = {
+    query: { pages: [
+      { title: 'File:Dawn 3D Model.stl', imageinfo: [{ url: 'https://up/Dawn.stl', mime: 'application/sla', descriptionurl: 'https://commons/Dawn' }] },
+      { title: 'File:Logo.svg', imageinfo: [{ url: 'https://up/Logo.svg', mime: 'image/svg+xml' }] },
+      { title: 'File:Part.obj', imageinfo: [{ url: 'https://up/Part.obj', mime: 'model/obj' }] },
+    ] },
+  };
+  const parsed = parseCommonsModels(payload);
+  assert.deepEqual(parsed.map((m) => m.title), ['Dawn 3D Model.stl', 'Part.obj'],
+    'an SVG is a drawing, not something a printer can use');
+  assert.equal(parsed[0].source, 'Wikimedia Commons');
+
+  const stub = stubFetch([['commons.wikimedia.org', payload]]);
+  const hits = await searchModels('spacecraft', stub);
+  assert.equal(hits[0].source, 'Wikimedia Commons');
+  assert.ok(!stub.seen.some((u) => u.includes('thingiverse')), 'no token, so Thingiverse is not called');
+});
+
+test('models: Thingiverse leads when its token is loaded', async (t) => {
+  t.after(() => { delete process.env.THINGIVERSE_APP_TOKEN; });
+  process.env.THINGIVERSE_APP_TOKEN = 'thingiverse-app-token';
+  const stub = stubFetch([
+    ['api.thingiverse.com/search/', THINGIVERSE_ARRAY],
+    ['commons.wikimedia.org', { query: { pages: [] } }],
+  ]);
+  const hits = await searchModels('cable clip', stub);
+  assert.equal(hits[0].source, 'Thingiverse');
+  assert.ok(stub.seen.some((u) => u.includes('type=things')), 'the documented query form was used');
+});
+
+test('models: when the documented path gives nothing, the other form is tried', async (t) => {
+  t.after(() => { delete process.env.THINGIVERSE_APP_TOKEN; });
+  process.env.THINGIVERSE_APP_TOKEN = 'thingiverse-app-token';
+  const stub = stubFetch([
+    ['api.thingiverse.com/search/?q=', { hits: [] }],
+    ['api.thingiverse.com/search/cable', THINGIVERSE_ARRAY],
+  ]);
+  const hits = await searchModels('cable', stub);
+  assert.equal(hits[0].source, 'Thingiverse', 'the fallback path answered');
+});
+
+test('models is a kind in the registry, and Commons covers it with no key', () => {
+  assert.ok(MEDIA_KINDS.includes('model'));
+  const sources = describeSources();
+  const keyFree = sources.filter((s) => s.kinds.includes('model') && !s.needsKey);
+  assert.ok(keyFree.length, 'a missing Thingiverse token must not block a model search');
 });

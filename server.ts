@@ -62,6 +62,7 @@ import {
   searchBooks,
   searchImages,
   searchMedia,
+  searchModels,
   searchVideos,
   searchWeb,
   type MediaHit,
@@ -881,6 +882,25 @@ async function placeFromWeb(subject: string): Promise<string> {
   return `I could not find \u201c${subject.slice(0, 60)}\u201d on the map — try a fuller address, or add the town and country.`;
 }
 
+/**
+ * A 3D printable model. Thingiverse answers when its App Token is loaded;
+ * without one, Wikimedia Commons still hands over STL files, so a missing token
+ * narrows the choice rather than ending the search.
+ */
+async function modelFromWeb(subject: string): Promise<string> {
+  try {
+    const hits: MediaHit[] = await searchModels(subject, { maxResults: 6 });
+    if (hits.length) {
+      return `Here is what I found for ${subject}:\n`
+        + hits.map((hit, i) => `${i + 1}. ${hit.title}${hit.author ? ` — ${hit.author}` : ''}\n   ${hit.url}${hit.license ? `\n   ${hit.license}` : ''}`).join('\n')
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used. Check the licence on each page before you print.)`;
+    }
+  } catch (err) {
+    console.warn('[JARVIS] the 3D model search failed:', err instanceof Error ? err.message : err);
+  }
+  return `I could not find a printable model of \u201c${subject.slice(0, 60)}\u201d on the open web.`;
+}
+
 async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>): Promise<string> {
   try {
     const answer = await answerFromWeb(trimmed, { maxResults: 5 });
@@ -1416,6 +1436,8 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (findAudio) return mediaFromWeb(findAudio[1].trim(), 'audio');
   const findBook = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:book|books|ebook|ebooks|novel|title)\s*(?:of|for|about|on|by)?\s+(.{2,300})$/i);
   if (findBook) return bookFromWeb(findBook[1].trim());
+  const findModel = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download|print)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:3d|3-d)?\s*(?:model|models|stl|print|prints|thing)\s*(?:of|for|to\s+print|about)?\s+(.{2,300})$/i);
+  if (findModel) return modelFromWeb(findModel[1].trim());
   const findPlace = trimmed.match(/^(?:jarvis,?\s+)?(?:where|wheres|where's|find|locate)\s+(?:is|are)?\s*(?:the|a|an)?\s*(?:address|location|place|coordinates|lat|latitude)?\s*(?:of|for|to)?\s+(.{2,300})$/i);
   if (findPlace && !/^(?:is|are|was|were|am|the)\b/i.test(findPlace[1].trim())) return placeFromWeb(findPlace[1].trim());
 
