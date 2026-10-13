@@ -1610,7 +1610,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-12-brain-voice-fix-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-mic-fix-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1835,7 +1835,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-12-brain-voice-fix-1';
+    const JARVIS_BUILD = '2026-10-13-mic-fix-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -4327,6 +4327,10 @@
       if (state === 'idle') {
         micStrip(false, false);
         if (micMeterFillEl) micMeterFillEl.style.width = '0%';
+        // The one-shot mic closes the always-on ear while it works. If JARVIS was
+        // not speaking, nothing will ever end a "speaking" pause — so clear it here,
+        // or the ear stays shut until the next reply (the reported "nothing happens").
+        if (!Speech.speaking && !Speech.queue.length) _pausedForSpeech = false;
         micArmHint();                       // always-on: show that the ear is still open
         // A one-shot dictation uses the microphone for itself; once it is over the
         // always-on listener is armed again — otherwise the microphone would
@@ -5141,7 +5145,16 @@
           }
           finishUtterance('swallowed');
         }
+        // A browser sentence that says it is speaking forever (a known Chrome/voice
+        // fault that never fires onend) must not hold the queue and the ear shut.
+        // Sentences are at most ~320 characters, so 60 s is far past any real one.
+        if (Speech.speaking && Speech.engine === 'browser' && performance.now() - Speech.startedAt > 60000) {
+          console.warn('[speech] the browser voice never finished a sentence — moving on');
+          try { synth.cancel(); } catch (_) {}
+          finishUtterance('stuck');
+        }
         if (!Speech.speaking && Speech.queue.length && _speakOn) pumpSpeech();
+        else if (!Speech.speaking && !Speech.queue.length && _pausedForSpeech && Mic.state === 'idle') resumeListeningAfterSpeech();
         // The ear looks after itself: a session the browser accepted but never
         // started means it is waiting for a click, and one with no session and
         // no restart pending is simply opened again.
@@ -5597,7 +5610,7 @@
         listenTextEl.textContent =
           state === 'muted' ? 'Muted — JARVIS is not listening.'
           : state === 'off' ? ''
-          : state === 'busy' ? 'The 🎤 button has the microphone — one moment.'
+          : state === 'busy' ? 'Taking one command from the microphone — one moment.'
           : state === 'speaking' ? 'Speaking — the ears come back as soon as I finish.'
           : state === 'waiting-for-click' ? 'Microphone on — click anywhere once to let the browser open it.'
           : state === 'starting' ? 'Microphone on — opening the ears…'
@@ -5723,13 +5736,41 @@
         if (gen !== _listenGen) return;
         _startedAt = performance.now();
         _denied = 0;
+        // A session that really started clears any earlier ear warning.
+        if (Mic.state === 'idle' && micStripEl && micStripEl.classList.contains('trouble')) {
+          micStrip(false, false);
+          micArmHint();
+        }
         renderWakeBtn();
       };
       rec.onresult = (evt) => { if (gen === _listenGen) handleHeard(evt); };
       rec.onerror = (e) => {
         if (gen !== _listenGen) return;
         const code = (e && e.error) || 'unknown';
-        if (code === 'no-speech' || code === 'aborted' || code === 'audio-capture') return;   // onend brings it straight back
+        if (code === 'no-speech' || code === 'aborted') return;   // onend brings it straight back
+        if (code === 'audio-capture') {
+          // No microphone reachable at all: say so, out loud on the strip.
+          micStrip(true, true);
+          micSay('No microphone is reachable by the browser — plug one in, then press Test Mic in Settings → Voice.');
+          return;
+        }
+        if (code === 'network') {
+          // Chrome's own speech service could not be reached. Words would never
+          // arrive, and before this the page just said "Listening" while nothing
+          // happened. Hand the ear to the server transcriber (one utterance at a
+          // time) — it is the same path the 🎤 dictation uses.
+          micStrip(true, true);
+          micSay('The browser speech service is unreachable — the JARVIS server is transcribing what you say instead.');
+          stopListener();
+          if (Mic.state === 'idle' && !_muted && _micOn) { _fallbackEarCycle = true; void doMic(); }
+          return;
+        }
+        if (code !== 'not-allowed' && code !== 'service-not-allowed') {
+          micStrip(true, true);
+          micSay(`The browser recogniser reported "${code}" — it will try again.`);
+          console.warn('[listen] the recogniser reported', code);
+          return;
+        }
         if (code === 'not-allowed' || code === 'service-not-allowed') {
           // The browser refused its own recogniser. Another click is usually all
           // it wanted (its first session must be born in a gesture); two refusals
