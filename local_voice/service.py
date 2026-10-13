@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import importlib.util
 import json
 import os
 import sys
@@ -32,7 +33,17 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-import numpy as np
+# numpy is imported defensively ON PURPOSE. Before this, a Python without numpy
+# killed the whole service at import: the file never started, /health was never
+# served, and the only clue was a traceback in the server console — while the
+# dashboard still claimed a voice model. Now the service starts, /health tells
+# the truth about what is missing, and every request gets a plain answer.
+try:
+    import numpy as np
+    _numpy_error = ""
+except Exception as _numpy_exc:   # pragma: no cover - depends on the machine
+    np = None                     # type: ignore[assignment]
+    _numpy_error = str(_numpy_exc)
 
 ROOT = Path(__file__).resolve().parent.parent
 KOKORO_DIR = Path(os.environ.get("SUPPER_KOKORO_DIR", ROOT / "models" / "kokoro"))
@@ -61,6 +72,7 @@ _whisper = None
 # it waits, every time, and the server hangs up first (broken pipe).
 _whisper_failed: tuple[float, str] | None = None   # (when, plain reason)
 _WHISPER_RETRY_S = 60
+_speak_failed: str = ""            # why the voice itself could not be loaded ('' = no such failure)
 
 # A model download that cannot reach the internet must fail in seconds, not
 # after minutes of silent retries. Read by huggingface_hub when it loads.
@@ -79,13 +91,31 @@ def log(message: str) -> None:
     print(f"[local-voice] {message}", flush=True)
 
 
+def _installed(module: str) -> bool:
+    """Is the package there? find_spec rather than import: importing
+    onnxruntime costs about a second, and /health is called often."""
+    try:
+        return importlib.util.find_spec(module) is not None
+    except Exception:
+        return False
+
+
+def _need_numpy() -> None:
+    if np is None:
+        raise VoiceError(
+            "no-package",
+            f"numpy is not installed for this Python ({_numpy_error or 'import failed'}). "
+            "Run: pip install -r backend/requirements-local-voice.txt",
+        )
+
+
 # ── Speaking ──────────────────────────────────────────────────────────────────
 def kokoro_files_present() -> bool:
     return (KOKORO_DIR / KOKORO_MODEL).is_file() and (KOKORO_DIR / KOKORO_VOICES).is_file()
 
 
 def kokoro():
-    global _kokoro
+    global _kokoro, _speak_failed
     if _kokoro is None:
         if not kokoro_files_present():
             raise VoiceError(
@@ -101,7 +131,9 @@ def kokoro():
         try:
             _kokoro = Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES))
         except Exception as err:
+            _speak_failed = f"the Kokoro voice files could not be loaded ({err})"
             raise VoiceError("no-model", f"The Kokoro voice files could not be loaded ({err}). Check {KOKORO_MODEL} and {KOKORO_VOICES} in {KOKORO_DIR}.")
+        _speak_failed = ""
         log("the Kokoro voice is ready")
     return _kokoro
 
@@ -123,6 +155,7 @@ def play_stream(text: str) -> None:
     the standalone app's Speaker (backend/voice/audio.py): opening a stream
     is slow, and doing it for every sentence put a pause before every reply.
     """
+    _need_numpy()
     try:
         import sounddevice as sd
     except ImportError:
@@ -168,6 +201,7 @@ def play_stream(text: str) -> None:
 
 
 def play(samples, rate: int) -> None:
+    _need_numpy()
     try:
         import sounddevice as sd
     except ImportError:
@@ -262,6 +296,7 @@ def hear(rate: int, pcm_b64: str) -> dict:
 
 
 def hear_pcm(rate: int, raw: bytes) -> dict:
+    _need_numpy()
     audio = np.frombuffer(raw[: len(raw) - (len(raw) % 2)], dtype="<i2").astype(np.float32) / 32768.0
     seconds = audio.size / float(rate or STT_RATE)
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
@@ -301,9 +336,41 @@ def hear_pcm(rate: int, raw: bytes) -> dict:
     return {"ok": True, "text": text}
 
 
+def speak_reason() -> str:
+    """Why speaking cannot work, in plain words. '' means it can."""
+    if np is None:
+        return "numpy is not installed for this Python"
+    if not _installed("kokoro_onnx"):
+        return "kokoro-onnx is not installed"
+    if not _installed("sounddevice"):
+        return "sounddevice is not installed"
+    if not kokoro_files_present():
+        return f"the Kokoro voice files ({KOKORO_MODEL}, {KOKORO_VOICES}) are missing from {KOKORO_DIR}"
+    return _speak_failed
+
+
+def hear_reason() -> str:
+    """Why hearing cannot work, in plain words. '' means it can."""
+    if np is None:
+        return "numpy is not installed for this Python"
+    if not _installed("faster_whisper"):
+        return "faster-whisper is not installed"
+    if _whisper_failed is not None:
+        return _whisper_failed[1]
+    return ""
+
+
 def health() -> dict:
+    speak_why, hear_why = speak_reason(), hear_reason()
     return {
         "ok": True,
+        # "ready" must mean it can really do the work, not that this process is
+        # running: the dashboard shows these lines in Settings → Voice.
+        "speakReady": not speak_why,
+        "speakReason": speak_why,
+        "hearReady": not hear_why,
+        "hearReason": hear_why,
+        "numpy": np is not None,
         "voice": TTS_VOICE,
         "voiceFilesPresent": kokoro_files_present(),
         "voiceFolder": str(KOKORO_DIR),
@@ -394,6 +461,9 @@ def preload() -> None:
     def warm_voice() -> None:
         # Make one short sound and throw it away. The first real reply then
         # starts at once instead of paying the model's first-run cost.
+        if np is None:
+            log("speaking is off: numpy is not installed for this Python")
+            return
         load(kokoro, "voice")
         if _kokoro is not None:
             try:
@@ -406,6 +476,9 @@ def preload() -> None:
     def warm_hearing() -> None:
         # Turn one second of silence into (no) words. Same reason: the first
         # real sentence must not pay the speech model's first-run cost.
+        if np is None:
+            log("hearing is off: numpy is not installed for this Python")
+            return
         load(whisper, "hearing")
         if _whisper is not None:
             try:
@@ -425,6 +498,14 @@ def preload() -> None:
 
 def main() -> None:
     log(f"starting on 127.0.0.1:{PORT} (voice {TTS_VOICE}, speech model {STT_MODEL})")
+    speak_why, hear_why = speak_reason(), hear_reason()
+    log(f"speaking: {'ready' if not speak_why else 'NOT ready — ' + speak_why}")
+    log(f"hearing:  {'ready' if not hear_why else 'NOT ready — ' + hear_why}")
+    if speak_why or hear_why:
+        # Said once, at startup, in the server console where the owner looks —
+        # and /health repeats it to the dashboard, so it is never a mystery.
+        log("the voice service is running anyway: the dashboard's own browser voice still works. "
+            "For this computer's voice: pip install -r backend/requirements-local-voice.txt (and put the Kokoro files in models/kokoro).")
     threading.Thread(target=preload, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     log("ready")

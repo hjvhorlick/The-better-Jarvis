@@ -77,23 +77,37 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   a `429` or rejects it, the second key takes over for the rest of the day.
   It only doubles the real allowance if it comes from a different Google
   account/project. Voice and local answers never count.
-- **Voice out** 🔊 — JARVIS speaks replies using the computer's own browser/system
-  voice by default. This is free and offline: spoken replies make no Gemini TTS
-  calls and use no speech quota. Settings → Voice offers Gemini server TTS as an
-  explicit optional choice only; it has its own model and daily budget
-  (`runtime/voice_quota.json`, `SUPPER_GEMINI_VOICE_BUDGET`). The local voice
-  depends on a voice installed in the operating system and exposed by the browser.
-  If no local voice is available, the app reports that instead of silently spending
-  Gemini quota.
-- **Voice in** 🎤 — one dictated command using browser recognition, with raw-audio
-  transcription on the server if recognition is unavailable.
+- **Two voice engines, and the right one is chosen for you.** There are two
+  machines in play: the one the page is open on, and the one JARVIS runs on.
+  They are the same machine when you run JARVIS locally and different machines
+  when you open a remote or preview dashboard. Speaking and hearing each have an
+  engine on both sides, and **Auto** (the default) picks the one that works where
+  you actually are.
+- **Voice out** 🔊 — JARVIS speaks with **your browser's own voice** by default
+  (the Web Speech API). That is free, offline, needs no models, makes no Gemini
+  calls, and comes out of the speakers of the machine you are sitting at. A
+  British male voice is picked when the operating system has one; the chosen
+  voice is listed in Settings → Voice, where it can be changed. If this browser
+  cannot speak — no voices installed, or a Linux box with no speech engine — the
+  app says exactly why and uses the server's voice instead. **This computer** in
+  Settings → Voice switches the order: Kokoro on the machine JARVIS runs on
+  (`local_voice/service.py`, needs `pip install -r backend/requirements-local-voice.txt`
+  plus the Kokoro model files) speaks through *that* machine's speakers, which you
+  only hear when it is the machine you are sitting at.
+- **Voice in** 🎤 — the ears use **your browser's own recogniser** by default
+  (`SpeechRecognition`: Chrome, Edge and Safari have one; Firefox does not). No
+  model, no download, nothing to install. When it is unavailable or refuses —
+  no API, permission denied, no service, three network failures in a row — the
+  ears move to the server automatically and say so in the chat; if the microphone
+  was blocked by a preview frame, that message carries an **Open in New Tab**
+  button, because that is the one thing that fixes it.
 - **Always listening** 🎙 — the microphone is ON by default and answers to ordinary
-  speech, with no "Hey Jarvis" before every sentence. If the browser has no
-  SpeechRecognition API, the app uses the raw-audio transcription fallback and
-  restarts listening after each reply; that fallback uses Gemini for transcription
-  (not speech output). The green bar shows the ear's status and has a remembered
-  **🔇 Mute** button. Settings → Voice switches between *Always listen* and
-  *Wake word — "Hey Jarvis"*.
+  speech, with no "Hey Jarvis" before every sentence. The browser's recogniser is
+  restarted after each pause so it really is always listening, and it is paused
+  while JARVIS speaks so he never hears his own voice. The server's raw-audio path
+  (loudness-cut sentences → faster-whisper) is kept, and is the fallback for
+  browsers without a recogniser. The green bar shows the ear's status — including
+  *which* ear, live interim words while you speak, and **🔇 Mute**.
 - **Fast replies** — the answer is streamed into the chat as it is written, and the
   Gemini thinking step is switched off (thinkingBudget 0) with a capped answer
   length, which is what turns a ten-second wait into about a second.
