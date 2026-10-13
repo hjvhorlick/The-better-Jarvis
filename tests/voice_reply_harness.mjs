@@ -206,7 +206,7 @@ function decodeWav(b64) {
     ok('brain check: it names the model that answered', check.model === 'harness-text', String(check.model));
     ok('brain check: it names where the key came from', check.keySource === 'config/api_keys.json', String(check.keySource));
     ok('brain check: it reports a real response time', typeof check.latencyMs === 'number' && check.latencyMs >= 0, `${check.latencyMs} ms`);
-    ok('brain check: it reports the day\'s budget', check.quota && check.quota.limit === 20, JSON.stringify(check.quota && { used: check.quota.used, limit: check.quota.limit }));
+    ok('brain check: it reports the day\'s count and the warning level', check.quota && check.quota.warnAt === 20 && typeof check.quota.used === 'number', JSON.stringify(check.quota && { used: check.quota.used, warnAt: check.quota.warnAt }));
 
     // A real question still reaches the brain.
     const reply = (await post(srv, '/api/command', { text: 'explain what a flyback diode does' })).body;
@@ -324,8 +324,8 @@ function decodeWav(b64) {
       /reactor is steady/.test(reply.reply || ''), String(reply.reply).slice(0, 80));
 
     const textQuota = (await get(srv, '/api/brain-check')).body.quota;
-    ok('…and the text budget was never marked exhausted by the voice',
-      textQuota.used < textQuota.limit, `${textQuota.used}/${textQuota.limit} (limit ${textQuota.limit})`);
+    ok('…and the text count was never stopped by the voice',
+      textQuota.stoppedByGoogle === false && !textQuota.googleStopped['1'], `${textQuota.used} calls; stoppedByGoogle=${textQuota.stoppedByGoogle}`);
   } finally { await srv.stop(); }
 }
 

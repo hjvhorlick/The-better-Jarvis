@@ -11,7 +11,7 @@ The dashboard carried its own configuration next to the application's:
 |---|---|---|
 | Gemini key | `GEMINI_API_KEY`, else `config/api_keys.json` → `gemini_api_key` (`backend/config.py`, `config/__init__.py`, every `actions/*.py`) | `process.env.GEMINI_API_KEY` only — the `.env` written by Settings |
 | Model | `SUPPER_TEXT_MODEL`, else the app's pinned current model `CURRENT_TEXT_MODEL = "gemini-3.8-flash"` (the moving alias `gemini-flash-latest` is only the fallback if the pinned name is ever withdrawn) | hardcoded `gemini-2.5-flash` / `gemini-2.5-flash-image` at each call site |
-| Budget | `SUPPER_GEMINI_DAILY_BUDGET` + `runtime/quota.json`, fail closed (`backend/quota.py`) | nothing — the guard was bypassed |
+| Count | `runtime/quota.json`, shared with `backend/quota.py` (which still carries the old hard limit) | nothing — the guard was bypassed; today the dashboard counts and warns (`SUPPER_GEMINI_DAILY_WARN`) and only Google stops calls |
 | Names | `assistant_name` / `user_name` from `config/api_keys.json` | hardcoded "JARVIS" |
 
 A key that worked for the app could look "missing" to the dashboard, and a
@@ -48,39 +48,47 @@ Rules that are enforced, not just intended:
   pointer instead of breaking — but the app never again drifts to a superseded
   generation because an alias was re-pointed.
 
-## 3. The daily budget: shared, deliberately
+## 3. The daily count: it counts and warns — only Google stops a call
 
-**Decision: the dashboard shares the engine room's counter — one budget, one
-file, one set of rules.**
+**Decision (2026-10-13): the app never blocks itself. It counts every outbound
+Gemini call, warns past a level the owner sets, and lets the call through. The
+only thing that may stop calls is Google itself, with a real `429`.**
 
-| Rule (`backend/quota.py`) | The dashboard |
+Before this, the dashboard shared the engine room's hard limit
+(`SUPPER_GEMINI_DAILY_BUDGET`, default 20) and refused the 21st call of the day
+with "I am not calling Gemini, sir: the day's budget is used" — even when Google
+still had calls to give. That refusal is gone.
+
+| Rule | Where |
 |---|---|
-| Limit from `SUPPER_GEMINI_DAILY_BUDGET`, default 20 | same, `config.ts: resolveDailyBudget()` |
-| Counter in `runtime/quota.json`, shape `{"day": "YYYY-MM-DD", "used": n}` | same file, same shape |
-| One unit per call that reaches Gemini, before it is sent (failures count) | same, `trySpendGeminiBudget()` before each attempt |
+| Every outbound QUESTION counts one unit (retries over models and thinking settings are free) | `config.ts: spendGeminiCall()` |
+| Counted in total AND per key: `runtime/quota.json` = `{"day", "used", "keys": {"1", "2"}, "google_stopped": {"1", "2"}, "switched_at"}` — `{day, used}` first, the shape `backend/quota.py` reads | `readBrainCounter()` / `writeBrainCounter()` |
 | Reset at local midnight | same |
-| A counter that exists but cannot be read fails closed | same |
-| A `429` marks the day exhausted | same, `markBudgetExhausted()` |
+| Past `SUPPER_GEMINI_DAILY_WARN` (default 20; an old `SUPPER_GEMINI_DAILY_BUDGET` is honoured as the warning level) the terminal, the dialogue (a system line) and Settings WARN — the call still goes through | `resolveDailyWarn()`, `onQuotaEvent()` |
+| A counter file that exists but cannot be read: the count continues in memory for the day, the file is left alone, and Settings says the file could not be read — nothing is blocked | `readBrainCounter()` |
+| A real `429` from Google stops THAT key until local midnight; Google rejecting a key does the same | `markKeyStoppedByGoogle()` |
+| If the second key (`gemini_api_key_2` / `GEMINI_API_KEY_2`) is set and not stopped, it takes over for the rest of the day — the same question is retried on it at once (counted as one call on key 2, the one exception to "one unit per question", because Google counts it against key 2) | `runBrain()` / `runBrainStream()` |
+| Only when EVERY key we have is stopped are calls refused before they are sent — code `google-stopped`, and the message says Google did it, not this app | `resolveActiveKey()`, `explainBrainFailure()` |
+| Voice (Kokoro / faster-whisper on this computer) and local answers (knowledge, time, reminders, drafts, small talk, memory) never reach the gate and never count | they never call `runBrain()` |
 
-Why shared: the budget is the owner's, not a build's. Two counters would drift
-exactly like the two configurations did — the dashboard could spend 20 calls
-while the app believed 20 were still left, and neither number would mean
-anything. Sharing also makes `GET /api/brain-check` and the app's diagnostics
-report the same "used today" figure.
+Settings → "The Brain" shows both keys by their last four characters and
+source, which key is answering and why, the calls made today per key, the
+warning level, and whether Google has stopped a key (with the time).
+
+**Honest limitation (the engine room).** `backend/quota.py` — the old
+standalone app's counter — still carries the hard limit. It reads only `day`
+and `used` from the shared file, so the dashboard's extra fields do not disturb
+it; but if the desktop app is run on the same day it will still refuse at its
+own limit. The dashboard is the one build started with `npm start`, so that is
+left as documented rather than changed silently. The second key is also a
+dashboard feature only; the engine room reads `gemini_api_key` alone.
 
 **Honest limitation (concurrency).** Writes are a read-modify-write with an
 atomic `tmp` + `rename`, so two *dashboards* cannot interleave a half-written
-file. The Python engine room, however, keeps its own count in memory and writes
-the whole file when it spends, and it does not take a lock the dashboard knows
-about. If the owner runs the desktop app and the dashboard at the same time and
-both call Gemini within the same second, the two writers can lose one unit of
-each other's spend — the file is never corrupted, and the limit can be
-over-run by at most the handful of calls made in that race window. Closing that
-properly means teaching `backend/quota.py` a lock (`runtime/quota.lock`) and
-having both sides take it; that is a change to the engine room, so it is left
-as a documented follow-up rather than done silently here. In the normal case —
-the dashboard is the ONE build, started with `npm start` — only one writer
-exists.
+file. The Python engine room keeps its own count in memory and writes the whole
+file when it spends, without a lock the dashboard knows about; two writers in
+the same second can lose one unit of each other's count — the file is never
+corrupted. In the normal case only one writer exists.
 
 ## 4. Errors name the real cause
 
@@ -90,11 +98,11 @@ sentence. The rules:
 | What Google said | Code | What the dashboard says |
 |---|---|---|
 | `404 NOT_FOUND`, "no longer available" | `model-unavailable` | "The model name was withdrawn, sir — my key is fine, so do not change it." … names `SUPPER_TEXT_MODEL` / `GEMINI_MODEL`, the app's current model and its alias fallback |
-| `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — names where the key came from and its last four characters |
-| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own limit — the day is marked used up; the key and the model are not at fault |
+| `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — names which key (1 or 2), where it came from and its last four characters; if the other key is set, it takes over for the day |
+| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own quota — "Google stopping us, not this app"; that key is stopped until local midnight, the second key takes over if set |
 | `ENOTFOUND`, `ECONNREFUSED`, "fetch failed" | `connection` | the call never left the machine; neither key nor model is at fault |
 | no key anywhere | `no-key` | names every place checked: `GEMINI_API_KEY` (including `./.env`) and `config/api_keys.json` → `gemini_api_key` |
-| budget spent / counter unreadable | `budget` | names `runtime/quota.json` and `SUPPER_GEMINI_DAILY_BUDGET` |
+| Google has stopped every key we have today | `google-stopped` | refused before it is sent: "Google has stopped our calls for today — Google, not this app", with the time each key was stopped and local midnight as the reset |
 
 Never returned or logged: the key itself. Only the last four characters, its
 source, and the file it was read from.
@@ -104,15 +112,21 @@ source, and the file it was read from.
 - **Settings → "The Brain"** — the key is saved to `config/api_keys.json` (the
   file the desktop app and every action read); `./.env` is updated too when it
   holds the key, so nothing shadows what was just saved. The status line shows
-  the key's source and the model in use.
+  the key's source and the model in use. The optional second key
+  (`gemini_api_key_2`, Save / Remove) has its own line, and a count line shows
+  the active key, the calls made today per key, the warning level and whether
+  Google has stopped a key.
 - **Settings → Voice** — the build marker plus the model, the key's source and
-  the day's budget (`#jarvis-build-line`).
+  the day's count (`#jarvis-build-line`).
 - **Diagnostics / `voice test`** — one **real** call to `GET /api/brain-check`;
-  the line prints the model that answered, its latency and the budget left.
+  the line prints the model that answered, which key, its latency and the count.
 - **`GET /api/settings/gemini-key`** — the machine-readable version of the same
-  facts (`source`, `sourceDetail`, `model`, `modelSource`, `quota`, names).
-- **Telemetry (`status` in the chat)** — the key's source, the text model, the
-  picture model and the budget, measured.
+  facts (`source`, `sourceDetail`, `key2`, `activeKey`, `model`, `modelSource`,
+  `quota` with `used`, `perKey`, `warnAt`, `googleStopped`, `stoppedByGoogle`,
+  `summary`, names). `POST` takes `{ key, slot }` (slot 1 or 2) or
+  `{ slot: 2, clear: true }`.
+- **Telemetry (`status` in the chat)** — both keys' sources, the key answering
+  now, the text model, the picture model and the count, measured.
 
 ## 6. Verification
 

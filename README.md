@@ -66,6 +66,17 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
 - Chat with Gemini (`gemini-3.8-flash`, Google's current stable model), with your
   personality file `core/prompt.txt`
   and your memory as context; conversation survives restarts
+- **No self-imposed limit.** The app counts every call that goes out to Google
+  (total and per key, in `runtime/quota.json`, shown in Settings → "The Brain"
+  and the terminal) and **warns** past `SUPPER_GEMINI_DAILY_WARN` (default 20) —
+  it never blocks. Only a real `429` from Google stops calls, for that key until
+  local midnight, and the message then says plainly that Google stopped us.
+- **Second Gemini key (fallback).** Settings → "The Brain" takes an optional
+  second key (`gemini_api_key_2` in `config/api_keys.json`, or
+  `GEMINI_API_KEY_2`). All calls use the first key; when Google refuses it with
+  a `429` or rejects it, the second key takes over for the rest of the day.
+  It only doubles the real allowance if it comes from a different Google
+  account/project. Voice and local answers never count.
 - **Voice out** 🔊 — JARVIS speaks replies using the computer's own browser/system
   voice by default. This is free and offline: spoken replies make no Gemini TTS
   calls and use no speech quota. Settings → Voice offers Gemini server TTS as an
