@@ -314,7 +314,12 @@ function decodeWav(b64) {
       speak.ok === false && /voice|quota|budget|429/i.test(speak.message || ''), String(speak.code) + ' ' + String(speak.message).slice(0, 80));
 
     const voiceAfter = (await get(srv, '/api/system-status')).body.voice;
-    ok('…and the voice counter is the one that is used up', voiceAfter.used >= voiceAfter.limit, `${voiceAfter.used}/${voiceAfter.limit}`);
+    // A refused sentence used to slam the voice's own counter up to its ceiling
+    // so the voice went quiet for the rest of the day. That ceiling is gone: the
+    // voice count warns and never blocks, so nothing fills it up on purpose.
+    ok('…and the voice count is NOT used up as a punishment (it warns, it never blocks)',
+      voiceAfter.used < voiceAfter.limit && voiceAfter.enabled === true,
+      `${voiceAfter.used}/${voiceAfter.limit} enabled=${voiceAfter.enabled}`);
 
     // THE POINT: the brain must still answer. It used to be switched off here,
     // because the refusal wrote the TEXT counter.

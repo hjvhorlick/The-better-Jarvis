@@ -392,10 +392,11 @@ def scenering_payload(script: dict) -> dict:
 
 
 def script_from_brief(chat, budget, brief: str, seconds: int, aspect: str) -> dict:
-    """Ask Jarvis for a script, counting it against the day's Gemini budget.
+    """Ask Jarvis for a script, counting it against the day's Gemini count.
 
-    Budget first: if the day's allowance is spent, the owner is told rather than
-    a request being made that will only fail.
+    The count only warns — it never refuses. The one thing that does refuse is
+    the app being offline (Google's own 429, no key, or the owner's switch), and
+    then the owner is told rather than a request being made that cannot succeed.
     """
     brief = (brief or "").strip()
     if not brief:
