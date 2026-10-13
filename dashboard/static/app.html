@@ -1353,6 +1353,7 @@
         <div class="listen-bar" id="listen-bar">
           <span class="listen-dot"></span>
           <span class="listen-bar-text" id="listen-text">Microphone on — just speak.</span>
+          <button class="listen-bar-btn" id="listen-open-tab" style="display:none" onclick="openStandaloneTab()" title="The preview frame cannot use the microphone — open JARVIS in its own tab and the mic and voice work">↗ Open in New Tab for mic &amp; voice</button>
           <button class="listen-bar-btn" id="listen-mute-btn" onclick="toggleMute()" title="Silence the microphone (JARVIS stops listening until you unmute)">🔇 Mute</button>
         </div>
 
@@ -1590,7 +1591,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-voice-fix-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-voice-fix-2 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1815,7 +1816,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-voice-fix-1';
+    const JARVIS_BUILD = '2026-10-13-voice-fix-2';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -4378,6 +4379,12 @@
         bar.classList.toggle('speaking', !!(Speech.busy || Speech.queue.length));
         bar.classList.toggle('hearing', Ear.inSentence);
       }
+      const openTabBtn = document.getElementById('listen-open-tab');
+      if (openTabBtn) {
+        let framed = false;
+        try { framed = window.top !== window.self; } catch (_) { framed = true; }
+        openTabBtn.style.display = framed ? '' : 'none';
+      }
       document.querySelectorAll('#listen-mute-btn, #btn-mute').forEach((b) => {
         b.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
       });
@@ -4685,6 +4692,15 @@
       if (_muted || Ear.ready || Ear.starting) return;
       if (!window.isSecureContext) {
         voiceProblem('This page is not a secure context, so browsers block the microphone. Open JARVIS at http://localhost:3000 (or an https:// address), then press 🎤.');
+        return;
+      }
+      // Inside a frame (e.g. the Arena live preview), the OUTER page decides
+      // whether this page may touch a microphone. If it says no, no prompt
+      // can ever appear here — the one working move is a tab of its own,
+      // which is why the listen bar grows an "Open in New Tab" button there.
+      const _pol = (typeof micPolicyAllows === 'function') ? micPolicyAllows() : null;
+      if (_pol === false) {
+        voiceProblem('The preview frame is not allowed to use the microphone, so I cannot hear you here. Press ↗ Open in New Tab above the chat — mic and voice work in that tab.');
         return;
       }
       // Browser recognition first: no install, no model download. Firefox
