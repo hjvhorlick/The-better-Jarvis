@@ -959,7 +959,7 @@ export function registerStudioRoutes(
     res.json({
       ok: true,
       scriptReady: Boolean(options.providerReady?.()),
-      scriptCost: 'Uses the existing Gemini configuration and shared daily call budget; no Scenering transfer or extra provider is enabled.',
+      scriptCost: 'Uses the existing Gemini configuration and the shared daily call count; no Scenering transfer or extra provider is enabled.',
       sceneringImportSupported: false,
       handoff: 'manual-copy',
     });
@@ -1063,7 +1063,7 @@ export function registerStudioRoutes(
     } catch (error) {
       if (error instanceof StudioProjectError) { res.status(error.status).json({ ok: false, error: error.message }); return; }
       const code = isRecord(error) ? error.code : '';
-      const status = code === 'no-key' || code === 'budget' || code === 'rate-limited' ? 503 : 502;
+      const status = code === 'no-key' || code === 'google-stopped' || code === 'rate-limited' ? 503 : 502;
       res.status(status).json({ ok: false, error: error instanceof Error ? error.message : 'The script could not be prepared.' });
     }
   });

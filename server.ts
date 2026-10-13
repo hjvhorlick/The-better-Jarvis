@@ -23,14 +23,17 @@ import {
   BrainError,
   brainCheck,
   classifyGeminiError,
+  clearGeminiKey2,
   explainBrainFailure,
-  markBudgetExhausted,
-  trySpendGeminiBudget,
+  onQuotaEvent,
+  quotaSnapshot,
   voiceQuotaSnapshot,
   configStatus,
   readApiConfigFile,
+  resolveActiveKey,
   resolveBaseUrl,
   resolveGeminiKey,
+  resolveKeySlot,
   resolveNames,
   resolveTextModel,
   modelCandidates,
@@ -39,6 +42,8 @@ import {
   saveGeminiKey,
   type BrainCaller,
   type GeminiRaw,
+  type KeyInfo,
+  type KeySlot,
 } from './config.js';
 import { KnowledgeStore } from './knowledge.js';
 import { BrainStore, BrainStoreError, containsSensitiveContent, looksLikeCredentialInput, type BrainTurn } from './brain.js';
@@ -69,7 +74,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-local-voice-2';
+const SERVER_BUILD = '2026-10-13-two-keys-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -210,7 +215,8 @@ let jarvisState: 'active' | 'sleeping' = 'active';
 
 interface LogMessage {
   type: 'log';
-  speaker: 'jarvis' | 'user';
+  /** 'system' is a plain notice in the dialogue (the count's warnings, a key switch) — shown, never spoken. */
+  speaker: 'jarvis' | 'user' | 'system';
   text: string;
   timestamp: number;
   image?: string; // a picture Jarvis made, shown in the dialogue
@@ -297,39 +303,54 @@ function decryptMessage(b64Data: string, pin: string): string | null {
 // One resolver (./config.ts) decides the key and the model for every call path
 // on this server. The key is read fresh each time the client is rebuilt, so a
 // key saved in Settings → "The Brain" takes effect at once — no restart, and no
-// second configuration to drift away from the app's.
-let aiClient: GoogleGenAI | null = null;
-let aiClientFingerprint = '';
+// second configuration to drift away from the app's. There is one client per
+// key slot; which one answers is decided per call, so when Google stops the
+// first key mid-question the retry goes out on the second at once.
+const aiClients: Record<KeySlot, { client: GoogleGenAI; fingerprint: string } | null> = { 1: null, 2: null };
+let announcedActiveSlot: KeySlot | null = null;
 
-function buildGeminiClient(): { client: GoogleGenAI | null; key: ReturnType<typeof resolveGeminiKey> } {
-  const key = resolveGeminiKey();
-  if (!key.key) return { client: null, key };
-
+function clientForKey(key: KeyInfo): GoogleGenAI | null {
+  if (!key.key) return null;
   const fingerprint = `${key.source ?? 'environment'}::${key.key}`;
-  if (!aiClient || aiClientFingerprint !== fingerprint) {
+  const have = aiClients[key.slot];
+  if (!have || have.fingerprint !== fingerprint) {
     const baseUrl = resolveBaseUrl();
-    aiClient = new GoogleGenAI(baseUrl ? { apiKey: key.key, httpOptions: { baseUrl } } : { apiKey: key.key });
-    aiClientFingerprint = fingerprint;
+    const client = new GoogleGenAI(baseUrl ? { apiKey: key.key, httpOptions: { baseUrl } } : { apiKey: key.key });
+    aiClients[key.slot] = { client, fingerprint };
     // Never the key itself — only the last four characters and where it came from.
-    console.log(`[JARVIS] Gemini key in use: ending in …${key.tail} — ${key.detail}`);
+    console.log(`[JARVIS] Gemini key ${key.slot} ready: ending in …${key.tail} — ${key.detail}`);
     console.log(`[JARVIS] text model in use: ${resolveTextModel().model} (from ${resolveTextModel().source})`);
   }
-  return { client: aiClient, key };
+  return aiClients[key.slot]!.client;
+}
+
+/** The client for the key that answers NOW (key 1, or key 2 once Google has stopped key 1 today). */
+function activeGeminiClient(): { client: GoogleGenAI | null; key: KeyInfo } {
+  const active = resolveActiveKey();
+  if (active.slot && active.slot !== announcedActiveSlot) {
+    announcedActiveSlot = active.slot;
+    console.log(`[JARVIS] answering on key ${active.slot} (ending in …${active.info.tail}) — ${active.reason}`);
+  }
+  return { client: clientForKey(active.info), key: active.info };
 }
 
 /**
  * The one way this server talks to Gemini. runBrain() walks the configured
  * model, then the model that last worked, and only then — as a last resort —
- * the models the owner's own key offers (ai.models.list()), spending one unit
- * of the app's daily budget per call.
+ * the models the owner's own key offers (ai.models.list()), counting one unit
+ * per question. Each call picks the key in force at that moment.
  */
 function brainCaller(): BrainCaller | null {
-  const { client } = buildGeminiClient();
-  if (!client) return null;
+  if (!resolveActiveKey().info.key) return null;
+  const client = () => {
+    const { client: c } = activeGeminiClient();
+    if (!c) throw new Error('no Gemini key is set');
+    return c;
+  };
   return {
     async generate(model: string, contents: unknown[], config?: Record<string, unknown>): Promise<GeminiRaw> {
       const request = config ? { model, contents, config } : { model, contents };
-      const response = await client.models.generateContent(request as never);
+      const response = await client().models.generateContent(request as never);
       return response as unknown as GeminiRaw;
     },
     /**
@@ -344,12 +365,12 @@ function brainCaller(): BrainCaller | null {
       const build = (cfg?: Record<string, unknown>) => (cfg ? { model, contents, config: cfg } : { model, contents });
       const plainAnswer = async function* (): AsyncIterable<string> {
         console.warn(`[JARVIS] asking the ordinary way for ${model}.`);
-        const response = await client.models.generateContent(build(config) as never);
+        const response = await client().models.generateContent(build(config) as never);
         const one = (response as unknown as GeminiRaw).text;
         if (typeof one === 'string' && one) yield one;
       };
       const streamWith = async function* (cfg?: Record<string, unknown>): AsyncIterable<string> {
-        const stream = await client.models.generateContentStream(build(cfg) as never) as unknown as AsyncIterable<{ text?: string }>;
+        const stream = await client().models.generateContentStream(build(cfg) as never) as unknown as AsyncIterable<{ text?: string }>;
         for await (const chunk of stream) {
           const piece = typeof chunk?.text === 'string' ? chunk.text : '';
           if (piece) yield piece;
@@ -373,6 +394,11 @@ function brainCaller(): BrainCaller | null {
           // "streaming is not supported here"), which must still fall through to
           // the ordinary call below.
           if (/thinking/i.test(message)) throw err;
+          // Google's quota (429) or a refused key is not a transport problem
+          // either: asking the ordinary way would only send one more doomed
+          // request to the same key. config.ts must see it, so it can switch
+          // to the second key or say that Google stopped us.
+          if (/\b429\b|resource_exhausted|quota|too many requests|api[ _-]?key|unauthenticated|permission denied|\b401\b|\b403\b/i.test(message)) throw err;
           console.warn(`[JARVIS] streaming failed for ${model} (${message}) — asking the ordinary way.`);
           yield* plainAnswer();
         }
@@ -380,7 +406,7 @@ function brainCaller(): BrainCaller | null {
     },
     async listModels(): Promise<string[]> {
       const ids: string[] = [];
-      const pager = await client.models.list({ config: { pageSize: 200 } });
+      const pager = await client().models.list({ config: { pageSize: 200 } });
       for await (const model of pager as unknown as AsyncIterable<{ name?: string; supportedActions?: string[] }>) {
         if (!model || typeof model.name !== 'string' || !model.name) continue;
         const actions = model.supportedActions;
@@ -395,8 +421,8 @@ function brainCaller(): BrainCaller | null {
 function researchProviderFailure(error: unknown, phase: 'search' | 'report' | 'followup'): string {
   if (error instanceof BrainError) {
     if (error.code === 'no-key') return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.';
-    if (error.code === 'budget') return 'The shared daily Gemini budget is exhausted or unreadable. No further provider call was made.';
-    if (error.code === 'rate-limited') return 'Google reports a Gemini rate limit. Research stopped; try again after the provider limit resets.';
+    if (error.code === 'google-stopped') return 'Google has stopped our Gemini calls for today (its own quota, not this app\'s count). No further provider call was made; calls resume at local midnight.';
+    if (error.code === 'rate-limited') return 'Google reports a Gemini rate limit (429). Research stopped; try again after the provider limit resets.';
     if (error.code === 'key-rejected') return 'Gemini rejected the configured key. Check Settings → The Brain; the secret value is not shown here.';
     if (error.code === 'connection') return 'The Gemini service could not be reached. No web search is being claimed.';
     if (error.code === 'model-unavailable') return 'No available configured text model completed this request. Check SUPPER_TEXT_MODEL and model access.';
@@ -1114,7 +1140,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   // quietly turning every "open/draft/send/make" into one.
   const forcing = /\b(use (?:the )?ai|ask gemini|use gemini|search (?:the )?(?:web|internet)|do some research)\b/i.test(lower);
   if (looksLikeComputerTask(lower) && !looksLikeKnowledgeQuestion(lower) && !forcing) {
-    return `That one is a job for this computer rather than a question, sir, and this build has no local tool for “${trimmed.slice(0, 60)}” — so the only way I could answer is a Gemini call (one from the day's budget). ` +
+    return `That one is a job for this computer rather than a question, sir, and this build has no local tool for “${trimmed.slice(0, 60)}” — so the only way I could answer is a Gemini call (one on the day's count). ` +
       `Here is what I do locally, with no AI and no cost: the drafting desk ("draft an email to … about …", "read my drafts"), my notes and your reminders, the local knowledge base ("learn: …", "what have you learned"), the time and date, diagnostics, My Hands and the rooms, the camera ("camera on"), the tools of a room, opening and closing the windows, and mute. ` +
       `Say “${trimmed.slice(0, 40)} — use the AI” and I will spend the call; otherwise tell me what you want done and I will keep it on this machine.`;
   }
@@ -1276,18 +1302,18 @@ function realStatusReport(): string {
   const brainStatus = brain.status();
   let notes = 'unavailable (existing memory was left untouched)';
   try { notes = brain.listMemories({ limit: 500 }).length.toString(); } catch { /* show unavailable; never invent an empty store */ }
-  const budgetLine = quota.unreadable
-    ? 'NO CALLS — runtime/quota.json exists but could not be read, so the budget fails closed until local midnight'
-    : `${quota.used} of ${quota.limit} calls used today (${quota.source}); resets at local midnight`;
+  const key2 = status.key2;
   return [
     'Real telemetry, sir — measured, not scripted:',
     `• Server uptime ${Math.floor(up / 60)} min ${up % 60} s · memory ${Math.round(mem.rss / 1048576)} MB`,
     `• Connected interfaces: ${wss.clients.size}`,
-    `• Gemini neural core: ${key.key ? `linked — key ending in …${key.tail} from ${key.source}` : 'NO KEY — my reasoning is offline and only built-in local replies work'}`,
-    `• Key looked for in: the environment (GEMINI_API_KEY, including ./.env), then config/api_keys.json (gemini_api_key)`,
+    `• Gemini neural core: ${key.key ? `linked — key 1 ending in …${key.tail} from ${key.source}` : 'NO KEY — my reasoning is offline and only built-in local replies work'}`,
+    `• Second key (fallback): ${key2.present ? `set — ending in …${key2.tail} from ${key2.source}` : 'not set (optional; add it in Settings → The Brain)'}`,
+    `• Key answering now: ${status.activeKey.slot ? `key ${status.activeKey.slot} (…${status.activeKey.tail}) — ${status.activeKey.reason}` : 'none'}`,
+    `• Keys looked for in: the environment (GEMINI_API_KEY / GEMINI_API_KEY_2, including ./.env), then config/api_keys.json (gemini_api_key / gemini_api_key_2)`,
     `• Text model: ${model.model} (from ${model.source})`,
     `• Picture model: ${picture.image ? `${picture.image} (${picture.imageSource})` : 'not set — I ask your key which picture model it may use, and remember the one that works'}`,
-    `• Daily Gemini budget: ${budgetLine}`,
+    `• Gemini calls today: ${quota.summary}; resets at local midnight. This count only warns — only a real 429 from Google stops calls.`,
     `• Conversation log: ${messageHistory.length} visible entries; durable turns use memory/recent_dialogue.json with overflow in memory/dialogue_archive.jsonl`,
     `• Stored memories: ${notes} in memory/long_term.json; migration ${brainStatus.migration?.state || 'unknown'}${brainStatus.storage_error ? ` (${brainStatus.storage_error})` : ''}`,
     `• Voice model: ${voice.model} (from ${voice.source})${voice.note}`,
@@ -1326,6 +1352,25 @@ function broadcast(payload: object) {
     }
   });
 }
+
+// ── The count's news, told in the terminal AND the dashboard ────────────────
+// config.ts already prints each event in the terminal. Here the same news is
+// put in the dialogue as a system line (not spoken), so the owner sees at once
+// when the count passes the warning level, when key 2 takes over, and when
+// Google has stopped us for the day — three different things, named apart.
+onQuotaEvent((event) => {
+  const text = event.kind === 'warn'
+    ? `Heads-up: ${event.message}`
+    : event.kind === 'unreadable'
+      ? `Heads-up: ${event.message}`
+      : event.switchedTo
+        ? `Key switch: ${event.message}`
+        : `Google has stopped us: ${event.message}`;
+  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
+  messageHistory.push(line);
+  saveHistory();
+  broadcast(line);
+});
 
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Send current status
@@ -1369,7 +1414,7 @@ interface VoiceResult {
   text?: string;
   message?: string;
   /** Machine-readable reason, so the page can print the right advice. */
-  code?: 'too-short' | 'no-key' | 'empty' | 'failed' | 'budget';
+  code?: 'too-short' | 'no-key' | 'empty' | 'failed';
 }
 
 async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceResult> {
@@ -2188,7 +2233,7 @@ app.post('/api/research/reports/:id/followup', requireAuth, async (req: Request,
     const answer = await callResearchFollowup(buildFollowupPrompt(report, question));
     res.json({ ok: true, answer, freshSearch: false, note: 'Answered from this saved report and its bounded source extracts; no new web search was run.' });
   } catch (err) {
-    res.status(err instanceof BrainError && (err.code === 'no-key' || err.code === 'budget' || err.code === 'rate-limited') ? 503 : 502)
+    res.status(err instanceof BrainError && (err.code === 'no-key' || err.code === 'google-stopped' || err.code === 'rate-limited') ? 503 : 502)
       .json({ ok: false, error: researchProviderFailure(err, 'followup') });
   }
 });
@@ -2700,7 +2745,7 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
     res.json({ image: img.data, mime: img.mime });
   } catch (err) {
     const message = (err as Error).message;
-    const noKey = err instanceof BrainError && (err.code === 'no-key' || err.code === 'budget');
+    const noKey = err instanceof BrainError && (err.code === 'no-key' || err.code === 'google-stopped');
     res.status(noKey ? 503 : 502).json({ error: `Image AI failed: ${message}` });
   }
 });
@@ -2753,6 +2798,11 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     tail: status.key.tail,
     source: status.key.source,                             // 'config/api_keys.json' | '.env' | 'environment' | null
     sourceDetail: status.key.detail,
+    // The optional second key (the fallback), reported the same honest way:
+    // last four characters and where it came from — never the key itself.
+    key2: status.key2,
+    // Which key is answering now, and why (key 2 only after Google stopped key 1 today).
+    activeKey: status.activeKey,
     build: SERVER_BUILD,                                   // the page's marker is compared against this
     configRoot: CONFIG_ROOT,                               // the folder this server reads its settings from
     model: status.model.text,                              // the model in use for chat, voice and the brain check
@@ -2776,27 +2826,45 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
 // (config/api_keys.json, the same file the desktop app and every action use),
 // live at once. ./.env is updated too when it holds the key, so nothing shadows
 // what was just saved.
+// Body: { key, slot? } — slot 1 (default) is the normal key, slot 2 the optional
+// fallback (gemini_api_key_2 / GEMINI_API_KEY_2). { slot: 2, clear: true }
+// removes the second key.
 app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) => {
+  const slot: KeySlot = Number(req.body?.slot) === 2 ? 2 : 1;
+  const envName = slot === 2 ? 'GEMINI_API_KEY_2' : 'GEMINI_API_KEY';
+  if (slot === 2 && req.body?.clear === true) {
+    try {
+      const gone = clearGeminiKey2();
+      console.log(`[JARVIS] second Gemini key removed from Settings — ${gone.detail}`);
+      res.json({ ok: true, slot: 2, cleared: true, stillPresent: gone.stillPresent, removedFrom: gone.removedFrom, detail: gone.detail, warning: gone.stillPresent ? gone.detail : null });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      res.status(500).json({ error: message });
+    }
+    return;
+  }
   const key = typeof req.body?.key === 'string' ? req.body.key.trim() : '';
   if (key.length < 10) {
     res.status(400).json({ error: 'That does not look like a Gemini API key — it needs at least 10 characters.' });
     return;
   }
   try {
-    const saved = saveGeminiKey(key);
+    const saved = saveGeminiKey(key, slot);
     // A previous "no key" brain check must not make a fresh greeting sound
     // broken after the owner has just connected the brain.
     brainHealth = null;
     // The key that is actually IN FORCE may differ from the one just typed:
-    // an old GEMINI_API_KEY already in the environment is read first and
-    // shadows the saved file. Report that honestly instead of "saved, live".
-    const active = resolveGeminiKey();
+    // an old GEMINI_API_KEY (or GEMINI_API_KEY_2) already in the environment is
+    // read first and shadows the saved file. Report that honestly instead of
+    // "saved, live".
+    const active = resolveKeySlot(slot);
     const shadowed = Boolean(active.key) && active.tail !== key.slice(-4);
+    const label = slot === 2 ? 'second key' : 'key';
     const warning = shadowed
-      ? `Saved — but JARVIS is still using the older key ending in …${active.tail} (${active.detail}). That key was already in the environment (GEMINI_API_KEY) and is read before the saved file. Remove GEMINI_API_KEY from the environment / ./.env and restart JARVIS to use the key you just typed.`
+      ? `Saved — but JARVIS is still using the older ${label} ending in …${active.tail} (${active.detail}). That key was already in the environment (${envName}) and is read before the saved file. Remove ${envName} from the environment / ./.env and restart JARVIS to use the key you just typed.`
       : null;
-    console.log(`[JARVIS] Gemini key updated from Settings (ends in …${key.slice(-4)}) — saved to ${saved.savedTo.join(', ')}; in force from ${saved.source ?? 'nowhere yet'}.${warning ? ' WARNING: the saved key is shadowed by an older key already in the environment.' : ''}`);
-    res.json({ ok: true, tail: key.slice(-4), activeTail: active.tail, shadowed, warning, source: saved.source, savedTo: saved.savedTo, detail: saved.detail });
+    console.log(`[JARVIS] Gemini ${label} updated from Settings (ends in …${key.slice(-4)}) — saved to ${saved.savedTo.join(', ')}; in force from ${saved.source ?? 'nowhere yet'}.${warning ? ` WARNING: the saved key is shadowed by an older key already in the environment (${envName}).` : ''}`);
+    res.json({ ok: true, slot, tail: key.slice(-4), activeTail: active.tail, shadowed, warning, source: saved.source, savedTo: saved.savedTo, detail: saved.detail });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error(`[JARVIS] could not save the Gemini key: ${message}`);
@@ -2805,13 +2873,13 @@ app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) 
 });
 
 // GET /api/brain-check -> a REAL call to Gemini, so "the brain works" is a
-// measurement and not a hope. It prints the model actually used, where the key
-// came from, how long it took and what is left of the day's budget.
+// measurement and not a hope. It prints the model actually used, which key
+// answered and where it came from, how long it took and the day's count.
 app.get('/api/brain-check', requireAuth, async (_req: Request, res: Response) => {
   const result = await brainCheck(brainCaller());
   noteBrainHealth(result.ok);
   if (result.ok) {
-    console.log(`[JARVIS] brain check OK — ${result.model} (${result.modelSource}) in ${result.latencyMs} ms`);
+    console.log(`[JARVIS] brain check OK — ${result.model} (${result.modelSource}) on key ${result.keySlot ?? '?'} in ${result.latencyMs} ms — ${result.quota.summary}`);
   } else {
     console.warn(`[JARVIS] brain check FAILED (${result.code}): ${result.error}`);
   }

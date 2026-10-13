@@ -24,15 +24,27 @@
  *   NAMES  config/api_keys.json -> "assistant_name" / "user_name"
  *          (backend/config.py: get_assistant_name() / get_user_name())
  *
- *   QUOTA  SUPPER_GEMINI_DAILY_BUDGET (default 20, backend/config.py) and the
- *          counter in runtime/quota.json, shared with the engine room — the
- *          dashboard spends from the same daily budget, with the same rules:
- *          one unit per call that reaches Gemini, reset at local midnight,
- *          fail closed if the counter exists but cannot be read, and a 429
- *          from Google marks the day exhausted. Concurrent writes are made
- *          safe with a read-modify-write and an atomic rename.
- *          (The deliberate choice, and its one honest limitation, are written
- *          up in docs/CONFIG_SOURCE_OF_TRUTH.md.)
+ *   KEY 2  GEMINI_API_KEY_2 (the environment, including ./.env)
+ *          then config/api_keys.json -> "gemini_api_key_2"
+ *          The optional FALLBACK key. Every call goes out on the first key;
+ *          when Google refuses the first key with a 429 (its quota) or rejects
+ *          the key itself, the second key takes over for the rest of the local
+ *          day. It only doubles the real allowance if it belongs to a
+ *          different Google account/project.
+ *
+ *   COUNT  The app COUNTS and WARNS; it never BLOCKS. Every outbound question
+ *          adds one unit to runtime/quota.json (total and per key), reset at
+ *          local midnight. Past SUPPER_GEMINI_DAILY_WARN (default 20) the
+ *          terminal and Settings warn — the call still goes through. The only
+ *          thing that stops calls is Google itself: a real 429 marks THAT key
+ *          as stopped by Google until local midnight. When every key we have
+ *          is stopped, calls are refused with a message that says Google did
+ *          it, not this app. A counter file that cannot be read never blocks
+ *          either: the count continues in memory and Settings says the file
+ *          could not be read. (The old SUPPER_GEMINI_DAILY_BUDGET block is
+ *          gone; if that setting is still present it is read as the warning
+ *          level.) The file keeps the {day, used} shape the engine room
+ *          reads, with the per-key detail beside it.
  *
  * Provenance: written for this project (CC BY-NC 4.0, see CREDITS.md). The
  * settings order, the field names and the quota rules mirror the existing
@@ -84,12 +96,19 @@ export const CURRENT_TEXT_MODEL = 'gemini-3.8-flash';
  * withdrawn, whatever Google currently calls "flash-latest" answers instead.
  */
 export const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
-export const DEFAULT_DAILY_BUDGET = 20;           // backend/config.py
+/**
+ * The default WARNING level for the day's count of outbound Gemini calls. It is
+ * only a warning: the count never blocks a call. (It used to be the hard limit,
+ * SUPPER_GEMINI_DAILY_BUDGET = 20, which refused calls Google would still have
+ * answered.)
+ */
+export const DEFAULT_DAILY_WARN = 20;
 export const DEFAULT_VOICE_BUDGET = 400;          // spoken sentences a day
 
-// The key may already be in the shell. Note that before dotenv runs, so the
-// dashboard can say honestly whether the key came from the shell or from ./.env.
+// The keys may already be in the shell. Note that before dotenv runs, so the
+// dashboard can say honestly whether a key came from the shell or from ./.env.
 const KEY_FROM_SHELL = Boolean((process.env.GEMINI_API_KEY || '').trim());
+const KEY2_FROM_SHELL = Boolean((process.env.GEMINI_API_KEY_2 || '').trim());
 // ./.env is git-ignored and is one of the two places the owner's key may live.
 dotenv.config({ path: ENV_FILE });
 
@@ -115,12 +134,23 @@ function writeFileAtomic(file: string, text: string): void {
   fs.renameSync(tmp, file);
 }
 
-function envFileKey(): string {
+/** Which of the two Gemini keys: 1 is the normal one, 2 the optional fallback. */
+export type KeySlot = 1 | 2;
+
+/** The names each key slot goes by in the environment and in config/api_keys.json. */
+function slotNames(slot: KeySlot): { env: string; field: string; label: string } {
+  return slot === 2
+    ? { env: 'GEMINI_API_KEY_2', field: 'gemini_api_key_2', label: 'the second key (fallback)' }
+    : { env: 'GEMINI_API_KEY', field: 'gemini_api_key', label: 'the first key' };
+}
+
+function envFileKey(slot: KeySlot = 1): string {
+  const { env } = slotNames(slot);
   try {
-    const line = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/)
-      .find((l) => /^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(l));
+    const pattern = new RegExp(`^\\s*(?:export\\s+)?${env}\\s*=`);
+    const line = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/).find((l) => pattern.test(l));
     if (!line) return '';
-    return line.replace(/^\s*(?:export\s+)?GEMINI_API_KEY\s*=\s*/, '').trim().replace(/^["']|["']$/g, '');
+    return line.replace(new RegExp(`^\\s*(?:export\\s+)?${env}\\s*=\\s*`), '').trim().replace(/^["']|["']$/g, '');
   } catch {
     return '';
   }
@@ -136,46 +166,103 @@ export interface KeyInfo {
   tail: string | null;
   /** A full sentence naming where the key was found (or every file that was checked). */
   detail: string;
+  /** Which slot this is: 1 the normal key, 2 the fallback. */
+  slot: KeySlot;
 }
 
-export function resolveGeminiKey(): KeyInfo {
-  const env = (process.env.GEMINI_API_KEY || '').trim();
+/**
+ * Resolve one key slot the honest way: the environment first (the shell, the
+ * launcher, or ./.env), then config/api_keys.json. Both slots follow the same
+ * order, so an old GEMINI_API_KEY_2 in the environment shadows a saved second
+ * key exactly as GEMINI_API_KEY shadows the first — and is reported as such.
+ */
+export function resolveKeySlot(slot: KeySlot): KeyInfo {
+  const names = slotNames(slot);
+  const fromShell = slot === 2 ? KEY2_FROM_SHELL : KEY_FROM_SHELL;
+  const env = (process.env[names.env] || '').trim();
   if (env) {
-    const fromFile = envFileKey();
-    const fromEnvFile = !KEY_FROM_SHELL && fromFile === env;
+    const fromFile = envFileKey(slot);
+    const fromEnvFile = !fromShell && fromFile === env;
     const source: KeySource = fromEnvFile ? '.env' : 'environment';
     return {
       key: env,
       source,
       tail: env.slice(-4),
+      slot,
       detail: fromEnvFile
-        ? 'read from ./.env (GEMINI_API_KEY) — the same file this dashboard has always written'
-        : 'read from the environment (GEMINI_API_KEY, set outside ./.env — the shell or the launcher)',
+        ? `read from ./.env (${names.env}) — the same file this dashboard has always written`
+        : `read from the environment (${names.env}, set outside ./.env — the shell or the launcher)`,
     };
   }
   const file = readApiConfigFile();
-  const value = typeof file['gemini_api_key'] === 'string' ? (file['gemini_api_key'] as string).trim() : '';
+  const value = typeof file[names.field] === 'string' ? (file[names.field] as string).trim() : '';
   if (value) {
     return {
       key: value,
       source: 'config/api_keys.json',
       tail: value.slice(-4),
-      detail: 'read from config/api_keys.json (gemini_api_key) — the file the desktop app and every actions/*.py use',
+      slot,
+      detail: slot === 2
+        ? 'read from config/api_keys.json (gemini_api_key_2) — saved by Settings → "The Brain"'
+        : 'read from config/api_keys.json (gemini_api_key) — the file the desktop app and every actions/*.py use',
     };
   }
   return {
     key: null,
     source: null,
     tail: null,
-    detail: `no key found: I checked the environment (GEMINI_API_KEY, including ./.env) and ${API_CONFIG_PATH} (gemini_api_key)`,
+    slot,
+    detail: slot === 2
+      ? `no second key: I checked the environment (GEMINI_API_KEY_2, including ./.env) and ${API_CONFIG_PATH} (gemini_api_key_2) — that is fine, it is optional`
+      : `no key found: I checked the environment (GEMINI_API_KEY, including ./.env) and ${API_CONFIG_PATH} (gemini_api_key)`,
   };
 }
 
+/** The first (normal) key. */
+export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
+/** The optional second key, the fallback. */
+export function resolveGeminiKey2(): KeyInfo { return resolveKeySlot(2); }
+
 /** The key report an API response may carry — never the key itself. */
 export function publicKeyInfo(info: KeyInfo = resolveGeminiKey()): {
-  present: boolean; source: KeySource; tail: string | null; detail: string;
+  present: boolean; source: KeySource; tail: string | null; detail: string; slot: KeySlot;
 } {
-  return { present: Boolean(info.key), source: info.source, tail: info.tail, detail: info.detail };
+  return { present: Boolean(info.key), source: info.source, tail: info.tail, detail: info.detail, slot: info.slot };
+}
+
+/**
+ * Which key answers NOW, and why. The first key, always — unless Google has
+ * stopped it today (a 429, or it rejected the key), in which case the second
+ * key takes over until local midnight. When every key we have is stopped, the
+ * report says so: that is Google stopping us, and the only thing that may.
+ */
+export interface ActiveKey {
+  slot: KeySlot | null;
+  info: KeyInfo;
+  /** A plain sentence: which key, and why that one. */
+  reason: string;
+  /** True when Google has stopped every key we have for today. */
+  stoppedByGoogle: boolean;
+}
+
+export function resolveActiveKey(): ActiveKey {
+  const first = resolveKeySlot(1);
+  const second = resolveKeySlot(2);
+  if (!first.key && !second.key) {
+    return { slot: null, info: first, reason: 'no key is set', stoppedByGoogle: false };
+  }
+  const counter = readBrainCounter();
+  if (first.key && !counter.stopped[1]) {
+    return { slot: 1, info: first, reason: 'the first key — the normal one', stoppedByGoogle: false };
+  }
+  if (second.key && !counter.stopped[2]) {
+    const why = first.key && counter.stopped[1]
+      ? `the second key — Google stopped the first one at ${clockTime(counter.stopped[1].at)} (${stopReasonText(counter.stopped[1])}); the first key is tried again after local midnight`
+      : 'the second key — no first key is set';
+    return { slot: 2, info: second, reason: why, stoppedByGoogle: false };
+  }
+  const info = first.key ? first : second;
+  return { slot: info.slot, info, reason: 'Google has stopped every key we have for today', stoppedByGoogle: true };
 }
 
 // ── NAMES ───────────────────────────────────────────────────────────────────
@@ -358,35 +445,80 @@ export async function discoverModels(caller: BrainCaller, kind: 'text' | 'image'
     .map((model) => ({ model, source: 'discovered from your key (ai.models.list() — last resort)' }));
 }
 
-// ── QUOTA (the app's own daily budget) ──────────────────────────────────────
+// ── COUNT (the app counts and warns — only Google may stop a call) ──────────
+/** Why Google stopped a key today. */
+export interface StopRecord {
+  /** ISO time it happened. */
+  at: string;
+  /** 'quota' = a real 429 from Google; 'key-rejected' = Google refused the key itself. */
+  reason: 'quota' | 'key-rejected';
+  /** The short text Google sent, for the terminal and Settings. */
+  detail: string;
+}
+
 export interface QuotaSnapshot {
   day: string;
+  /** Outbound questions today, both keys together. */
   used: number;
-  limit: number;
-  remaining: number;
-  enabled: boolean;
+  /** The same count, per key. */
+  perKey: { 1: number; 2: number };
+  /** The warning level. 0 means "never warn". It never blocks. */
+  warnAt: number;
+  warnSource: string;
+  /** True once today's count has reached the warning level. */
+  pastWarn: boolean;
+  /** The file exists but could not be read: counting continues in memory, nothing is blocked. */
   unreadable: boolean;
   saved: boolean;
   resets: string;
+  /** Which key is answering now (1 or 2), or null when there is no key. */
+  activeKey: KeySlot | null;
+  activeReason: string;
+  /** Per key: Google's stop for today, or null. */
+  googleStopped: { 1: StopRecord | null; 2: StopRecord | null };
+  /** True only when Google has stopped EVERY key we have: no calls until local midnight. */
+  stoppedByGoogle: boolean;
+  /** When the second key took over today, if it did. */
+  switchedAt: string | null;
+  /** True when a second key is set. */
+  hasSecondKey: boolean;
+  /** A plain sentence the terminal and Settings can print. */
+  summary: string;
   source: string;
   note: string;
 }
 
-export interface BudgetInfo { limit: number; source: string; }
+export interface WarnInfo { warnAt: number; source: string; }
 
-export function resolveDailyBudget(): BudgetInfo {
-  const raw = (process.env.SUPPER_GEMINI_DAILY_BUDGET || '').trim();
-  if (!raw) return { limit: DEFAULT_DAILY_BUDGET, source: `the app's default (${DEFAULT_DAILY_BUDGET})` };
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isFinite(value) || value < 0) {
-    return { limit: DEFAULT_DAILY_BUDGET, source: `the app's default (${DEFAULT_DAILY_BUDGET}) — SUPPER_GEMINI_DAILY_BUDGET could not be read` };
+/**
+ * The warning level for the day's count. SUPPER_GEMINI_DAILY_WARN first; the
+ * old SUPPER_GEMINI_DAILY_BUDGET is honoured as a warning level too (it used
+ * to be the hard limit — it no longer blocks anything); then the default.
+ */
+export function resolveDailyWarn(): WarnInfo {
+  const parse = (raw: string) => {
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  };
+  const warn = (process.env.SUPPER_GEMINI_DAILY_WARN || '').trim();
+  if (warn) {
+    const value = parse(warn);
+    if (value !== null) return { warnAt: value, source: 'SUPPER_GEMINI_DAILY_WARN' };
+    return { warnAt: DEFAULT_DAILY_WARN, source: `the app's default (${DEFAULT_DAILY_WARN}) — SUPPER_GEMINI_DAILY_WARN could not be read` };
   }
-  return { limit: value, source: 'SUPPER_GEMINI_DAILY_BUDGET' };
+  const legacy = (process.env.SUPPER_GEMINI_DAILY_BUDGET || '').trim();
+  if (legacy) {
+    const value = parse(legacy);
+    if (value !== null && value > 0) {
+      return { warnAt: value, source: 'SUPPER_GEMINI_DAILY_BUDGET (the old limit — it is only a warning level now and never blocks; SUPPER_GEMINI_DAILY_WARN replaces it)' };
+    }
+  }
+  return { warnAt: DEFAULT_DAILY_WARN, source: `the app's default (${DEFAULT_DAILY_WARN})` };
 }
 
-// A file that exists but cannot be read fails closed until the next local day
-// (backend/quota.py holds the same rule). Each counter keeps its own state, so a
-// damaged voice counter can never switch the brain off (or the other way round).
+// A counter file that exists but cannot be read is left alone (the owner may want
+// to look at it) and the count carries on in memory for the day — it WARNS, it
+// never blocks. Each counter file keeps its own state.
 const unreadableDay: Record<string, string> = {};
 const saveFailed: Record<string, boolean> = {};
 
@@ -396,9 +528,248 @@ function localDay(): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
+function clockTime(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function stopReasonText(stop: StopRecord): string {
+  return stop.reason === 'quota' ? "Google's quota, a real 429" : 'Google rejected the key itself';
+}
+
+// ── The brain's counter: total, per key, and Google's stops ─────────────────
+interface BrainCounter {
+  day: string;
+  used: number;
+  keys: { 1: number; 2: number };
+  stopped: { 1: StopRecord | null; 2: StopRecord | null };
+  switchedAt: string | null;
+  unreadable: boolean;
+}
+
+function freshBrainCounter(day: string, unreadable = false): BrainCounter {
+  return { day, used: 0, keys: { 1: 0, 2: 0 }, stopped: { 1: null, 2: null }, switchedAt: null, unreadable };
+}
+
+/** The in-memory count for a day whose file could not be read. */
+let memoryBrainCounter: BrainCounter | null = null;
+let unreadableWarned = '';
+
+function readStop(value: unknown): StopRecord | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as { at?: unknown; reason?: unknown; detail?: unknown };
+  if (typeof v.at !== 'string' || !v.at) return null;
+  return {
+    at: v.at,
+    reason: v.reason === 'key-rejected' ? 'key-rejected' : 'quota',
+    detail: typeof v.detail === 'string' ? v.detail : '',
+  };
+}
+
+function readBrainCounter(): BrainCounter {
+  const day = localDay();
+  if (unreadableDay[QUOTA_FILE] === day) {
+    if (!memoryBrainCounter || memoryBrainCounter.day !== day) memoryBrainCounter = freshBrainCounter(day, true);
+    return memoryBrainCounter;
+  }
+  memoryBrainCounter = null;
+  if (!fs.existsSync(QUOTA_FILE)) return freshBrainCounter(day);
+  try {
+    const data = JSON.parse(fs.readFileSync(QUOTA_FILE, 'utf-8')) as {
+      day?: unknown; used?: unknown; keys?: Record<string, unknown>; google_stopped?: Record<string, unknown>; switched_at?: unknown;
+    };
+    const used = Number(data?.used);
+    if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
+    if (data?.day !== day) return freshBrainCounter(day);       // yesterday's count: a new day starts at zero
+    const perKey = (slot: KeySlot): number => {
+      const n = Number(data.keys?.[String(slot)]);
+      return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    };
+    // A file in the old {day, used} shape counts everything against the first key.
+    const keys = data.keys && typeof data.keys === 'object' ? { 1: perKey(1), 2: perKey(2) } : { 1: Math.floor(used), 2: 0 };
+    return {
+      day,
+      used: Math.floor(used),
+      keys,
+      stopped: { 1: readStop(data.google_stopped?.['1']), 2: readStop(data.google_stopped?.['2']) },
+      switchedAt: typeof data.switched_at === 'string' ? data.switched_at : null,
+      unreadable: false,
+    };
+  } catch (err) {
+    unreadableDay[QUOTA_FILE] = day;
+    memoryBrainCounter = freshBrainCounter(day, true);
+    if (unreadableWarned !== day) {
+      unreadableWarned = day;
+      console.warn(`[config] WARNING: runtime/quota.json exists but could not be read (${err instanceof Error ? err.message : String(err)}). Nothing is blocked — the count continues in memory until local midnight. Fix or delete the file and restart JARVIS to count in it again.`);
+    }
+    return memoryBrainCounter;
+  }
+}
+
+function writeBrainCounter(counter: BrainCounter): void {
+  if (counter.unreadable) { memoryBrainCounter = counter; return; }   // never overwrite a file we could not read
+  const tmp = `${QUOTA_FILE}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(QUOTA_FILE), { recursive: true });
+    // {day, used} first: the shape the engine room (backend/quota.py) reads.
+    fs.writeFileSync(tmp, JSON.stringify({
+      day: counter.day,
+      used: counter.used,
+      keys: { '1': counter.keys[1], '2': counter.keys[2] },
+      google_stopped: { '1': counter.stopped[1], '2': counter.stopped[2] },
+      switched_at: counter.switchedAt,
+    }), { mode: 0o600 });
+    fs.renameSync(tmp, QUOTA_FILE);
+    saveFailed[QUOTA_FILE] = false;
+  } catch {
+    saveFailed[QUOTA_FILE] = true;          // counting continues in memory; diagnostics shows it
+  }
+}
+
+/** The one-line account of today, for the terminal, Settings and the chat. */
+function summarise(counter: BrainCounter, warn: WarnInfo, active: ActiveKey, hasSecondKey: boolean): string {
+  const parts: string[] = [];
+  parts.push(`${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today (key 1: ${counter.keys[1]}, key 2: ${counter.keys[2]})`);
+  if (warn.warnAt > 0 && counter.used >= warn.warnAt) parts.push(`⚠ at or past your warning level of ${warn.warnAt} — the count never blocks, this is only a warning`);
+  else if (warn.warnAt > 0) parts.push(`warning level ${warn.warnAt}`);
+  if (counter.unreadable) parts.push('⚠ runtime/quota.json could not be read, so this is the count since the server started');
+  if (active.stoppedByGoogle) parts.push('GOOGLE HAS STOPPED US for today (not this app) — calls resume at local midnight');
+  else if (active.slot === 2 && counter.stopped[1]) parts.push(`answering on the SECOND key since ${clockTime(counter.stopped[1].at)} — Google stopped the first one`);
+  else if (active.slot) parts.push(`answering on key ${active.slot}`);
+  if (!hasSecondKey && !active.stoppedByGoogle) parts.push('no second key set');
+  return parts.join(' · ');
+}
+
+export function quotaSnapshot(): QuotaSnapshot {
+  const warn = resolveDailyWarn();
+  const counter = readBrainCounter();
+  const active = resolveActiveKey();
+  const hasSecondKey = Boolean(resolveKeySlot(2).key);
+  return {
+    day: counter.day,
+    used: counter.used,
+    perKey: { 1: counter.keys[1], 2: counter.keys[2] },
+    warnAt: warn.warnAt,
+    warnSource: warn.source,
+    pastWarn: warn.warnAt > 0 && counter.used >= warn.warnAt,
+    unreadable: counter.unreadable,
+    saved: !saveFailed[QUOTA_FILE],
+    resets: 'local midnight',
+    activeKey: active.slot,
+    activeReason: active.reason,
+    googleStopped: { 1: counter.stopped[1], 2: counter.stopped[2] },
+    stoppedByGoogle: active.stoppedByGoogle,
+    switchedAt: counter.switchedAt,
+    hasSecondKey,
+    summary: summarise(counter, warn, active, hasSecondKey),
+    source: warn.source,
+    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks; only a real 429 from Google stops calls, and only until local midnight. Google's real limit differs by model and project; check AI Studio.",
+  };
+}
+
+// ── What happened: the server prints these in the terminal and the dashboard ─
+export type QuotaEvent =
+  | { kind: 'warn'; used: number; warnAt: number; message: string }
+  | { kind: 'unreadable'; message: string }
+  | { kind: 'key-stopped'; slot: KeySlot; reason: StopRecord['reason']; switchedTo: KeySlot | null; message: string };
+
+let quotaListener: ((event: QuotaEvent) => void) | null = null;
+/** server.ts registers one listener so every event is shown in the terminal AND the dashboard. */
+export function onQuotaEvent(listener: ((event: QuotaEvent) => void) | null): void {
+  quotaListener = listener;
+}
+function emit(event: QuotaEvent): void {
+  try { if (quotaListener) quotaListener(event); } catch { /* a listener must never break a call */ }
+}
+let warnAnnounced = '';
+let unreadableAnnounced = '';
+
+export interface SpendResult {
+  /** False ONLY when Google has stopped every key we have (or there is no key). The count never says no. */
+  allowed: boolean;
+  slot: KeySlot | null;
+  snapshot: QuotaSnapshot;
+  /** A warning to show — the call still goes through. */
+  warning: string | null;
+}
+
+/**
+ * Count ONE unit for ONE QUESTION that is about to reach Gemini — the
+ * standalone app's rule (one spend, one call): retries of the same question
+ * (another model, another thinking setting) do NOT count again, because they
+ * fetched no new answer. The one exception is the switch to the second key,
+ * see countRetryOnKey(). Local answers never come here at all. This counts
+ * and warns; it only refuses when Google has stopped every key we have for
+ * today.
+ */
+export function spendGeminiCall(): SpendResult {
+  const active = resolveActiveKey();
+  if (!active.slot || active.stoppedByGoogle) {
+    return { allowed: false, slot: active.slot, snapshot: quotaSnapshot(), warning: null };
+  }
+  const counter = readBrainCounter();
+  counter.used += 1;
+  counter.keys[active.slot] += 1;
+  writeBrainCounter(counter);
+
+  const warnings: string[] = [];
+  const warn = resolveDailyWarn();
+  if (warn.warnAt > 0 && counter.used >= warn.warnAt) {
+    const message = `⚠ ${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today — ${counter.used === warn.warnAt ? 'that reaches' : 'past'} your warning level of ${warn.warnAt} (${warn.source}). The call still goes through: this count never blocks, only Google can.`;
+    console.warn(`[JARVIS] ${message}`);
+    warnings.push(message);
+    if (warnAnnounced !== counter.day) { warnAnnounced = counter.day; emit({ kind: 'warn', used: counter.used, warnAt: warn.warnAt, message }); }
+  }
+  if (counter.unreadable) {
+    const message = '⚠ runtime/quota.json could not be read, so the day\'s count is being kept in memory only (nothing is blocked). Fix or delete that file and restart JARVIS to count in it again.';
+    warnings.push(message);
+    if (unreadableAnnounced !== counter.day) { unreadableAnnounced = counter.day; emit({ kind: 'unreadable', message }); }
+  }
+  return { allowed: true, slot: active.slot, snapshot: quotaSnapshot(), warning: warnings.length ? warnings.join(' ') : null };
+}
+
+/**
+ * The one exception to "one unit per question": when Google stops key 1 and
+ * the same question goes out again on key 2, that is a real call on key 2 and
+ * Google counts it against key 2 — so the per-key count does too (it happens
+ * at most once a day, at the moment of the switch).
+ */
+export function countRetryOnKey(slot: KeySlot): void {
+  const counter = readBrainCounter();
+  counter.used += 1;
+  counter.keys[slot] += 1;
+  writeBrainCounter(counter);
+}
+
+/**
+ * Google refused this key — a real 429 (its quota) or the key itself — so the
+ * key is stopped until local midnight. If the OTHER key is set and not stopped,
+ * it takes over now; the caller retries the same question on it.
+ */
+export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason'], detail: string): { switchedTo: KeySlot | null; allStopped: boolean } {
+  const counter = readBrainCounter();
+  const now = new Date().toISOString();
+  if (!counter.stopped[slot]) counter.stopped[slot] = { at: now, reason, detail: trimRaw(detail) };
+  const other: KeySlot = slot === 1 ? 2 : 1;
+  const switchedTo: KeySlot | null = resolveKeySlot(other).key && !counter.stopped[other] ? other : null;
+  if (switchedTo && !counter.switchedAt) counter.switchedAt = now;
+  writeBrainCounter(counter);
+
+  const why = reason === 'quota' ? 'Google answered 429 — its own quota is used up for this key' : 'Google rejected the key itself';
+  const message = switchedTo
+    ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again after local midnight.`
+    : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at local midnight.`;
+  console.warn(`[JARVIS] ${message}`);
+  emit({ kind: 'key-stopped', slot, reason, switchedTo, message });
+  return { switchedTo, allStopped: !switchedTo };
+}
+
+// ── The voice's own counter (the voice is local now: it never touches Gemini) ─
 interface Counter { day: string; used: number; unreadable: boolean; }
 
-function readCounter(file: string = QUOTA_FILE): Counter {
+function readCounter(file: string): Counter {
   const day = localDay();
   if (unreadableDay[file] === day) return { day, used: 0, unreadable: true };
   if (!fs.existsSync(file)) return { day, used: 0, unreadable: false };
@@ -408,12 +779,12 @@ function readCounter(file: string = QUOTA_FILE): Counter {
     if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
     return { day, used: data?.day === day ? Math.floor(used) : 0, unreadable: false };
   } catch {
-    unreadableDay[file] = day;              // fail closed: a damaged counter can never allow calls
+    unreadableDay[file] = day;
     return { day, used: 0, unreadable: true };
   }
 }
 
-function writeCounter(day: string, used: number, file: string = QUOTA_FILE): void {
+function writeCounter(day: string, used: number, file: string): void {
   const tmp = `${file}.tmp`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -421,28 +792,17 @@ function writeCounter(day: string, used: number, file: string = QUOTA_FILE): voi
     fs.renameSync(tmp, file);
     saveFailed[file] = false;
   } catch {
-    saveFailed[file] = true;                // counting continues in memory; diagnostics shows it
+    saveFailed[file] = true;
   }
 }
 
-export function quotaSnapshot(): QuotaSnapshot {
-  const budget = resolveDailyBudget();
-  const counter = readCounter();
-  return {
-    day: counter.day,
-    used: counter.used,
-    limit: budget.limit,
-    remaining: counter.unreadable ? 0 : Math.max(0, budget.limit - counter.used),
-    enabled: budget.limit > 0,
-    unreadable: counter.unreadable,
-    saved: !saveFailed[QUOTA_FILE],
-    resets: 'local midnight',
-    source: budget.source,
-    note: "This app's own count in runtime/quota.json, shared with the engine room. Google's real limit differs by model; check AI Studio.",
-  };
+export interface BudgetInfo { limit: number; source: string; }
+
+export interface VoiceQuotaSnapshot {
+  day: string; used: number; limit: number; remaining: number; enabled: boolean;
+  unreadable: boolean; saved: boolean; resets: string; source: string; note: string;
 }
 
-// ── The voice's own budget ──────────────────────────────────────────────────
 export function resolveVoiceBudget(): BudgetInfo {
   const raw = (process.env.SUPPER_GEMINI_VOICE_BUDGET || '').trim();
   if (!raw) return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET} spoken sentences a day)` };
@@ -453,7 +813,7 @@ export function resolveVoiceBudget(): BudgetInfo {
   return { limit: value, source: 'SUPPER_GEMINI_VOICE_BUDGET' };
 }
 
-export function voiceQuotaSnapshot(): QuotaSnapshot {
+export function voiceQuotaSnapshot(): VoiceQuotaSnapshot {
   const budget = resolveVoiceBudget();
   const counter = readCounter(VOICE_QUOTA_FILE);
   return {
@@ -466,12 +826,12 @@ export function voiceQuotaSnapshot(): QuotaSnapshot {
     saved: !saveFailed[VOICE_QUOTA_FILE],
     resets: 'local midnight',
     source: budget.source,
-    note: "The voice's own count in runtime/voice_quota.json — kept apart from the brain's budget so speaking can never starve the thinking.",
+    note: "The voice's own count in runtime/voice_quota.json. The voice runs on this computer (Kokoro / faster-whisper) and never uses a Gemini call, so this stays at zero unless a server voice is used.",
   };
 }
 
-/** One unit for one spoken sentence generated on the server. */
-export function trySpendVoiceBudget(): { allowed: boolean; snapshot: QuotaSnapshot } {
+/** One unit for one spoken sentence generated by a SERVER voice (the local voice never calls this). */
+export function trySpendVoiceBudget(): { allowed: boolean; snapshot: VoiceQuotaSnapshot } {
   const budget = resolveVoiceBudget();
   const counter = readCounter(VOICE_QUOTA_FILE);
   if (counter.unreadable || budget.limit === 0 || counter.used >= budget.limit) {
@@ -481,50 +841,12 @@ export function trySpendVoiceBudget(): { allowed: boolean; snapshot: QuotaSnapsh
   return { allowed: true, snapshot: voiceQuotaSnapshot() };
 }
 
-/**
- * Take one unit for ONE QUESTION that is about to reach Gemini — the
- * standalone app's rule (backend/quota.py via agent.py: one spend, one call).
- * Retries of the same question (another candidate model, another thinking
- * setting) do NOT spend again: they fetched no new answer. The
- * read-modify-write plus the atomic rename keeps concurrent writes safe
- * (see docs/CONFIG_SOURCE_OF_TRUTH.md for the one honest limitation when
- * both builds run at once).
- */
-export function trySpendGeminiBudget(): { allowed: boolean; snapshot: QuotaSnapshot } {
-  const budget = resolveDailyBudget();
-  const counter = readCounter();
-  if (counter.unreadable || budget.limit === 0 || counter.used >= budget.limit) {
-    return { allowed: false, snapshot: quotaSnapshot() };
-  }
-  const used = counter.used + 1;
-  writeCounter(counter.day, used);
-  return { allowed: true, snapshot: quotaSnapshot() };
-}
-
-/** Google reported its own limit is reached: no more calls today. */
-export function markBudgetExhausted(): void {
-  const budget = resolveDailyBudget();
-  if (budget.limit <= 0) return;
-  const counter = readCounter();
-  if (counter.unreadable) return;           // never overwrite a counter we could not read
-  writeCounter(counter.day, budget.limit);
-}
-
-/**
- * Google refused a SPOKEN sentence because its own limit is reached.
- *
- * The two budgets are counted apart on purpose (see the note on
- * VOICE_QUOTA_FILE): twenty spoken sentences a day and no answers left would
- * be the result of sharing one counter. So a refused sentence may only close
- * the voice's own counter — never the brain's. Marking the text budget here
- * switched the answers off for the rest of the day because the MOUTH was
- * refused, which is exactly the confusion the split exists to prevent.
- */
+/** A refused SPOKEN sentence may only close the voice's own counter — never the brain's. */
 export function markVoiceBudgetExhausted(): void {
   const budget = resolveVoiceBudget();
   if (budget.limit <= 0) return;
   const counter = readCounter(VOICE_QUOTA_FILE);
-  if (counter.unreadable) return;           // never overwrite a counter we could not read
+  if (counter.unreadable) return;
   writeCounter(counter.day, budget.limit, VOICE_QUOTA_FILE);
 }
 
@@ -665,7 +987,7 @@ export function isConfigRejection(raw: string): boolean {
 }
 
 export type BrainFailureCode =
-  | 'no-key' | 'budget' | 'model-unavailable' | 'key-rejected'
+  | 'no-key' | 'google-stopped' | 'model-unavailable' | 'key-rejected'
   | 'rate-limited' | 'connection' | 'empty' | 'failed';
 
 export interface AttemptReport { model: string; source: string; ok: boolean; status?: number; error?: string; }
@@ -733,6 +1055,21 @@ function trimRaw(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
+/** What Google did to each key today, in one plain sentence. */
+function googleStopStory(): string {
+  const snap = quotaSnapshot();
+  const line = (slot: KeySlot): string => {
+    const stop = snap.googleStopped[slot];
+    if (stop) return `key ${slot} was stopped at ${clockTime(stop.at)} (${stopReasonText(stop)})`;
+    return '';
+  };
+  const parts = [line(1), line(2)].filter(Boolean);
+  const second = snap.hasSecondKey
+    ? ''
+    : ' No second key is set — add one in Settings → "The Brain" (from a different Google account/project) and I carry on with it when the first runs out.';
+  return `${parts.length ? parts.join('; ') + '.' : ''}${second} This app counted ${snap.used} call${snap.used === 1 ? '' : 's'} today and did not block any of them.`;
+}
+
 export interface FailureContext {
   code: BrainFailureCode;
   model: string;
@@ -747,13 +1084,8 @@ export function explainBrainFailure(ctx: FailureContext): string {
   switch (ctx.code) {
     case 'no-key':
       return `I have no Gemini key, sir. ${key.detail}. Add "gemini_api_key" to config/api_keys.json (Settings → "The Brain" writes it there), or set GEMINI_API_KEY — either is read at once, no restart.`;
-    case 'budget': {
-      const snapshot = quotaSnapshot();
-      const why = snapshot.unreadable
-        ? `runtime/quota.json exists but I cannot read it, so the budget stays closed until local midnight (the app fails closed on a damaged counter)`
-        : `the day's budget is used: ${snapshot.used} of ${snapshot.limit} calls (${snapshot.source})`;
-      return `I am not calling Gemini, sir: ${why}. The count is in runtime/quota.json and resets at local midnight. Raise SUPPER_GEMINI_DAILY_BUDGET if the day needs more.`;
-    }
+    case 'google-stopped':
+      return `Google has stopped our calls for today, sir — Google, not this app. ${googleStopStory()} Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Until then I answer with what I know locally.`;
     case 'model-unavailable': {
       const tried = ctx.attempts.filter((a) => a.error).map((a) => a.model).join(', ') || ctx.model;
       return `The model name was withdrawn, sir — my key is fine, so do not change it. Google answered 404 NOT_FOUND for ${tried}.` +
@@ -761,11 +1093,11 @@ export function explainBrainFailure(ctx: FailureContext): string {
         (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     }
     case 'key-rejected':
-      return `Google refused the key itself (${key.source || 'no source'}; ending in …${key.tail ?? '????'}), which comes from ${key.detail} — the key is the problem here, not the model (${ctx.model}).` +
+      return `Google refused key ${key.slot} itself (${key.source || 'no source'}; ending in …${key.tail ?? '????'}), which comes from ${key.detail} — the key is the problem here, not the model (${ctx.model}).` +
         ` Paste a working key in Settings → "The Brain".` + (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'rate-limited':
-      return `Google says the quota is used up (429) for ${ctx.model}. The day's count in runtime/quota.json is now marked used up; it resets at local midnight` +
-        ` (Google's own daily quota resets at midnight Pacific). Neither the key nor the model name is at fault.` +
+      return `Google answered 429 — its own quota is used up for key ${key.slot} (ending in …${key.tail ?? '????'}) on ${ctx.model}. That is Google stopping us, sir, not this app: this app's count only warns. ${googleStopStory()}` +
+        ` Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Neither the key nor the model name is at fault.` +
         (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'connection':
       return `The call never reached Google, sir — a connection problem, so neither the key (${key.source || 'none'}) nor the model (${ctx.model}) is at fault.` +
@@ -780,7 +1112,7 @@ export function explainBrainFailure(ctx: FailureContext): string {
 /**
  * Run one Gemini task through the configured model, then the remembered one,
  * and only then — as a last resort — whatever the key's own model list offers.
- * Every attempt that reaches Gemini takes one unit of the day's budget.
+ * One question counts one unit, whatever it takes to answer it.
  */
 export interface BrainRun<T> {
   value: T;
@@ -796,9 +1128,9 @@ export interface BrainRunOptions<T> {
   contents: unknown[];
   config?: Record<string, unknown>;
   extract: (raw: GeminiRaw) => T | null;
-  /** Tests inject their own queue and their own budget; production uses the defaults. */
+  /** Tests inject their own queue and their own counter; production uses the defaults. */
   candidates?: ModelCandidate[];
-  spend?: () => { allowed: boolean; snapshot: QuotaSnapshot };
+  spend?: () => SpendResult;
   /** Set false in tests that must not touch the network for discovery. */
   allowDiscovery?: boolean;
   /** Set false to send only the caller's own settings — never the speed defaults. */
@@ -806,7 +1138,8 @@ export interface BrainRunOptions<T> {
 }
 
 export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOptions<T>): Promise<BrainRun<T>> {
-  const key = resolveGeminiKey();
+  const active = resolveActiveKey();
+  let key = active.info;
   if (!caller || !key.key) {
     throw new BrainError(explainBrainFailure({ code: 'no-key', model: '', modelSource: '', key, attempts: [] }), 'no-key', [], '', '');
   }
@@ -818,14 +1151,16 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
   // _gemini() spends once, then makes its call). This used to spend once per
   // candidate model, so a single question whose first model was unavailable
   // burned three, five, sometimes twenty units on retries that never fetched
-  // an answer — the day's 20 were gone after a handful of questions, and the
-  // same retry storm is what made replies take a minute. Retries of the same
-  // question are free; a new question spends again.
-  const spend = opts.spend || trySpendGeminiBudget;
-  const budget = spend();
-  if (!budget.allowed) {
-    throw new BrainError(explainBrainFailure({ code: 'budget', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'budget', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+  // an answer. Retries of the same question are free; a new question counts
+  // again. The count never refuses: the gate below is closed only when Google
+  // has stopped every key we have for today.
+  const spend = opts.spend || spendGeminiCall;
+  const gate = spend();
+  if (!gate.allowed) {
+    throw new BrainError(explainBrainFailure({ code: 'google-stopped', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'google-stopped', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
   }
+  let slot: KeySlot = gate.slot ?? active.slot ?? 1;
+  let switchedKey = false;
   let discoveryDone = opts.allowDiscovery === false;
   let lastModel = candidates[0]?.model || '';
   let lastSource = candidates[0]?.source || '';
@@ -905,12 +1240,25 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
       attempts.push({ model: next.model, source: next.source, ok: false, status: classified.status, error: trimRaw(classified.raw) });
       console.warn(`[config] ${opts.kind} call to ${next.model} failed (${classified.code}${classified.status ? ` ${classified.status}` : ''}): ${trimRaw(classified.raw)}`);
 
-      if (classified.code === 'rate-limited') {
-        markBudgetExhausted();
-        throw new BrainError(explainBrainFailure({ code: 'rate-limited', model: next.model, modelSource: next.source, key, raw: classified.raw, attempts }), 'rate-limited', attempts, next.model, next.source);
+      if (classified.code === 'rate-limited' || classified.code === 'key-rejected') {
+        // Google refused THIS key: a real 429 (its quota) or the key itself. The
+        // key is stopped until local midnight. If the other key is set, it takes
+        // over now and the same question is retried on it — for free, it is a
+        // retry — so the owner gets an answer instead of an apology.
+        const stop = markKeyStoppedByGoogle(slot, classified.code === 'rate-limited' ? 'quota' : 'key-rejected', classified.raw);
+        if (stop.switchedTo && !switchedKey) {
+          switchedKey = true;
+          slot = stop.switchedTo;
+          key = resolveKeySlot(slot);
+          attempted.clear();
+          countRetryOnKey(slot);
+          console.warn(`[config] retrying the same question on key ${slot} (ending in …${key.tail}) — counted as one call on key ${slot}.`);
+          continue;
+        }
+        throw new BrainError(explainBrainFailure({ code: classified.code, model: next.model, modelSource: next.source, key, raw: classified.raw, attempts }), classified.code, attempts, next.model, next.source);
       }
-      if (classified.code === 'key-rejected' || classified.code === 'connection') {
-        // Another model cannot mend a rejected key or a dead connection.
+      if (classified.code === 'connection') {
+        // Another model cannot mend a dead connection.
         throw new BrainError(explainBrainFailure({ code: classified.code, model: next.model, modelSource: next.source, key, raw: classified.raw, attempts }), classified.code, attempts, next.model, next.source);
       }
       // A withdrawn name, model-scoped access denial, or unexplained failure: forget it and try the next candidate.
@@ -957,13 +1305,14 @@ export interface BrainStreamOptions {
   /** Called with the whole answer so far, every time more of it exists. */
   onDelta?: (textSoFar: string) => void;
   candidates?: ModelCandidate[];
-  spend?: () => { allowed: boolean; snapshot: QuotaSnapshot };
+  spend?: () => SpendResult;
   allowDiscovery?: boolean;
   speed?: boolean;
 }
 
 export async function runBrainStream(caller: BrainCaller | null, opts: BrainStreamOptions): Promise<BrainStreamRun> {
-  const key = resolveGeminiKey();
+  const active = resolveActiveKey();
+  let key = active.info;
   if (!caller || !key.key) {
     throw new BrainError(explainBrainFailure({ code: 'no-key', model: '', modelSource: '', key, attempts: [] }), 'no-key', [], '', '');
   }
@@ -975,14 +1324,15 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
   let candidates: ModelCandidate[] = (opts.candidates || modelCandidates(opts.kind)).slice();
   const attempted = new Set<string>();
   const attempts: AttemptReport[] = [];
-  const spend = opts.spend || trySpendGeminiBudget;
-  // ONE unit per QUESTION, as in runBrain() and the standalone app: spending
-  // per candidate model burned a day's budget on retries that fetched
-  // nothing, and those retries are also the minute-long waits.
-  const budget = spend();
-  if (!budget.allowed) {
-    throw new BrainError(explainBrainFailure({ code: 'budget', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'budget', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+  const spend = opts.spend || spendGeminiCall;
+  // ONE unit per QUESTION, as in runBrain() and the standalone app. The count
+  // never refuses; only Google stopping every key we have closes this gate.
+  const gate = spend();
+  if (!gate.allowed) {
+    throw new BrainError(explainBrainFailure({ code: 'google-stopped', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'google-stopped', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
   }
+  let slot: KeySlot = gate.slot ?? active.slot ?? 1;
+  let switchedKey = false;
   let discoveryDone = !allowDiscovery;
   let lastModel = candidates[0]?.model || '';
   let lastSource = candidates[0]?.source || '';
@@ -1090,11 +1440,23 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
     lastReport = failure;
     attempts.push({ model: next.model, source: next.source, ok: false, status: failure.status, error: trimRaw(failure.raw) });
     console.warn(`[config] ${opts.kind} call to ${next.model} failed (${failure.code}${failure.status ? ` ${failure.status}` : ''}): ${trimRaw(failure.raw)}`);
-    if (failure.code === 'rate-limited') {
-      markBudgetExhausted();
-      throw new BrainError(explainBrainFailure({ code: 'rate-limited', model: next.model, modelSource: next.source, key, raw: failure.raw, attempts }), 'rate-limited', attempts, next.model, next.source);
+    if (failure.code === 'rate-limited' || failure.code === 'key-rejected') {
+      // Same rule as runBrain(): Google refused this key, so it is stopped for
+      // the day; the other key, if set, takes over and this question is retried
+      // on it for free.
+      const stop = markKeyStoppedByGoogle(slot, failure.code === 'rate-limited' ? 'quota' : 'key-rejected', failure.raw);
+      if (stop.switchedTo && !switchedKey) {
+        switchedKey = true;
+        slot = stop.switchedTo;
+        key = resolveKeySlot(slot);
+        attempted.clear();
+        countRetryOnKey(slot);
+        console.warn(`[config] retrying the same question on key ${slot} (ending in …${key.tail}) — counted as one call on key ${slot}.`);
+        continue;
+      }
+      throw new BrainError(explainBrainFailure({ code: failure.code, model: next.model, modelSource: next.source, key, raw: failure.raw, attempts }), failure.code, attempts, next.model, next.source);
     }
-    if (failure.code === 'key-rejected' || failure.code === 'connection') {
+    if (failure.code === 'connection') {
       throw new BrainError(explainBrainFailure({ code: failure.code, model: next.model, modelSource: next.source, key, raw: failure.raw, attempts }), failure.code, attempts, next.model, next.source);
     }
     forgetModel(opts.kind, next.model);
@@ -1131,6 +1493,8 @@ export interface BrainCheckResult {
   keySource: KeySource;
   keyTail: string | null;
   keyDetail: string;
+  /** Which key answered: 1 the normal one, 2 the fallback. */
+  keySlot: KeySlot | null;
   latencyMs: number;
   reply: string | null;
   attempts: AttemptReport[];
@@ -1142,8 +1506,8 @@ export interface BrainCheckResult {
 }
 
 export async function brainCheck(caller: BrainCaller | null): Promise<BrainCheckResult> {
-  const key = resolveGeminiKey();
   const started = Date.now();
+  const key = resolveActiveKey().info;
   const base = {
     model: resolveTextModel().model,
     modelSource: resolveTextModel().source,
@@ -1160,9 +1524,12 @@ export async function brainCheck(caller: BrainCaller | null): Promise<BrainCheck
       extract: (raw) => (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null),
     });
     const textModel = resolveTextModel();
+    // The key that answered may be the second one (a switch can happen inside
+    // the call), so it is read again after the call.
+    const answered = resolveActiveKey();
     return {
       ok: true, reply: run.value, model: run.model, modelSource: run.modelSource, modelVersion: run.modelVersion,
-      keySource: key.source, keyTail: key.tail, keyDetail: key.detail,
+      keySource: answered.info.source, keyTail: answered.info.tail, keyDetail: answered.info.detail, keySlot: answered.slot,
       latencyMs: Date.now() - started, attempts: run.attempts,
       quota: quotaSnapshot(),
       minutesToNextModel: run.model === textModel.model ? undefined : `served by ${run.model} while ${textModel.model} is unavailable`,
@@ -1174,7 +1541,7 @@ export async function brainCheck(caller: BrainCaller | null): Promise<BrainCheck
       ok: false,
       model: brainError?.model || base.model,
       modelSource: brainError?.modelSource || base.modelSource,
-      keySource: key.source, keyTail: key.tail, keyDetail: key.detail,
+      keySource: key.source, keyTail: key.tail, keyDetail: key.detail, keySlot: key.key ? key.slot : null,
       latencyMs: Date.now() - started,
       reply: null,
       attempts: brainError?.attempts || [],
@@ -1187,61 +1554,102 @@ export async function brainCheck(caller: BrainCaller | null): Promise<BrainCheck
 }
 
 // ── Saving the key where the app actually reads it ──────────────────────────
-export interface SaveKeyResult { savedTo: string[]; source: KeySource; detail: string; }
+export interface SaveKeyResult { savedTo: string[]; source: KeySource; detail: string; slot: KeySlot; }
 
-export function saveGeminiKey(key: string): SaveKeyResult {
+/** config/api_keys.json, parsed — or an error naming the file when it exists but is not JSON. */
+function readApiConfigForWriting(): Record<string, unknown> {
+  const existing = fs.existsSync(API_CONFIG_PATH) ? fs.readFileSync(API_CONFIG_PATH, 'utf-8') : '';
+  if (!existing.trim()) return {};
+  const parsed = readJsonSafe(API_CONFIG_PATH);
+  if (!parsed) throw new Error(`${API_CONFIG_PATH} exists but is not valid JSON — I will not overwrite it. Fix or move that file, then save again.`);
+  return parsed;
+}
+
+/** Rewrite one NAME=value line in ./.env, if that line exists. True when it did. */
+function rewriteEnvLine(name: string, value: string | null): boolean {
+  if (!fs.existsSync(ENV_FILE)) return false;
+  const pattern = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=`);
+  const lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
+  if (!lines.some((line) => pattern.test(line))) return false;
+  const out = lines.flatMap((line) => (pattern.test(line) ? (value === null ? [] : [`${name}=${value}`]) : [line]));
+  writeFileAtomic(ENV_FILE, out.join('\n'));
+  return true;
+}
+
+/**
+ * Save a key where the app reads it. Slot 1 is the normal key (gemini_api_key),
+ * slot 2 the fallback (gemini_api_key_2). Both follow the same rules.
+ */
+export function saveGeminiKey(key: string, slot: KeySlot = 1): SaveKeyResult {
   const cleaned = key.trim();
   if (cleaned.length < 10) throw new Error('That does not look like a Gemini API key — it needs at least 10 characters.');
+  const names = slotNames(slot);
+  const fromShell = slot === 2 ? KEY2_FROM_SHELL : KEY_FROM_SHELL;
 
   // 1. The app's own settings file. Other settings in it are preserved; a file
   //    that exists but cannot be parsed is never overwritten (the owner may
   //    have hand-edited it).
   const savedTo: string[] = [];
-  const existing = fs.existsSync(API_CONFIG_PATH) ? fs.readFileSync(API_CONFIG_PATH, 'utf-8') : '';
-  let file: Record<string, unknown> = {};
-  if (existing.trim()) {
-    const parsed = readJsonSafe(API_CONFIG_PATH);
-    if (!parsed) throw new Error(`${API_CONFIG_PATH} exists but is not valid JSON — I will not overwrite it. Fix or move that file, then save again.`);
-    file = parsed;
-  }
-  file['gemini_api_key'] = cleaned;
+  const file = readApiConfigForWriting();
+  file[names.field] = cleaned;
   writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
   savedTo.push('config/api_keys.json');
 
-  // 2. If ./.env holds a GEMINI_API_KEY line it shadows the file (the
+  // 2. If ./.env holds a line for this key it shadows the file (the
   //    environment is read first), so it is brought along — the key the owner
   //    just typed is then the key in force.
-  if (fs.existsSync(ENV_FILE) && envFileKey()) {
-    const lines = fs.readFileSync(ENV_FILE, 'utf-8').split(/\r?\n/);
-    let replaced = false;
-    const out = lines.map((line) => {
-      if (/^\s*(?:export\s+)?GEMINI_API_KEY\s*=/.test(line)) {
-        replaced = true;
-        return `GEMINI_API_KEY=${cleaned}`;
-      }
-      return line;
-    });
-    if (replaced) {
-      writeFileAtomic(ENV_FILE, out.join('\n'));
-      savedTo.push('.env');
-      if (!KEY_FROM_SHELL) process.env.GEMINI_API_KEY = cleaned;   // live at once
-    }
+  if (envFileKey(slot) && rewriteEnvLine(names.env, cleaned)) {
+    savedTo.push('.env');
+    if (!fromShell) process.env[names.env] = cleaned;   // live at once
   }
 
-  const info = resolveGeminiKey();
-  const shellNote = KEY_FROM_SHELL
-    ? ' The environment already carried GEMINI_API_KEY before ./.env was read (the shell or the launcher), and the environment is read first — clear that variable for the saved key to take over.'
+  const info = resolveKeySlot(slot);
+  const shellNote = fromShell
+    ? ` The environment already carried ${names.env} before ./.env was read (the shell or the launcher), and the environment is read first — clear that variable for the saved key to take over.`
     : '';
   return {
     savedTo,
+    slot,
     source: info.source,
     detail: `written to ${savedTo.join(' and ')}; in force now: ${info.detail}.${shellNote}`,
   };
 }
 
+/**
+ * Remove the optional second key from config/api_keys.json (and its line in
+ * ./.env, if there is one). A GEMINI_API_KEY_2 set in the shell cannot be
+ * removed from here; the report says so.
+ */
+export function clearGeminiKey2(): { removedFrom: string[]; stillPresent: boolean; detail: string } {
+  const removedFrom: string[] = [];
+  const file = readApiConfigForWriting();
+  if ('gemini_api_key_2' in file) {
+    delete file['gemini_api_key_2'];
+    writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+    removedFrom.push('config/api_keys.json');
+  }
+  if (rewriteEnvLine('GEMINI_API_KEY_2', null)) {
+    removedFrom.push('.env');
+    if (!KEY2_FROM_SHELL) delete process.env.GEMINI_API_KEY_2;
+  }
+  const info = resolveKeySlot(2);
+  return {
+    removedFrom,
+    stillPresent: Boolean(info.key),
+    detail: info.key
+      ? `removed from ${removedFrom.join(' and ') || 'nowhere'} — but a second key is still in force: ${info.detail}. Clear GEMINI_API_KEY_2 from the environment and restart to drop it.`
+      : `removed from ${removedFrom.join(' and ') || 'nowhere (there was none saved)'}; no second key is set now.`,
+  };
+}
+
 // ── The status the Settings pane and the diagnostics print ──────────────────
 export interface ConfigStatus {
+  /** The first key (the normal one). */
   key: ReturnType<typeof publicKeyInfo>;
+  /** The optional second key (the fallback). */
+  key2: ReturnType<typeof publicKeyInfo>;
+  /** Which key answers now, and why. */
+  activeKey: { slot: KeySlot | null; tail: string | null; source: KeySource; reason: string; stoppedByGoogle: boolean };
   model: { text: string; textSource: string; image: string; imageSource: string };
   names: NameInfo;
   quota: QuotaSnapshot;
@@ -1249,10 +1657,14 @@ export interface ConfigStatus {
 
 export function configStatus(): ConfigStatus {
   const key = resolveGeminiKey();
+  const key2 = resolveGeminiKey2();
+  const active = resolveActiveKey();
   const text = resolveTextModel();
   const image = resolveImageModel();
   return {
     key: publicKeyInfo(key),
+    key2: publicKeyInfo(key2),
+    activeKey: { slot: active.slot, tail: active.info.tail, source: active.info.source, reason: active.reason, stoppedByGoogle: active.stoppedByGoogle },
     model: { text: text.model, textSource: text.source, image: image.model, imageSource: image.source },
     names: resolveNames(),
     quota: quotaSnapshot(),

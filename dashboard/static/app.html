@@ -1443,15 +1443,33 @@
              when it holds the key, and both are git-ignored) — and live at once:
              the server re-reads the settings, so no restart. -->
         <div>
-          <div class="settings-section-title">The Brain — Gemini API key</div>
+          <div class="settings-section-title">The Brain — Gemini API keys</div>
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
             <span class="settings-desc">Paste your Gemini API key. It is saved to config/api_keys.json (the file the desktop app and every action read; ./.env is updated as well when it holds the key) and is used immediately — no restart. Below: where the key in use comes from, and the model in use.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="AIza… (your Gemini API key)"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey()">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey(1)">Save</button>
             </div>
             <span class="settings-desc" id="gemini-key-status">Checking…</span>
+
+            <!-- THE SECOND KEY: optional. Every call goes out on the first key;
+                 only when Google refuses the first key with a 429 (its quota) or
+                 rejects it does the second one take over, for the rest of the
+                 local day. Saved as gemini_api_key_2 in the same file. -->
+            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after local midnight. <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <input type="password" id="gemini-key2-input" autocomplete="off" spellcheck="false" placeholder="AIza… (second key, from another Google account/project)"
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey(2)">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearGeminiKey2()" title="Remove the second key">Remove</button>
+            </div>
+            <span class="settings-desc" id="gemini-key2-status">Checking…</span>
+
+            <!-- THE COUNT: this app counts and warns; it never blocks. Only a
+                 real 429 from Google stops calls, and only until local midnight. -->
+            <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
+            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until local midnight, and the message then says plainly that Google stopped us.</span>
           </div>
         </div>
 
@@ -1790,7 +1808,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-local-voice-2';
+    const JARVIS_BUILD = '2026-10-13-two-keys-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1849,7 +1867,7 @@
       const voice = info && info.voiceModel ? `${info.voiceModel}${info.voiceModelSource ? ` (from ${info.voiceModelSource})` : ''}` : 'not measured yet';
       const voiceNote = info && info.voiceModelNote ? ` · ${String(info.voiceModelNote).trim()}` : '';
       const key = info && info.present ? keySourceLine(info) : 'no key set';
-      const quota = info && info.quota ? `${info.quota.used}/${info.quota.limit} Gemini calls used today` : 'budget not measured';
+      const quota = info && info.quota ? quotaLine(info.quota) : 'count not measured';
       const owner = _userName ? `, for ${_userName}` : '';
       // The server's own marker against this page's. When they differ the
       // browser is holding a different build than the process answering it —
@@ -1866,9 +1884,27 @@
       el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : '';
     }
 
+    /** The day's count in one short line: total, per key, warning level, and who is answering. */
+    function quotaLine(q) {
+      if (!q) return 'count not measured';
+      if (typeof q.summary === 'string' && q.summary) return q.summary;
+      return `${q.used} Gemini calls today`;
+    }
+
+    /** Where a key came from, for either slot. */
+    function keySourceOf(k, envName, fieldName) {
+      if (!k) return 'nowhere yet';
+      if (k.source === 'config/api_keys.json') return `config/api_keys.json (${fieldName})`;
+      if (k.source === '.env') return `./.env (${envName})`;
+      if (k.source === 'environment') return `the environment (${envName}, set outside ./.env)`;
+      return 'nowhere yet';
+    }
+
     async function refreshGeminiKeyStatus() {
       const el = document.getElementById('gemini-key-status');
       if (!el) return;
+      const el2 = document.getElementById('gemini-key2-status');
+      const calls = document.getElementById('gemini-calls-status');
       el.textContent = 'Checking…';
       el.style.color = '';
       try {
@@ -1880,24 +1916,60 @@
           _userName = info.userName || '';
           document.title = `${_assistantName} — Autonomous Workspace & Spatial Interface`;
         }
+        const active = info.activeKey || {};
         if (info.present) {
-          el.textContent = `● key ending in …${info.tail} is active — source: ${keySourceLine(info)}; model in use: ${info.model} (from ${info.modelSource})`;
-          el.style.color = 'var(--emerald)';
+          const nowAnswering = active.slot === 1 ? ' — answering now' : active.slot === 2 ? ' — stopped by Google today, key 2 is answering' : '';
+          el.textContent = `● key 1 ending in …${info.tail}${nowAnswering} — source: ${keySourceLine(info)}; model in use: ${info.model} (from ${info.modelSource})`;
+          el.style.color = active.slot === 1 ? 'var(--emerald)' : '#ffb86b';
         } else {
           el.textContent = `○ no key set — checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key). Paste a key and press Save.`;
           el.style.color = '#ffb86b';
+        }
+        if (el2) {
+          const k2 = info.key2 || {};
+          if (k2.present) {
+            const state = active.slot === 2 ? ' — answering now (Google stopped key 1 today)' : (info.quota && info.quota.googleStopped && info.quota.googleStopped[2]) ? ' — stopped by Google today' : ' — standing by';
+            el2.textContent = `● second key ending in …${k2.tail}${state} — source: ${keySourceOf(k2, 'GEMINI_API_KEY_2', 'gemini_api_key_2')}`;
+            el2.style.color = active.slot === 2 ? 'var(--emerald)' : '';
+          } else {
+            el2.textContent = '○ no second key set (optional) — checked the environment (GEMINI_API_KEY_2, including ./.env) and config/api_keys.json (gemini_api_key_2).';
+            el2.style.color = '';
+          }
+        }
+        if (calls && info.quota) {
+          const q = info.quota;
+          const who = active.slot ? `Active key: ${active.slot}${active.tail ? ` (…${active.tail})` : ''} — ${active.reason || ''}` : 'Active key: none';
+          const stops = [1, 2].filter((s) => q.googleStopped && q.googleStopped[s]).map((s) => {
+            const st = q.googleStopped[s];
+            const when = new Date(st.at);
+            const hhmm = isNaN(when.getTime()) ? st.at : `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
+            return `key ${s} stopped by Google at ${hhmm} (${st.reason === 'quota' ? 'a real 429, its quota' : 'it rejected the key'})`;
+          });
+          const googleLine = q.stoppedByGoogle
+            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at local midnight.'
+            : stops.length ? stops.join('; ') : 'Google has not stopped any key today.';
+          const warnLine = q.warnAt > 0
+            ? (q.pastWarn ? `⚠ at or past your warning level of ${q.warnAt} (${q.warnSource}) — only a warning, nothing is blocked.` : `Warning level ${q.warnAt} (${q.warnSource}).`)
+            : 'No warning level set.';
+          const fileLine = q.unreadable ? ' ⚠ runtime/quota.json could not be read — counting in memory since the server started; nothing is blocked.' : '';
+          calls.textContent = `${who}. Calls today: ${q.used} (key 1: ${q.perKey ? q.perKey[1] : '?'}, key 2: ${q.perKey ? q.perKey[2] : '?'}). ${warnLine} ${googleLine}${fileLine}`;
+          calls.style.color = q.stoppedByGoogle ? '#ff6b6b' : (q.pastWarn || q.unreadable || stops.length) ? '#ffb86b' : '';
         }
         refreshBuildLine(info);
       } catch (err) {
         el.textContent = `Could not ask the server: ${err.message} — is it running on port 3000?`;
         el.style.color = '#ff6b6b';
+        if (el2) el2.textContent = '';
+        if (calls) calls.textContent = '';
         refreshBuildLine(null);
       }
     }
 
-    async function saveGeminiKey() {
-      const input = document.getElementById('gemini-key-input');
-      const el = document.getElementById('gemini-key-status');
+    async function saveGeminiKey(slot) {
+      slot = Number(slot) === 2 ? 2 : 1;
+      const input = document.getElementById(slot === 2 ? 'gemini-key2-input' : 'gemini-key-input');
+      const el = document.getElementById(slot === 2 ? 'gemini-key2-status' : 'gemini-key-status');
+      const label = slot === 2 ? 'Second key' : 'Gemini key';
       const key = ((input && input.value) || '').trim();
       if (key.length < 10) {
         el.textContent = 'That key is too short — a Gemini API key is at least 10 characters.';
@@ -1910,7 +1982,7 @@
         const res = await _authFetch('/api/settings/gemini-key', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key })
+          body: JSON.stringify({ key, slot })
         });
         const info = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -1926,10 +1998,12 @@
           // claim "the brain is live" for a key that is not being used.
           el.textContent = `⚠ ${info.warning}`;
           el.style.color = '#ffb86b';
-          toast('⚠ Key saved, but an older key in the environment is still the one in use — see Settings → The Brain');
+          toast(`⚠ ${label} saved, but an older key in the environment is still the one in use — see Settings → The Brain`);
           return;
         }
-        toast(`Gemini key saved to ${where} (ends in …${info.tail}) — the brain is live now`);
+        toast(slot === 2
+          ? `Second key saved to ${where} (ends in …${info.tail}) — it takes over if Google stops the first key`
+          : `Gemini key saved to ${where} (ends in …${info.tail}) — the brain is live now`);
       } catch (err) {
         el.textContent = `Save failed: ${err.message} — is the server running on port 3000?`;
         el.style.color = '#ff6b6b';
@@ -1937,6 +2011,29 @@
       }
       refreshGeminiKeyStatus();
     }
+
+    async function clearGeminiKey2() {
+      const el = document.getElementById('gemini-key2-status');
+      if (el) { el.textContent = 'Removing…'; el.style.color = ''; }
+      try {
+        const res = await _authFetch('/api/settings/gemini-key', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ slot: 2, clear: true })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        toast(info.stillPresent ? '⚠ Removed from the files, but a GEMINI_API_KEY_2 in the environment still holds a second key' : 'Second key removed');
+      } catch (err) {
+        if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshGeminiKeyStatus();
+    }
+    window.clearGeminiKey2 = clearGeminiKey2;
 
     // ── Toast Utility ─────────────────────────────────────────────────────────
     let _toastTimer;
@@ -2309,7 +2406,9 @@
           : 'nowhere';
         _voiceInfo = { model: info.voiceModel || 'not reported', source: info.voiceModelSource || 'unknown', note: String(info.voiceModelNote || '').trim() };
         if (info.present) {
-          lines.push(`Brain key: set, ending in …${info.tail} — from ${source}; model in use: ${info.model} (from ${info.modelSource})`);
+          const k2 = info.key2 && info.key2.present ? `; second key (fallback) ending in …${info.key2.tail} from ${keySourceOf(info.key2, 'GEMINI_API_KEY_2', 'gemini_api_key_2')}` : '; no second key set (optional)';
+          const active = info.activeKey && info.activeKey.slot ? `; answering on key ${info.activeKey.slot}` : '';
+          lines.push(`Brain key: set, ending in …${info.tail} — from ${source}${k2}${active}; model in use: ${info.model} (from ${info.modelSource})`);
         } else {
           lines.push('Brain key: NO KEY — my reasoning is offline. I checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key); open Settings (the gear button) and paste the key under "The Brain"');
         }
@@ -2327,7 +2426,7 @@
           // asked for — "gemini-flash-latest" reads the same whichever
           // generation Google points it at.
           const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
-          lines.push(`Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today`);
+          lines.push(`Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key ${info.keySlot || '?'} from ${info.keySource}; ${quotaLine(info.quota)}`);
         } else {
           lines.push(`Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
@@ -2444,7 +2543,7 @@
         const info = await res.json().catch(() => ({}));
         if (info.ok) {
           const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
-          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key from ${info.keySource}; ${info.quota.used}/${info.quota.limit} Gemini calls used today.`);
+          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key ${info.keySlot || '?'} from ${info.keySource}; ${quotaLine(info.quota)}.`);
         } else {
           appendChat('system', `Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
         }
