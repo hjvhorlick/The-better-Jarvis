@@ -162,6 +162,32 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   `correct preferences/tea to black` to supersede a value, or `forget preferences/tea`
   and approve the one-time confirmation code to remove it from active memory.
 - Diagnostics button — real measured telemetry, not canned text
+- **The open web, and it never costs quota.** JARVIS can search the internet
+  itself — `search the web for ...`, `look up ...`. Nothing there goes through
+  Gemini, so a `429` from Google does not stop it and the offline switch does not
+  either. When Gemini cannot answer, JARVIS answers from Wikipedia and
+  DuckDuckGo and says so. Every link goes through the server, so no page you ask
+  it to read can reach your network.
+- **Suppliers — where JARVIS gets things from.** Pictures, video, sound, books,
+  3D printable models, and addresses and places. Behind every keyed supplier
+  sits one that needs nothing at all, so **every key is optional**: a missing key
+  narrows the choice of supplier and never blocks a search.
+  Ask in plain words — `find me a picture of a lion`, `a video of ...`,
+  `a song about ...`, `a book about ...`, `a 3d model of ...`,
+  `where is 41 Maple Street`.
+  Keyed suppliers are Pexels, Pixabay, Jamendo, Geoapify, LocationIQ and
+  Thingiverse; paste a key into Settings → *The Brain* and it takes effect at
+  once. Without any key you still get Wikimedia Commons, Openverse, the Internet
+  Archive, Project Gutenberg, Nominatim, Photon and Open-Meteo. Limits and where
+  to get each key are in `.env.example`.
+- **Register a supplier of your own.** Any website with a JSON API — or one of
+  your own applications — can be added from Settings → *The Brain*: where to ask,
+  which header the key goes in, and where in the answer the title and the file
+  live. It needs **no restart and no edit to any code**, and it is tried before
+  the built-in suppliers because you just added it. Definitions are kept in
+  `config/suppliers.json` (gitignored — your keys stay yours), and its endpoint is
+  fetched through the same guard every built-in supplier uses, so it cannot be
+  pointed at your network.
 
 ## Engine room (not the app)
 
