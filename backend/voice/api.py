@@ -12,7 +12,8 @@
         enable : needs the owner's OK -> {"confirmation": {...}}; the wake listener starts
                  only after Approve in the confirmations panel.
 
-Errors: 409 wake word not ready · 429 budget used up · 503 no key or no audio device.
+Errors: 409 wake word not ready · 503 offline (no key, Google's 429, or the owner's
+switch) or no audio device. The app's own daily count never refuses a call — it warns.
 """
 from __future__ import annotations
 

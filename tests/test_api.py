@@ -47,15 +47,23 @@ def test_chat_rejects_unknown_workspace(isolated, monkeypatch):
     assert r.status_code == 400
 
 
-def test_chat_without_key_returns_503(isolated, monkeypatch):
+def test_chat_without_key_answers_locally_instead_of_failing(isolated, monkeypatch):
+    # No key is an offline MODE, not a dead end: the chat still answers.
     r = _client(isolated, monkeypatch, key=False).post("/api/chat", json={"text": "ping"})
-    assert r.status_code == 503
-    assert "GEMINI_API_KEY" in r.json()["detail"]
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "local" and "offline" in body["reply"]
+    assert "api_keys.json" in body["reply"]              # and it says where a key is read from
 
 
-def test_upstream_failure_returns_502(isolated, monkeypatch):
+def test_an_unreachable_provider_answers_locally_too(isolated, monkeypatch):
+    # Even a failure that is not a quota is answered from this computer: the
+    # chat never stops because of the provider.
     client = _client(isolated, monkeypatch, models=FakeModels(error=RuntimeError("boom")))
-    assert client.post("/api/chat", json={"text": "ping"}).status_code == 502
+    r = client.post("/api/chat", json={"text": "ping"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["source"] == "local" and "offline" in body["reply"]
 
 
 def test_empty_text_is_validation_error(isolated, monkeypatch):

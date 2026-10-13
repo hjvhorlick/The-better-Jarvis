@@ -611,10 +611,16 @@ test('Research routes are authenticated, disclose provider readiness, preserve e
     assert.equal(incompleteVoiceLike.status, 200);
     assert.match(incompleteVoiceLike.body.reply, /what would you like me to research/i);
     assert.match(incompleteVoiceLike.body.reply, /have not searched the web/i);
+    // "Search the web for X" is an ordinary search, and an ordinary search does
+    // not need a model or a quota: it goes straight to DuckDuckGo. It no longer
+    // reaches Internet Research, so it never asks for a key either. (This
+    // sandbox has no route to the internet, so what is asserted here is that the
+    // FREE path was taken — not a key complaint.)
     const explicitVoiceLike = await apiRequest(server, '/api/command', 'POST', { text: 'search the web for the current public documentation of product X' });
     assert.equal(explicitVoiceLike.status, 200);
-    assert.match(explicitVoiceLike.body.reply, /needs a Gemini API key/i);
-    assert.match(explicitVoiceLike.body.reply, /have not searched the web/i);
+    assert.doesNotMatch(explicitVoiceLike.body.reply, /needs a Gemini API key/i,
+      'a plain web search must never demand a key');
+    assert.match(explicitVoiceLike.body.reply, /open web|DuckDuckGo/i);
     const normalConversation = await apiRequest(server, '/api/command', 'POST', { text: 'How was your weekend?' });
     assert.equal(normalConversation.status, 200);
     assert.doesNotMatch(normalConversation.body.reply, /Internet Research needs a Gemini API key/);

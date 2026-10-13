@@ -50,9 +50,14 @@ def test_start_without_a_key_is_503(tmp_path):
     assert r.status_code == 503 and "API key" in r.json()["detail"]
 
 
-def test_start_with_no_budget_is_429(tmp_path):
-    r = _client(tmp_path, budget_limit=0).post("/api/voice/start")
-    assert r.status_code == 429
+def test_start_while_offline_is_503_and_points_at_the_local_voice(tmp_path):
+    # The app's own count never blocks; Google's 429 makes the server voice
+    # unavailable — and the LOCAL voice is the honest alternative to name.
+    client = _client(tmp_path)
+    client.rig.budget.mark_exhausted()
+    r = client.post("/api/voice/start")
+    assert r.status_code == 503
+    assert "offline" in r.json()["detail"] and "LOCAL voice" in r.json()["detail"]
 
 
 def test_start_with_no_audio_device_is_503_and_says_why(tmp_path):

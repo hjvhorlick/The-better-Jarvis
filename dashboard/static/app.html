@@ -198,6 +198,34 @@
     }
     @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
 
+    /* ── OFFLINE BANNER: Google's quota is a mode, not a dead end ────────────
+       Shown whenever the app is offline (quota spent, no key, or the owner's
+       own switch). It says what happened, that the chat keeps working, and
+       holds the switch — so the state is never a mystery and never a block. */
+    .status-pill.offline {
+      background: rgba(255, 184, 107, 0.12); border-color: rgba(255, 184, 107, 0.4); color: #ffb86b;
+    }
+    .status-pill.offline .status-dot { background: #ffb86b; box-shadow: 0 0 8px #ffb86b; }
+    #offline-banner {
+      position: absolute; top: var(--header-h); left: 50%; transform: translateX(-50%);
+      z-index: 40; display: none; align-items: center; gap: 14px;
+      max-width: min(880px, calc(100% - 48px)); margin-top: 10px; padding: 10px 16px;
+      border-radius: 12px; border: 1px solid rgba(255, 184, 107, 0.35);
+      background: rgba(24, 18, 8, 0.82); backdrop-filter: blur(14px);
+      color: var(--text-muted); font-size: 12px; line-height: 1.5;
+      box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
+    }
+    #offline-banner.shown { display: flex; }
+    #offline-banner .offline-icon { font-size: 18px; }
+    #offline-banner b { color: #ffb86b; }
+    #offline-banner .offline-actions { display: flex; gap: 8px; flex: none; }
+    #offline-banner button {
+      padding: 5px 12px; border-radius: 8px; cursor: pointer; font-size: 11px; font-weight: 700;
+      letter-spacing: 0.6px; text-transform: uppercase;
+      background: rgba(255, 184, 107, 0.14); border: 1px solid rgba(255, 184, 107, 0.4); color: #ffb86b;
+    }
+    #offline-banner button:hover { background: rgba(255, 184, 107, 0.24); }
+
     /* ── WORKSPACE DESKTOP STAGE ── */
     #workspace-stage {
       position: absolute; top: var(--header-h); left: 0; right: 0; bottom: 0;
@@ -1275,6 +1303,21 @@
     </div>
   </header>
 
+  <!-- OFFLINE BANNER: the app is offline (Google's quota spent, no key, or the
+       owner's own switch). It is a WARNING, not a block — the chat and every
+       local feature keep working, and this says so instead of leaving the
+       owner to guess why answers are coming from this computer. -->
+  <div id="offline-banner" role="status">
+    <span class="offline-icon">📴</span>
+    <div>
+      <div><b>OFFLINE — local only.</b> <span id="offline-banner-why"></span></div>
+      <div id="offline-banner-detail"></div>
+    </div>
+    <div class="offline-actions">
+      <button id="offline-banner-toggle" onclick="toggleOfflineMode()">Come back online</button>
+    </div>
+  </div>
+
   <!-- WORKSPACE DESKTOP STAGE -->
   <div id="workspace-stage">
 
@@ -1466,10 +1509,30 @@
             </div>
             <span class="settings-desc" id="gemini-key2-status">Checking…</span>
 
+            <!-- THE SUPPLIER REGISTRY. Every row here is drawn from the
+                 registry on the server (GET /api/web/sources), so adding a
+                 supplier to the app adds a row here with no change to this
+                 page. None of it is a gate: a supplier with no key is simply
+                 tried later, and the key-free ones always answer. -->
+            <span class="settings-desc" style="margin-top: 14px;"><b>Suppliers — what JARVIS can go and fetch</b> (optional keys, nothing to do with Gemini). Each supplier hands over a different kind of file, and together they cover pictures, video, sound and books. Paste a key and that supplier moves to the front of the queue for the kinds it covers. Leave them all empty and JARVIS still fetches every kind from the suppliers that need nothing at all.</span>
+            <div id="supplier-registry"><span class="settings-desc">Reading the supplier list…</span></div>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Why the keys are optional:</b> Pexels and Pixabay have no audio endpoint in their public APIs — that is in both sets of documentation — so music comes from Jamendo, or from Wikimedia Commons, Openverse and the Internet Archive when there is no client ID. Books come from Project Gutenberg, which needs no key because the whole catalogue is public domain. A missing key narrows the choice of supplier; it never stops a search.</span>
+            <span class="settings-desc" id="image-keys-status">Checking…</span>
+
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
                  real 429 from Google stops calls, and only until local midnight. -->
             <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
             <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until local midnight, and the message then says plainly that Google stopped us.</span>
+
+            <!-- OFFLINE MODE: when Google's quota is spent the app does not stop,
+                 it goes offline and answers from this computer. The switch here
+                 lets the owner choose that deliberately (or come back early). -->
+            <span class="settings-desc" id="offline-status" style="margin-top: 6px;">Checking the connection…</span>
+            <div style="display: flex; gap: 8px; width: 100%;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(true)">📴 Go offline (local only)</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(null)">🔄 Automatic</button>
+            </div>
+            <span class="settings-desc">Offline is a <b>mode, not an error</b>: Google's 429 is only a warning, and the chat never stops. While offline everything on this computer still works (chat, the knowledge base, memory, notes and reminders, the drafting desk, time and arithmetic, diagnostics, the rooms, the files, My Hands, the local voice) and <b>nothing is fetched from the internet</b>. “Automatic” lets Google's own state decide: online while a key is accepted, offline from the moment every key is refused until local midnight. <code>SUPPER_OFFLINE=1</code> does the same from the environment.</span>
           </div>
         </div>
 
@@ -1830,7 +1893,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-browser-voice-1';
+    const JARVIS_BUILD = '2026-10-13-open-web-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1902,8 +1965,13 @@
           : `page ${JARVIS_BUILD} — BUT THE SERVER IS ${info.build}: this page is stale, press Ctrl/Cmd+Shift+R (or restart the server if it is the older one)`;
       }
       const root = info && info.configRoot ? ` · settings read from ${info.configRoot}` : '';
-      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · voice model: ${voice} · key from: ${key} · ${quota}${root}${voiceNote}`;
-      el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : '';
+      // The connectivity state belongs on this line too: an owner reading only
+      // the build line must still be able to see that the app is offline.
+      const offline = info && info.offline
+        ? (info.offline.offline ? ` · OFFLINE — local only (${info.offline.why})` : ' · online')
+        : '';
+      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · voice model: ${voice} · key from: ${key} · ${quota}${offline}${root}${voiceNote}`;
+      el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : (info && info.offline && info.offline.offline) ? '#ffb86b' : '';
     }
 
     /** The day's count in one short line: total, per key, warning level, and who is answering. */
@@ -1921,6 +1989,82 @@
       if (k.source === 'environment') return `the environment (${envName}, set outside ./.env)`;
       return 'nowhere yet';
     }
+
+    /* ── OFFLINE MODE: the banner, the switch, and the truth about it ────────
+       Google's quota running out is not a broken app, it is a mode: the chat
+       keeps working from this computer and nothing is fetched from the
+       internet. The banner says which it is, and holds the switch back. */
+    let _offlineState = null;
+
+    async function refreshOfflineBanner() {
+      const banner = document.getElementById('offline-banner');
+      if (!banner) return;
+      let state = _offlineState;
+      try {
+        const res = await _authFetch('/api/offline');
+        if (res.ok) state = await res.json();
+      } catch (err) { /* the server is unreachable: the socket pill says so */ }
+      if (!state) { banner.classList.remove('shown'); return; }
+      _offlineState = state;
+      const pill = document.getElementById('status-pill');
+      const pillTxt = document.getElementById('status-txt');
+      const socketUp = typeof ws !== 'undefined' && ws && ws.readyState === 1;
+      if (state.offline) {
+        banner.classList.add('shown');
+        document.getElementById('offline-banner-why').textContent = `${state.why}.`;
+        document.getElementById('offline-banner-detail').textContent =
+          `The chat keeps working from this computer — ${(state.works || []).slice(0, 4).join(', ')}. ` +
+          `Not available while offline: ${(state.refused || []).slice(0, 3).join(', ')}. ` +
+          (state.reason === 'google-stopped' ? 'Calls resume at local midnight.' : '');
+        const toggle = document.getElementById('offline-banner-toggle');
+        // Only the owner's own switch can be switched back from here: when Google
+        // is what stopped us, the honest button opens Settings to add a key.
+        if (toggle) {
+          toggle.textContent = state.forced ? 'Come back online' : 'Settings → The Brain';
+          toggle.title = state.forced
+            ? "Let Google's own state decide again"
+            : 'Google stopped the keys; add one from another account/project to carry on now';
+        }
+        if (pill && socketUp) { pill.className = 'status-pill offline'; pillTxt.textContent = 'Local only'; }
+      } else {
+        banner.classList.remove('shown');
+        if (pill && socketUp) { pill.className = 'status-pill online'; pillTxt.textContent = 'Active'; }
+      }
+      return state;
+    }
+    window.refreshOfflineBanner = refreshOfflineBanner;
+
+    async function toggleOfflineMode() {
+      const state = _offlineState || {};
+      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); return; }
+      try {
+        const res = await _authFetch('/api/offline', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: null }),
+        });
+        const body = await res.json();
+        _offlineState = body;
+        toast(body.offline ? 'Still offline — see the banner' : 'Back online');
+        refreshOfflineBanner();
+      } catch (err) { toast(`Could not change the offline switch: ${err.message}`); }
+    }
+    window.toggleOfflineMode = toggleOfflineMode;
+
+    /** The Settings switch: true = stay offline, null = let Google's state decide. */
+    async function setOfflineSwitch(on) {
+      try {
+        const res = await _authFetch('/api/offline', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }),
+        });
+        const body = await res.json();
+        _offlineState = body;
+        toast(body.offline ? `Offline — ${body.why}` : 'Back to automatic — online');
+        refreshOfflineBanner();
+        refreshGeminiKeyStatus();
+      } catch (err) { toast(`Could not change the offline switch: ${err.message}`); }
+    }
+    window.setOfflineSwitch = setOfflineSwitch;
+    // NOTE: the first refresh is started down by initWebSocket(), because this
+    // reads the socket's state and that variable is declared further down.
 
     async function refreshGeminiKeyStatus() {
       const el = document.getElementById('gemini-key-status');
@@ -1976,6 +2120,22 @@
           const fileLine = q.unreadable ? ' ⚠ runtime/quota.json could not be read — counting in memory since the server started; nothing is blocked.' : '';
           calls.textContent = `${who}. Calls today: ${q.used} (key 1: ${q.perKey ? q.perKey[1] : '?'}, key 2: ${q.perKey ? q.perKey[2] : '?'}). ${warnLine} ${googleLine}${fileLine}`;
           calls.style.color = q.stoppedByGoogle ? '#ff6b6b' : (q.pastWarn || q.unreadable || stops.length) ? '#ffb86b' : '';
+        }
+        // The connectivity line: offline is a mode the owner can see and change.
+        const offlineEl = document.getElementById('offline-status');
+        if (offlineEl) {
+          const o = info.offline;
+          if (!o) { offlineEl.textContent = 'Connectivity not reported by this server build.'; offlineEl.style.color = ''; }
+          else if (o.offline) {
+            offlineEl.textContent = `● OFFLINE — local only (${o.why}). The chat keeps working and nothing is fetched from the internet. ` +
+              `Still working: ${(o.works || []).slice(0, 5).join('; ')}. Refused while offline: ${(o.refused || []).slice(0, 3).join('; ')}.` +
+              (o.forced ? ' This is YOUR switch — press “Automatic” to hand it back to Google.' : '');
+            offlineEl.style.color = '#ffb86b';
+          } else {
+            offlineEl.textContent = `● Online — ${o.override === false ? 'held online by your own switch (Google’s 429 will be ignored until you press “Automatic”)' : 'automatic'}. Local answers are tried first, so most work never spends a call.`;
+            offlineEl.style.color = 'var(--emerald)';
+          }
+          _offlineState = o;
         }
         refreshBuildLine(info);
       } catch (err) {
@@ -2057,6 +2217,159 @@
     }
     window.clearGeminiKey2 = clearGeminiKey2;
 
+    // ── Pictures & video: the two optional FREE keys ─────────────────────────
+    // These have nothing to do with Gemini and spend no quota. Neither is
+    // required: with neither set, pictures still come from Wikimedia Commons
+    // and Openverse, so saving one only ever improves a search.
+    const IMAGE_KEY_LABELS = { pexels: 'Pexels', pixabay: 'Pixabay', jamendo: 'Jamendo' };
+
+    async function refreshImageKeyStatus() {
+      const el = document.getElementById('image-keys-status');
+      try {
+        const res = await _authFetch('/api/settings/image-keys');
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(info.keys)) {
+          if (el) { el.textContent = `Could not read the supplier keys: ${info.error || `HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        if (el) {
+          el.style.color = '';
+          el.textContent = info.keys.map((k) =>
+            `${k.label}: ${k.present ? `set (…${k.tail})` : 'not set — the key-free suppliers still answer'}`).join('  ·  ');
+        }
+      } catch (err) {
+        if (el) { el.textContent = `Could not read the picture keys: ${err.message}`; el.style.color = '#ff6b6b'; }
+      }
+    }
+    window.refreshImageKeyStatus = refreshImageKeyStatus;
+
+    // ── the supplier registry, drawn from the server ─────────────────────────
+    // The rows come from GET /api/web/sources, which reads the same registry the
+    // search engine uses. So adding a supplier on the server adds its row here,
+    // and this page never has to be edited again to take a new key.
+    const KIND_WORDS = { image: 'pictures', video: 'video', audio: 'sound', book: 'books' };
+
+    function supplierRow(source) {
+      const covers = source.kinds.map((k) => KIND_WORDS[k] || k).join(', ');
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top: 8px; padding: 8px 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(0,0,0,0.22);';
+      const head = document.createElement('div');
+      head.style.cssText = 'display: flex; gap: 8px; align-items: center; flex-wrap: wrap;';
+      const name = document.createElement('b');
+      name.textContent = source.label;
+      const state = document.createElement('span');
+      state.className = 'settings-desc';
+      state.style.cssText = 'margin-left: auto;';
+      head.append(name, state);
+      const blurb = document.createElement('span');
+      blurb.className = 'settings-desc';
+      blurb.style.cssText = 'display: block; margin-top: 2px;';
+      blurb.textContent = `Supplies ${covers}. ${source.blurb}`;
+      wrap.append(head, blurb);
+      if (source.needsKey) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;';
+        const input = document.createElement('input');
+        input.type = 'password';
+        input.id = `${source.id}-key-input`;
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.placeholder = source.signup ? `free key from ${String(source.signup).replace(/^https?:\\/\\//, '')}` : 'paste the key';
+        input.style.cssText = 'flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;';
+        const save = document.createElement('button');
+        save.className = 'preset-btn';
+        save.style.cssText = 'padding: 6px 14px; margin: 0;';
+        save.textContent = 'Save';
+        save.onclick = () => saveImageKey(source.id);
+        const remove = document.createElement('button');
+        remove.className = 'preset-btn';
+        remove.style.cssText = 'padding: 6px 14px; margin: 0;';
+        remove.textContent = 'Remove';
+        remove.title = `Remove the ${source.label} key`;
+        remove.onclick = () => clearImageKey(source.id);
+        row.append(input, save, remove);
+        wrap.append(row);
+      }
+      return { wrap, state };
+    }
+
+    async function refreshSupplierRegistry() {
+      const box = document.getElementById('supplier-registry');
+      if (!box) return;
+      try {
+        const res = await _authFetch('/api/web/sources');
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(info.sources)) {
+          box.textContent = `Could not read the supplier list: ${info.error || `HTTP ${res.status}`}`;
+          return;
+        }
+        box.textContent = '';
+        for (const source of info.sources) {
+          const { wrap, state } = supplierRow(source);
+          state.textContent = source.needsKey
+            ? (source.keyPresent ? 'key loaded' : 'no key — the suppliers behind it answer')
+            : 'no key needed';
+          state.style.color = source.needsKey && !source.keyPresent ? '' : 'var(--jg-gold-pale)';
+          box.append(wrap);
+        }
+      } catch (err) {
+        box.textContent = `Could not read the supplier list: ${err.message}`;
+      }
+    }
+    window.refreshSupplierRegistry = refreshSupplierRegistry;
+
+    async function saveImageKey(service) {
+      const input = document.getElementById(`${service}-key-input`);
+      const el = document.getElementById('image-keys-status');
+      const key = (input?.value || '').trim();
+      if (!key) { if (el) { el.textContent = `Paste the ${IMAGE_KEY_LABELS[service] || service} key first.`; el.style.color = '#ff6b6b'; } return; }
+      if (el) { el.textContent = 'Saving…'; el.style.color = ''; }
+      try {
+        const res = await _authFetch('/api/settings/image-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service, key })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (el) { el.textContent = `Save failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        if (input) input.value = '';
+        toast(`${IMAGE_KEY_LABELS[service] || service} key saved — it is used at once, no restart`);
+      } catch (err) {
+        if (el) { el.textContent = `Save failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshImageKeyStatus();
+      refreshSupplierRegistry();
+    }
+    window.saveImageKey = saveImageKey;
+
+    async function clearImageKey(service) {
+      const el = document.getElementById('image-keys-status');
+      if (el) { el.textContent = 'Removing…'; el.style.color = ''; }
+      try {
+        const res = await _authFetch('/api/settings/image-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service, clear: true })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        toast(`${IMAGE_KEY_LABELS[service] || service} key removed — the key-free suppliers carry on as before`);
+      } catch (err) {
+        if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshImageKeyStatus();
+      refreshSupplierRegistry();
+    }
+    window.clearImageKey = clearImageKey;
+
     // ── Toast Utility ─────────────────────────────────────────────────────────
     let _toastTimer;
     function toast(msg) {
@@ -2091,7 +2404,10 @@
       };
       ws.onclose = () => {
         statusPill.className = 'status-pill';
-        statusTxt.textContent = 'Offline';
+        // "Offline" here would collide with the app's own OFFLINE mode (no
+        // internet / quota spent), which the banner reports: this pill is only
+        // about the page's socket to the server.
+        statusTxt.textContent = 'Disconnected';
         setTimeout(initWebSocket, 3000);
       };
       ws.onerror = () => {
@@ -2106,6 +2422,12 @@
       };
     }
     initWebSocket();
+
+    // The offline banner is filled in as soon as the page opens, and kept
+    // current: the server pushes an 'offline' frame on every change, and this
+    // timer catches a change made elsewhere (another tab, a restart, a 429).
+    refreshOfflineBanner();
+    setInterval(refreshOfflineBanner, 30000);
 
     /* Every frame the server pushes is handled here — and only here, so the
        headless tests can feed frames in without a socket (window.__jarvisWs). */
@@ -2155,6 +2477,11 @@
           }
           if (m.type === 'status') {
             reactorTag.textContent = m.state === 'active' ? `${_assistantName} ACTIVE` : `${_assistantName} SLEEPING`;
+          }
+          if (m.type === 'offline') {
+            // The server crossed into or out of offline mode: refresh the banner
+            // at once instead of waiting for the next settings poll.
+            refreshOfflineBanner();
           }
           if (m.type === 'brain_topic') {
             window.dispatchEvent(new CustomEvent('jarvis:brain-topic', { detail: m }));
@@ -2951,7 +3278,7 @@
         FoleyAudio.grab();
         // Settings must show the truth about the brain key and the build every
         // time it opens.
-        if (winId === 'win-settings') refreshGeminiKeyStatus();
+        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); }
       } else {
         win.style.display = 'none';
         FoleyAudio.place();

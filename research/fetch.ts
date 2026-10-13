@@ -50,8 +50,10 @@ export interface FetchOptions {
   timeoutMs?: number;
   maxBytes?: number;
   maxRedirects?: number;
+  /** Extra request headers — how a keyed API (Pexels, Pixabay) is authorised. */
+  headers?: Record<string, string>;
   resolve?: (hostname: string) => Promise<PinnedAddress[]>;
-  request?: (url: URL, address: PinnedAddress, limits: { timeoutMs: number; maxBytes: number }) => Promise<PageResponse>;
+  request?: (url: URL, address: PinnedAddress, limits: { timeoutMs: number; maxBytes: number; headers?: Record<string, string> }) => Promise<PageResponse>;
 }
 
 function inCidr4(address: string, network: string, prefix: number): boolean {
@@ -175,7 +177,7 @@ function headerValue(headers: PageResponse['headers'], name: string): string {
   return Array.isArray(value) ? value[0] || '' : String(value || '');
 }
 
-async function requestPinned(url: URL, address: PinnedAddress, limits: { timeoutMs: number; maxBytes: number }): Promise<PageResponse> {
+async function requestPinned(url: URL, address: PinnedAddress, limits: { timeoutMs: number; maxBytes: number; headers?: Record<string, string> }): Promise<PageResponse> {
   const transport = url.protocol === 'https:' ? https : http;
   const lookup = ((_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
     callback(null, address.address, address.family);
@@ -201,6 +203,7 @@ async function requestPinned(url: URL, address: PinnedAddress, limits: { timeout
         Accept: 'text/html, application/xhtml+xml, text/plain;q=0.9',
         'Accept-Encoding': 'identity',
         'User-Agent': 'Supper-AI-Research/1.0',
+        ...(limits.headers || {}),
       },
     }, (response) => {
       const chunks: Buffer[] = [];
@@ -329,7 +332,16 @@ function decodeBody(body: Buffer, contentType: string): string {
 }
 
 /** Fetch one public page with pinned public DNS, bounded redirects, response size, and timeout. */
-export async function fetchPublicPage(rawUrl: string, options: FetchOptions = {}): Promise<ExtractedPage> {
+/**
+ * The one safe outbound GET: public-address pinning, redirect, size and time
+ * limits, and an allow-list of content types. Returns the raw decoded body so
+ * callers can read JSON APIs as well as HTML — the search engine uses this for
+ * Wikipedia, Wikimedia Commons and Openverse, none of which need a key.
+ */
+export async function fetchPublicBody(
+  rawUrl: string,
+  options: FetchOptions & { allowedContentTypes?: string[] } = {},
+): Promise<{ finalUrl: string; body: string; contentType: string; headers: PageResponse['headers'] }> {
   const timeoutCandidate = options.timeoutMs ?? PAGE_TIMEOUT_MS;
   const bytesCandidate = options.maxBytes ?? MAX_PAGE_BYTES;
   const redirectsCandidate = options.maxRedirects ?? MAX_REDIRECTS;
@@ -347,7 +359,7 @@ export async function fetchPublicPage(rawUrl: string, options: FetchOptions = {}
     url = destination.url;
     const remainingForRequest = deadline - Date.now();
     const response = await withTimeout(
-      Promise.resolve().then(() => request(url, destination.addresses[0], { timeoutMs: remainingForRequest, maxBytes })),
+      Promise.resolve().then(() => request(url, destination.addresses[0], { timeoutMs: remainingForRequest, maxBytes, headers: options.headers })),
       remainingForRequest,
     );
     const declaredBytes = Number(headerValue(response.headers, 'content-length'));
@@ -368,20 +380,31 @@ export async function fetchPublicPage(rawUrl: string, options: FetchOptions = {}
       throw new ResearchFetchError('bad-status', `The source page returned HTTP ${response.status}.`);
     }
     const contentType = headerValue(response.headers, 'content-type').split(';')[0].trim().toLowerCase();
-    if (!['text/html', 'application/xhtml+xml', 'text/plain'].includes(contentType)) {
+    const allowed = options.allowedContentTypes || ['text/html', 'application/xhtml+xml', 'text/plain'];
+    if (!allowed.includes(contentType)) {
       throw new ResearchFetchError('bad-content-type', 'The source is not an HTML or plain-text page; it was not opened.');
     }
     const encoding = headerValue(response.headers, 'content-encoding').trim().toLowerCase();
     if (encoding && encoding !== 'identity') {
       throw new ResearchFetchError('bad-content-type', 'Compressed source responses are not accepted by this fetcher.');
     }
-    let page: Omit<ExtractedPage, 'finalUrl'>;
-    try { page = extractReadablePage(decodeBody(response.body, headerValue(response.headers, 'content-type')), url.toString()); }
-    catch (err) {
-      if (err instanceof ResearchFetchError) throw err;
-      throw new ResearchFetchError('malformed', 'The source page could not be safely parsed.');
-    }
-    return { ...page, finalUrl: url.toString() };
+    return {
+      finalUrl: url.toString(),
+      body: decodeBody(response.body, headerValue(response.headers, 'content-type')),
+      contentType,
+      headers: response.headers,
+    };
   }
   throw new ResearchFetchError('bad-status', 'The source could not be opened after redirects.');
+}
+
+export async function fetchPublicPage(rawUrl: string, options: FetchOptions = {}): Promise<ExtractedPage> {
+  const fetched = await fetchPublicBody(rawUrl, options);
+  let page: Omit<ExtractedPage, 'finalUrl'>;
+  try { page = extractReadablePage(fetched.body, fetched.finalUrl); }
+  catch (err) {
+    if (err instanceof ResearchFetchError) throw err;
+    throw new ResearchFetchError('malformed', 'The source page could not be safely parsed.');
+  }
+  return { ...page, finalUrl: fetched.finalUrl };
 }
