@@ -2346,9 +2346,31 @@ async function localVoiceBytes(route: string, pcm: Buffer, sampleRate: number, t
 
 let localVoiceProcess: ChildProcess | null = null;
 
+/**
+ * Which Python runs the voice service. The owner should never have to think
+ * about this: SUPPER_PYTHON wins when set, otherwise the usual virtual
+ * environments are checked (~/.venv-voice, then the project's .venv), and
+ * plain python3/python is the last resort. The choice is printed at startup
+ * so a wrong pick is visible instead of silent.
+ */
+function resolveVoicePython(): string {
+  const fromEnv = (process.env.SUPPER_PYTHON || '').trim();
+  if (fromEnv) return fromEnv;
+  const win = process.platform === 'win32';
+  const candidates = win
+    ? [path.join(os.homedir(), '.venv-voice', 'Scripts', 'python.exe'),
+       path.join(process.cwd(), '.venv', 'Scripts', 'python.exe')]
+    : [path.join(os.homedir(), '.venv-voice', 'bin', 'python'),
+       path.join(process.cwd(), '.venv', 'bin', 'python')];
+  for (const candidate of candidates) {
+    try { if (fs.existsSync(candidate)) return candidate; } catch { /* keep looking */ }
+  }
+  return win ? 'python' : 'python3';
+}
+
 /** Starts local_voice/service.py. Its messages are shown in the server console, marked [local-voice]. */
 function startLocalVoice(): void {
-  const python = (process.env.SUPPER_PYTHON || '').trim() || (process.platform === 'win32' ? 'python' : 'python3');
+  const python = resolveVoicePython();
   const script = path.join(process.cwd(), 'local_voice', 'service.py');
   const relay = (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n')) {
