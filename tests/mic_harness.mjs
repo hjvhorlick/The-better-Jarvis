@@ -60,8 +60,13 @@ function makeDom({ withSR = true, micFails = null, transcribeText = 'open the fi
       window.localStorage.setItem('jarvis-wake', micAlwaysOn ? 'on' : 'off');
       if (mutedByDefault) window.localStorage.setItem('jarvis-mute', 'on');
       else window.localStorage.removeItem('jarvis-mute');
-      if (voiceEngine) window.localStorage.setItem('jarvis-voice-engine', voiceEngine);
-      else window.localStorage.removeItem('jarvis-voice-engine');
+      if (voiceEngine) {
+        window.localStorage.setItem('jarvis-voice-engine', voiceEngine);
+        window.localStorage.setItem('jarvis-voice-engine-default-v2', '1');
+      } else {
+        window.localStorage.removeItem('jarvis-voice-engine');
+        window.localStorage.removeItem('jarvis-voice-engine-default-v2');
+      }
 
       // ── clock: real time, plus 100 ms of "audio time" for each rAF tick, so
       // both the page's own timers and the meter's ticks behave as they would in
@@ -224,9 +229,8 @@ function makeDom({ withSR = true, micFails = null, transcribeText = 'open the fi
 }
 
 const settle = (ms = 40) => new Promise((r) => setTimeout(r, ms));
-/* The engine under test is the SERVER voice by default (the owner's rule), so
-   "was it said?" is the browser's utterances PLUS the sentences asked of the
-   server. Each test still names which throat it expects. */
+/* The local browser voice is the default; server-voice tests explicitly opt in.
+   "Was it said?" counts either source so the dialogue behaviour is tested equally. */
 const spoken = (state) => [...state.speakCalls, ...state.voiceRequests];
 const saidByServer = (state, re) => state.voiceRequests.some((t) => re.test(t));
 const click = (doc, window) => doc.dispatchEvent(new window.Event('pointerdown', { bubbles: true }));
@@ -436,7 +440,7 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   ok('mute: the ear closes', status().muted === true && status().alwaysListening === false, JSON.stringify({ muted: status().muted, ear: status().alwaysListening, state: status().listenState }));
   ok('mute: the bar says so', /Muted/.test(doc.getElementById('listen-text').textContent), doc.getElementById('listen-text').textContent);
   ok('mute: the choice is remembered', window.localStorage.getItem('jarvis-mute') === 'on');
-  ok('mute: he says that he is muted', saidByServer(state, /Muted/i), JSON.stringify(state.voiceRequests.slice(-2)));
+  ok('mute: he says that he is muted', spoken(state).some((t) => /Muted/i.test(t)), JSON.stringify(spoken(state).slice(-2)));
   // Being muted must also survive a page reload: a fresh page reads the same flag.
   const reloaded = makeDom({ withSR: true, micAlwaysOn: true, mutedByDefault: true });
   await settle(1200);
@@ -474,7 +478,7 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   // "Hey Jarvis" on its own is answered and then waits for the command.
   await speakTo('hey jarvis');
   await settle(1000);
-  ok('wake mode: the bare wake word is answered with a question', saidByServer(state, /Yes, sir/i), JSON.stringify(state.voiceRequests.slice(-2)));
+  ok('wake mode: the bare wake word is answered with a question', spoken(state).some((t) => /Yes, sir/i.test(t)), JSON.stringify(spoken(state).slice(-2)));
   await speakTo('what is the weather');
   await settle(900);
   ok('wake mode: the answer to "Yes, sir?" is the command',
@@ -490,9 +494,9 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   ok('voice: the spoken text is the reply, not a status line', typeof firstVoice === 'string' && firstVoice.length > 2, firstVoice);
   ok('voice: a cancel never precedes the first speak', state.cancels === 0, `cancels=${state.cancels}`);
   const speech = window.jarvisSpeechStatus();
-  ok('voice: the server voice is the default', speech.engine === 'server' && speech.usingServer === true, JSON.stringify({ engine: speech.engine, using: speech.usingServer }));
+  ok('voice: the local browser voice is the default', speech.engine === 'browser' && speech.usingServer === false, JSON.stringify({ engine: speech.engine, using: speech.usingServer }));
   ok('voice: speech is on by default', speech.on === true, JSON.stringify({ on: speech.on, supported: speech.supported }));
-  ok('voice: the browser voice was NOT used', state.speakCalls.length === 0, JSON.stringify(state.speakCalls));
+  ok('voice: the local voice was used without Gemini TTS', state.speakCalls.length > 0 && state.voiceRequests.length === 0, JSON.stringify({ local: state.speakCalls, server: state.voiceRequests }));
 
   // JARVIS must not obey his own voice: replay part of what he just said.
   // (With the server voice the words live in the server requests, not the browser.)
@@ -569,11 +573,10 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
 /* ── 8. THE SERVER VOICE: audible even where the browser has no voice ───── */
 {
   // A machine with no speech synthesis at all (a bare Linux desktop, a webview).
-  const { window, doc, state } = makeDom({ withSR: true, micAlwaysOn: true, withSpeech: false });
+  const { window, doc, state } = makeDom({ withSR: true, micAlwaysOn: true, withSpeech: false, voiceEngine: 'server' });
   await settle(50);
-  // This machine has no browser voice at all: the automatic engine must choose
-  // the server's voice, without the owner having to know anything about it.
-  ok('server voice: with no browser voice, the engine picks the server', window.jarvisSpeechStatus().usingServer === true,
+  // This machine has no browser voice at all: server voice is an explicit opt-in.
+  ok('server voice: the explicitly selected server engine is used', window.jarvisSpeechStatus().usingServer === true,
      JSON.stringify(window.jarvisSpeechStatus()));
 
   window.__jarvisWs({ type: 'log', speaker: 'jarvis', text: 'The time is ten past nine, sir.', timestamp: Date.now() });
@@ -627,18 +630,20 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
      JSON.stringify({ spoken: proof.state.speakCalls, asked: proof.state.voiceRequests }));
 }
 
-/* ── 9. THE VOICE ENGINE IS THE SERVER'S, AND REPEATS ARE FREE ───────────── */
+/* ── 9. LOCAL VOICE IS DEFAULT; OPTIONAL SERVER VOICE REPEATS ARE FREE ──── */
 {
-  // Default: the server speaks, the browser's voice is never touched.
+  // Default: the local voice speaks; no Gemini TTS request is made.
   const { window, doc, state } = makeDom({ withSR: true, micAlwaysOn: true });
   await settle(80);
-  ok('engine: the default is the server voice', window.jarvisSpeechStatus().usingServer === true && state.speakCalls.length === 0,
+  ok('engine: the default is the local browser voice', window.jarvisSpeechStatus().usingServer === false,
      JSON.stringify({ using: window.jarvisSpeechStatus().usingServer, browserUtterances: state.speakCalls.length }));
-  ok('engine: the settings offer both voices, server first',
+  ok('engine: the settings offer both voices, local first',
      /server/.test(doc.getElementById('sel-voice-engine').innerHTML) && /browser/.test(doc.getElementById('sel-voice-engine').innerHTML),
      doc.getElementById('sel-voice-engine').options ? [...doc.getElementById('sel-voice-engine').options].map((o) => o.value).join(',') : '');
 
-  // The same sentence twice is asked of the server ONCE (the page remembers the audio).
+  // Server TTS is opt-in. The same sentence twice is requested only once (cached audio).
+  window.setVoiceEngine('server');
+  await settle(150);
   window.speakReply('Repeated line, sir.');
   await settle(200);
   window.speakReply('Repeated line, sir.');
@@ -662,7 +667,7 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
      window.localStorage.getItem('jarvis-voice-engine') === 'server' && window.jarvisSpeechStatus().usingServer === true);
 
   // A failure of the server voice is reported, never hidden behind the browser voice.
-  const broke = makeDom({ withSR: true, micAlwaysOn: true, serverVoice: false });
+  const broke = makeDom({ withSR: true, micAlwaysOn: true, serverVoice: false, voiceEngine: 'server' });
   await settle(80);
   broke.window.speakReply('This one will fail, sir.');
   await settle(300);
