@@ -2217,11 +2217,16 @@
     }
     window.clearGeminiKey2 = clearGeminiKey2;
 
-    // ── Pictures & video: the two optional FREE keys ─────────────────────────
-    // These have nothing to do with Gemini and spend no quota. Neither is
-    // required: with neither set, pictures still come from Wikimedia Commons
-    // and Openverse, so saving one only ever improves a search.
-    const IMAGE_KEY_LABELS = { pexels: 'Pexels', pixabay: 'Pixabay', jamendo: 'Jamendo' };
+    // ── Supplier keys ────────────────────────────────────────────────────────
+    // None of these have anything to do with Gemini and none spend quota. All of
+    // them are optional: behind every keyed supplier sits one that needs nothing,
+    // so saving a key only ever improves a search.
+    //
+    // The labels come from the server's own registry rather than being repeated
+    // here. A hardcoded map went stale the moment Geoapify, LocationIQ and
+    // Thingiverse were added — it named three suppliers out of eight — and a
+    // second copy of the registry is how that happens again.
+    let IMAGE_KEY_LABELS = {};
 
     async function refreshImageKeyStatus() {
       const el = document.getElementById('image-keys-status');
@@ -2274,7 +2279,7 @@
         input.id = `${source.id}-key-input`;
         input.autocomplete = 'off';
         input.spellcheck = false;
-        input.placeholder = source.signup ? `free key from ${String(source.signup).replace(/^https?:\\/\\//, '')}` : 'paste the key';
+        input.placeholder = source.signup ? `free key from ${String(source.signup).replace(/^https?:\/\//, '')}` : 'paste the key';
         input.style.cssText = 'flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;';
         const save = document.createElement('button');
         save.className = 'preset-btn';
@@ -2304,6 +2309,13 @@
           return;
         }
         box.textContent = '';
+        IMAGE_KEY_LABELS = {};
+        for (const source of info.sources) {
+          IMAGE_KEY_LABELS[source.id] = source.label;
+        }
+        for (const source of info.placeSources || []) {
+          IMAGE_KEY_LABELS[source.id] = source.label;
+        }
         for (const source of info.sources) {
           const { wrap, state } = supplierRow(source);
           state.textContent = source.needsKey
