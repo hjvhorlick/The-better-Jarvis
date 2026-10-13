@@ -53,6 +53,7 @@ import {
 import { KnowledgeStore } from './knowledge.js';
 import {
   answerFromWeb,
+  explainFetchError,
   imageKeyStatus,
   readUrl,
   searchAudio,
@@ -1126,7 +1127,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       return `The open web gave me nothing for “${subject.slice(0, 60)}”. Nothing was counted.`;
     } catch (err) {
       console.warn('[JARVIS] web search failed:', err instanceof Error ? err.message : err);
-      return `I could not reach the open web for “${subject.slice(0, 60)}” — ${err instanceof Error ? err.message : String(err)}`;
+      return `I could not reach the open web for “${subject.slice(0, 60)}” — ${explainFetchError(err)}.`;
     }
   }
   if (researchIntent?.kind === 'clarify') return 'What would you like me to research? Give me a specific question or topic; I have not searched the web yet.';
@@ -3055,7 +3056,7 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
       res.status(503).json({ error: 'I could not draw that picture (no Gemini model available) and the open web had no photograph of it either.' });
       return;
     } catch (err) {
-      res.status(503).json({ error: `I could not draw that picture, and the picture search failed: ${err instanceof Error ? err.message : String(err)}` });
+      res.status(503).json({ error: `I could not draw that picture, and the picture search failed: ${explainFetchError(err)}` });
       return;
     }
   }
@@ -3208,7 +3209,7 @@ app.get('/api/web/search', requireAuth, async (req: Request, res: Response) => {
     const hits = await searchWeb(q, { maxResults: 8 });
     res.json({ ok: true, query: q, hits, quotaUsed: false });
   } catch (err) {
-    res.status(502).json({ ok: false, error: `The open web did not answer: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(502).json({ ok: false, error: `The open web did not answer: ${explainFetchError(err)}` });
   }
 });
 
@@ -3228,7 +3229,7 @@ app.get('/api/web/media', requireAuth, async (req: Request, res: Response) => {
         : await searchAudio(q, { maxResults: 8 });
     res.json({ ok: true, query: q, kind, hits, quotaUsed: false });
   } catch (err) {
-    res.status(502).json({ ok: false, error: `The open web did not answer: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(502).json({ ok: false, error: `The open web did not answer: ${explainFetchError(err)}` });
   }
 });
 
@@ -3239,7 +3240,7 @@ app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {
     const page = await readUrl(url);
     res.json({ ok: true, ...page, quotaUsed: false });
   } catch (err) {
-    res.status(502).json({ ok: false, error: `That page could not be read: ${err instanceof Error ? err.message : String(err)}` });
+    res.status(502).json({ ok: false, error: `That page could not be read: ${explainFetchError(err)}` });
   }
 });
 

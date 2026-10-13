@@ -13,6 +13,7 @@ import {
   parseDuckResults, unwrapDuckLink, toPlainText, decodeEntities,
   parseWikiFact, parsePexels, parsePixabay, parseCommons, parseOpenverse, parseArchive,
   searchImages, searchVideos, searchAudio, searchWeb, wikiFact, answerFromWeb, imageKeyStatus,
+  explainFetchError,
 } from '../search/engine.ts';
 
 /* ── DuckDuckGo: the exact shape its HTML endpoint returns ───────────────── */
@@ -269,4 +270,16 @@ test('searchWeb and wikiFact go through the same injectable fetch', async () => 
   const fact = await wikiFact('tea', stub);
   assert.equal(fact.title, 'Bloom filter');
   assert.ok(stub.seen[0].includes('q=tea+prices') || stub.seen[0].includes('q=tea%20prices'), 'the query is URL-encoded');
+});
+
+/* ── a network failure is explained, never dumped ────────────────────────── */
+test('a dead connection is described in one plain sentence, with no quota talk', () => {
+  const dns = explainFetchError(Object.assign(new Error('Invalid IP address: undefined'), { code: 'ENOTFOUND' }));
+  assert.match(dns, /could not resolve the address/);
+  assert.match(explainFetchError(Object.assign(new Error('x'), { code: 'ECONNREFUSED' })), /refused or timed out/);
+  assert.match(explainFetchError(new Error('The source resolves to a private or non-public network address')), /private network/);
+  assert.equal(explainFetchError(new Error('something odd')), 'something odd');
+  for (const message of [dns, explainFetchError(new Error('ECONNRESET'))]) {
+    assert.doesNotMatch(message, /quota|429|budget/i, 'a network error is never blamed on a quota');
+  }
 });

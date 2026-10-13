@@ -155,7 +155,32 @@ export function parseDuckResults(html: string, limit = 8): WebHit[] {
   return hits;
 }
 
-/** The open web, searched without an API key and without Gemini. */
+/**
+ * Turn a transport failure into one honest sentence. The owner does not need a
+ * stack trace; they need to know whether it was this machine's connection or
+ * the source. Nothing here mentions a quota, because none of these paths use
+ * one.
+ */
+export function explainFetchError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err || '');
+  const code = (err as { code?: string })?.code || '';
+  if (/ENOTFOUND|EAI_AGAIN|Invalid IP address|getaddrinfo/i.test(`${message} ${code}`)) {
+    return 'this computer could not resolve the address — the network or DNS is not answering';
+  }
+  if (/ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|socket hang up/i.test(`${message} ${code}`)) {
+    return 'the connection to the source was refused or timed out';
+  }
+  if (/unsafe-url|private or non-public/i.test(message)) {
+    return 'that address is on a private network, so it was not opened';
+  }
+  if (/too-large/i.test(message)) return 'the source was larger than the fetch limit';
+  if (/timeout/i.test(message)) return 'the source took too long to answer';
+  return message || 'an unknown network error';
+}
+
+/**
+ * The open web, searched without an API key and without Gemini.
+ */
 export async function searchWeb(query: string, options: EngineOptions = {}): Promise<WebHit[]> {
   const limit = options.maxResults ?? 8;
   const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query.trim())}`;
