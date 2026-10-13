@@ -56,6 +56,7 @@ import {
   describeSources,
   explainFetchError,
   imageKeyStatus,
+  missingKeysFor,
   readUrl,
   MEDIA_KINDS,
   searchAudio,
@@ -819,10 +820,12 @@ async function pictureFromWeb(subject: string): Promise<string> {
   } catch (err) {
     console.warn('[JARVIS] the picture search failed:', err instanceof Error ? err.message : err);
   }
-  const keys = imageKeyStatus().filter((k) => !k.present).map((k) => k.label);
+  // Only the suppliers that can actually serve a picture are named. Listing the
+  // music and mapping keys here was wrong — they cannot help with a photograph.
+  const keys = missingKeysFor('image');
   return `I could not find a picture of “${subject.slice(0, 60)}” on the open web.`
     + (keys.length
-      ? ` Add a free ${keys.join(' or ')} key in Settings → "Pictures" and the results get much better.`
+      ? ` A free ${keys.join(' or ')} key in Settings → "Suppliers" would give this a better chance.`
       : '');
 }
 
