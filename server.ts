@@ -1518,6 +1518,12 @@ server.on('upgrade', (req, socket, head) => {
 });
 
 // Middleware
+// The dashboard needs its own microphone/camera: never inherit a blocking
+// policy from a proxy default, and say so explicitly to the browser.
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader('Permissions-Policy', 'microphone=(self), camera=(self), autoplay=(self)');
+  next();
+});
 app.use(express.json({ limit: '25mb' })); // room pictures travel to the AI tools
 app.use(express.urlencoded({ extended: true }));
 
@@ -2431,16 +2437,29 @@ function resolveVoicePython(): string {
   return win ? 'python' : 'python3';
 }
 
-/** Starts local_voice/service.py. Its messages are shown in the server console, marked [local-voice]. */
+let localVoiceRestarts = 0;
+let localVoiceStartedAt = 0;
+let localVoiceShuttingDown = false;
+process.on('exit', () => { localVoiceShuttingDown = true; localVoiceProcess?.kill(); });
+
+/** Starts local_voice/service.py. Its messages are shown in the server console, marked [local-voice].
+ *  A crash (missing packages, no audio device) used to be permanent until the
+ *  whole app restarted; now it retries a few times with backoff, so fixing the
+ *  packages — or a transient audio failure — brings the local voice back. */
 function startLocalVoice(): void {
   const python = resolveVoicePython();
   const script = path.join(process.cwd(), 'local_voice', 'service.py');
+  if (!fs.existsSync(script)) {
+    console.error(`[local-voice] ${script} is missing — the local voice cannot start. Browser voice/mic (Auto) still work.`);
+    return;
+  }
   const relay = (chunk: Buffer) => {
     for (const line of chunk.toString().split('\n')) {
       if (line.trim()) console.log(line.startsWith('[local-voice]') ? line : `[local-voice] ${line}`);
     }
   };
   try {
+    localVoiceStartedAt = Date.now();
     localVoiceProcess = spawn(python, [script], { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
   } catch (err) {
     console.error(`[local-voice] could not start ${python}: ${(err as Error).message}`);
@@ -2449,10 +2468,21 @@ function startLocalVoice(): void {
   localVoiceProcess.stdout?.on('data', relay);
   localVoiceProcess.stderr?.on('data', relay);
   localVoiceProcess.on('error', (err) =>
-    console.error(`[local-voice] could not start ${python}: ${err.message}. Set SUPPER_PYTHON to the Python that has the requirements installed.`));
-  localVoiceProcess.on('exit', (code) =>
-    console.warn(`[local-voice] stopped (exit ${code}). Restart JARVIS to start it again.`));
-  process.on('exit', () => localVoiceProcess?.kill());
+    console.error(`[local-voice] could not start ${python}: ${err.message}. Set SUPPER_PYTHON to the Python that has the requirements installed (pip install -r backend/requirements-local-voice.txt). Browser voice/mic (Auto) still work.`));
+  localVoiceProcess.on('exit', (code) => {
+    localVoiceProcess = null;
+    if (localVoiceShuttingDown) return;
+    // A service that stayed up a while earns a fresh retry budget.
+    if (Date.now() - localVoiceStartedAt > 60_000) localVoiceRestarts = 0;
+    if (localVoiceRestarts >= 5) {
+      console.warn(`[local-voice] stopped (exit ${code}) and will not be restarted again. Browser voice/mic (Auto) still work; for Local, fix the [local-voice] error above, then restart JARVIS.`);
+      return;
+    }
+    const delayMs = Math.min(30_000, 2_000 * 2 ** localVoiceRestarts);
+    localVoiceRestarts += 1;
+    console.warn(`[local-voice] stopped (exit ${code}); restarting in ${Math.round(delayMs / 1000)}s (attempt ${localVoiceRestarts}/5). Browser voice/mic (Auto) still work.`);
+    setTimeout(() => { if (!localVoiceShuttingDown && !localVoiceProcess) startLocalVoice(); }, delayMs).unref?.();
+  });
 }
 
 /** The voice in use, for the status panels. */
@@ -2480,6 +2510,46 @@ app.post('/api/voice/speak', requireAuth, async (req: Request, res: Response) =>
 app.post('/api/voice/stop', requireAuth, async (_req: Request, res: Response) => {
   await localVoice('/stop', {}, 5_000);
   res.json({ ok: true });
+});
+
+// GET /api/voice/health -> is the on-computer voice ready, and if not, why?
+// The browser voice/microphone work without it (Auto engine), so this is a
+// report, not a gate: it names the exact missing piece instead of silence.
+app.get('/api/voice/health', requireAuth, async (_req: Request, res: Response) => {
+  const kokoroDir = process.env.SUPPER_KOKORO_DIR || path.join(process.cwd(), 'models', 'kokoro');
+  const voiceFilesPresent = fs.existsSync(path.join(kokoroDir, 'kokoro-v1.0.onnx'))
+    && fs.existsSync(path.join(kokoroDir, 'voices-v1.0.bin'));
+  try {
+    const upstream = await fetch(`${LOCAL_VOICE_URL}/health`, { signal: AbortSignal.timeout(3_000) });
+    const data = (await upstream.json().catch(() => ({}))) as Record<string, unknown>;
+    if (upstream.ok && data.ok) {
+      res.json({
+        ok: true,
+        service: 'local_voice/service.py',
+        voice: data.voice || process.env.SUPPER_TTS_VOICE || 'bm_george',
+        voiceFilesPresent: typeof data.voiceFilesPresent === 'boolean' ? data.voiceFilesPresent : voiceFilesPresent,
+        voiceFolder: data.voiceFolder || kokoroDir,
+        speechModel: data.speechModel || process.env.SUPPER_STT_MODEL || 'tiny.en',
+        systemVoice: data.systemVoice || null,
+        browserFallback: true,
+        note: 'Browser voice/microphone (Auto engine) work even when this service is off.',
+      });
+      return;
+    }
+  } catch { /* service unreachable: fall through to the plain-language report */ }
+  res.json({
+    ok: false,
+    code: 'offline',
+    service: 'local_voice/service.py',
+    python: resolveVoicePython(),
+    voiceFilesPresent,
+    voiceFolder: kokoroDir,
+    speechModel: process.env.SUPPER_STT_MODEL || 'tiny.en',
+    browserFallback: true,
+    message: !voiceFilesPresent
+      ? `The local voice service is not answering and the Kokoro files are missing from ${kokoroDir}. Browser voice/mic (Auto) still work; for Local, run: pip install -r backend/requirements-local-voice.txt and see docs/LOCAL_VOICE.md.`
+      : 'The local voice service is not answering. Browser voice/mic (Auto) still work; for Local, check the [local-voice] lines in the server console and run: pip install -r backend/requirements-local-voice.txt.',
+  });
 });
 
 // POST /api/wake -> Wake up JARVIS
