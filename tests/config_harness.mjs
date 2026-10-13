@@ -1332,6 +1332,61 @@ function freePort() {
   } finally { await offline.stop(); }
 }
 
+/* ── 15. EVERY KEYED SUPPLIER TAKES A KEY, NOT JUST THE FIRST TWO ─────────────
+ * POST /api/settings/image-keys used to hardcode 'pexels' and 'pixabay' while
+ * four more keyed suppliers were added. A Jamendo, Geoapify, LocationIQ or
+ * Thingiverse key was refused with a 400, so those four suppliers could never be
+ * given a key from Settings — while the key-free suppliers behind them answered
+ * anyway, and nothing looked wrong. The list is now the one in config, so a new
+ * keyed supplier cannot be left out by forgetting a second place. */
+{
+  const srv = await startDashboard({ models: { 'harness-text-model': { } }, name: 'supplier-keys' });
+  try {
+    const SUPPLIERS = ['pexels', 'pixabay', 'jamendo', 'geoapify', 'locationiq', 'thingiverse'];
+    // keys is an ARRAY of {service,label,present,tail,detail} — one entry per
+    // supplier — not an object keyed by service.
+    const present = (keys, service) => (Array.isArray(keys) ? keys.find((k) => k.service === service) : null);
+    let accepted = 0;
+    for (const service of SUPPLIERS) {
+      const saved = await post(srv, '/api/settings/image-keys', { service, key: `harness-${service}-key-0000` });
+      const row = present(saved.body.keys, service);
+      ok(`supplier keys: ${service} can be saved and is then reported present`, saved.status === 200 && saved.body.ok === true && row?.present === true,
+        `status=${saved.status} ${saved.body.error || `present=${row?.present} tail=${row?.tail || ''}`}`);
+      if (saved.status === 200 && row?.present === true) accepted += 1;
+    }
+    ok('supplier keys: all six are accepted, not two of six', accepted === SUPPLIERS.length, `${accepted}/${SUPPLIERS.length}`);
+
+    // An unknown name is still refused, and the answer now names the real list
+    // rather than two services.
+    const bogus = await post(srv, '/api/settings/image-keys', { service: 'not-a-supplier', key: 'x' });
+    ok('supplier keys: an unknown supplier is refused, naming the real list',
+      bogus.status === 400 && /jamendo/.test(String(bogus.body.error)) && /thingiverse/.test(String(bogus.body.error)),
+      String(bogus.body.error).slice(0, 110));
+
+    // And a saved key can be taken back out again — every one of them.
+    let cleared = 0;
+    for (const service of SUPPLIERS) {
+      const gone = await post(srv, '/api/settings/image-keys', { service, clear: true });
+      if (gone.status === 200 && present(gone.body.keys, service)?.present === false) cleared += 1;
+    }
+    ok('supplier keys: and every one can be removed again', cleared === SUPPLIERS.length, `${cleared}/${SUPPLIERS.length}`);
+
+    // The registration area must offer a row for each, including the place
+    // suppliers, which used to fill the label map and then be dropped.
+    const sources = await get(srv, '/api/web/sources');
+    const ids = [...(sources.body.sources || []), ...(sources.body.placeSources || [])].map((s) => s.id);
+    const missing = SUPPLIERS.filter((s) => !ids.includes(s));
+    ok('supplier keys: every keyed supplier has a row in the registration area',
+      sources.status === 200 && missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${ids.length} rows`);
+
+    // The page must draw a row for each of those, place suppliers included.
+    const html = await (await fetch(srv.url('/'))).text();
+    ok('supplier keys: the page renders the place suppliers too',
+      /everySource = \[\.\.\.info\.sources, \.\.\.\(info\.placeSources \|\| \[\]\)\]/.test(html),
+      html.includes('placeSources') ? 'loop found' : 'loop missing');
+  } finally { await srv.stop(); }
+}
+
 /* ── summary ─────────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
