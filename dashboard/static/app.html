@@ -1790,7 +1790,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-local-voice-1';
+    const JARVIS_BUILD = '2026-10-13-local-voice-2';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1920,6 +1920,15 @@
         }
         if (input) input.value = '';
         const where = Array.isArray(info.savedTo) && info.savedTo.length ? info.savedTo.join(' and ') : 'the app\'s settings';
+        if (info.warning) {
+          // Saved, but NOT in force: an older key already in the environment
+          // is read first. Say so in the status line AND the toast — never
+          // claim "the brain is live" for a key that is not being used.
+          el.textContent = `⚠ ${info.warning}`;
+          el.style.color = '#ffb86b';
+          toast('⚠ Key saved, but an older key in the environment is still the one in use — see Settings → The Brain');
+          return;
+        }
         toast(`Gemini key saved to ${where} (ends in …${info.tail}) — the brain is live now`);
       } catch (err) {
         el.textContent = `Save failed: ${err.message} — is the server running on port 3000?`;
@@ -4186,7 +4195,7 @@
        the line in the green bar, plus one system line in the chat saying why. */
 
     const EAR_MAX_S     = 15;     // longest single sentence sent to the server
-    const EAR_END_MS    = 900;    // this much quiet ends a sentence
+    const EAR_END_MS    = 450;    // this much quiet ends a sentence — short, so JARVIS reacts as soon as you stop
     const EAR_MIN_S     = 0.5;    // shorter than this is a cough, not a sentence
     const EAR_RESUME_MS = 500;    // quiet time after JARVIS stops speaking, before listening again
 
@@ -4255,14 +4264,14 @@
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
-      const loud = rms > Math.max(Ear.noise * 3, 0.015);
+      const loud = rms > Math.max(Ear.noise * 3, 0.008);
       const now = performance.now();
       if (!Ear.inSentence) {
         if (!loud) { Ear.noise = Ear.noise * 0.98 + rms * 0.02; Ear.loudBlocks = 0; return; }
         if (++Ear.loudBlocks < 2) return;          // two loud blocks in a row, so a click is not a sentence
         Ear.inSentence = true; Ear.chunks = []; Ear.samples = 0; Ear.quietSince = 0;
       }
-      Ear.chunks.push(earPCM(input));
+      Ear.chunks.push(input.slice());   // a copy: the browser reuses this buffer
       Ear.samples += input.length;
       if (loud) Ear.quietSince = 0; else if (!Ear.quietSince) Ear.quietSince = now;
       const quietEnough = Ear.quietSince && now - Ear.quietSince > EAR_END_MS;
@@ -4274,19 +4283,27 @@
       const total = Ear.samples, chunks = Ear.chunks, rate = Ear.rate;
       earDropSentence();
       if (total / rate < EAR_MIN_S) return;
-      const pcm = new Int16Array(total);
+      let floats = new Float32Array(total);
       let at = 0;
-      for (const c of chunks) { pcm.set(c, at); at += c.length; }
-      Ear.queue.push({ rate, bytes: pcm.buffer });
+      for (const c of chunks) { floats.set(c, at); at += c.length; }
+      // Shrink to 16 kHz here, once, over the whole sentence — the rate the
+      // speech model works at (and the rate the standalone app records at).
+      // Before this, 48 kHz sound was turned into base64 text and sent
+      // through two servers before being shrunk at the far end.
+      if (rate !== 16000) {
+        const n = Math.max(1, Math.round(floats.length * 16000 / rate));
+        const out = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          const pos = i * (floats.length - 1) / Math.max(1, n - 1);
+          const lo = Math.floor(pos), hi = Math.min(floats.length - 1, lo + 1);
+          out[i] = floats[lo] + (floats[hi] - floats[lo]) * (pos - lo);
+        }
+        floats = out;
+      }
+      const pcm = earPCM(floats);
+      Ear.queue.push({ rate: 16000, bytes: pcm.buffer });
       if (Ear.queue.length > 3) Ear.queue.shift();  // never fall far behind the room
       earSend();
-    }
-
-    function earBase64(buffer) {
-      const bytes = new Uint8Array(buffer);
-      let bin = '';
-      for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
-      return btoa(bin);
     }
 
     async function earSend() {
@@ -4300,8 +4317,8 @@
         try {
           res = await _authFetch('/api/voice/transcribe', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ rate: job.rate, pcm: earBase64(job.bytes) }),
+            headers: { 'Content-Type': 'application/octet-stream', 'X-Audio-Rate': String(job.rate) },
+            body: job.bytes,   // the sound itself — no base64, no JSON
           });
         } catch (_) {
           voiceProblem('The JARVIS server could not be reached, so I could not hear that. Check that the server is running.');
@@ -4312,8 +4329,13 @@
         if (data.ok && data.text) {
           Ear.problem = '';
           earHeard(data.text);
-        } else if (data.code === 'empty' || data.code === 'too-short') {
-          // Nothing was said: say nothing.
+        } else if (data.code === 'too-short') {
+          // A cough, not a sentence: say nothing.
+        } else if (data.code === 'empty' || data.code === 'too-quiet') {
+          // Sound arrived but no words could be made out (or only silence).
+          // Shown, not swallowed — otherwise "the mic never hears me" has no
+          // visible cause. voiceProblem() shows the same line only once.
+          voiceProblem(data.message || 'I heard sound, but no words I could make out.');
         } else {
           voiceProblem(`I could not turn that into words: ${data.message || 'the server gave no reason'}`);
         }
@@ -4346,7 +4368,10 @@
       try {
         const stream = await micOpenStream();
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        const ctx = new Ctx();
+        // Ask for 16 kHz — the rate the speech model works at, and the rate
+        // the standalone app records at. A browser that won't (it is only a
+        // request) is shrunk to 16 kHz when the sentence is sent instead.
+        const ctx = new Ctx({ sampleRate: 16000 });
         if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
         const source = ctx.createMediaStreamSource(stream);
         const proc = ctx.createScriptProcessor(2048, 1, 1);
@@ -4434,7 +4459,14 @@
         Speech.spoken.add(replyId);
         if (Speech.spoken.size > 200) Speech.spoken.delete(Speech.spoken.values().next().value);
       }
-      speakPart(String(text));
+      // ONE request for the whole reply: the voice service streams it piece
+      // by piece with no gaps. Cutting it up here meant every piece waited
+      // for the previous piece to finish before it was even made.
+      const clean = cleanForSpeech(String(text));
+      if (!clean) return;
+      Speech.queue.push(clean.slice(0, 1400));
+      pumpSpeech();
+      renderEar();
     }
 
     // The answer arrives piece by piece: read each finished sentence as it lands.
@@ -4657,12 +4689,15 @@
       const sentences = clean.match(/[^.!?…]+[.!?…]*\s*/g) || [clean];
       const out = [];
       let buf = '';
+      // Short pieces: the voice starts on the first piece while the rest is
+      // still being made. Long pieces meant seconds of silence before the
+      // first word of every reply.
       for (const s of sentences) {
-        if (buf && (buf + s).length > 240) { out.push(buf.trim()); buf = ''; }
+        if (buf && (buf + s).length > 130) { out.push(buf.trim()); buf = ''; }
         buf += s;
-        while (buf.length > 320) {
-          const cut = buf.lastIndexOf(' ', 240);
-          const at = cut > 80 ? cut : 240;
+        while (buf.length > 160) {
+          const cut = buf.lastIndexOf(' ', 130);
+          const at = cut > 60 ? cut : 130;
           out.push(buf.slice(0, at).trim());
           buf = buf.slice(at);
         }

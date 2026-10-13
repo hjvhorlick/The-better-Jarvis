@@ -482,10 +482,13 @@ export function trySpendVoiceBudget(): { allowed: boolean; snapshot: QuotaSnapsh
 }
 
 /**
- * Take one unit for a call that is about to reach Gemini. Failed calls count
- * too, exactly as backend/quota.py counts them. The read-modify-write plus the
- * atomic rename keeps concurrent writes safe (see docs/CONFIG_SOURCE_OF_TRUTH.md
- * for the one honest limitation when both builds run at once).
+ * Take one unit for ONE QUESTION that is about to reach Gemini — the
+ * standalone app's rule (backend/quota.py via agent.py: one spend, one call).
+ * Retries of the same question (another candidate model, another thinking
+ * setting) do NOT spend again: they fetched no new answer. The
+ * read-modify-write plus the atomic rename keeps concurrent writes safe
+ * (see docs/CONFIG_SOURCE_OF_TRUTH.md for the one honest limitation when
+ * both builds run at once).
  */
 export function trySpendGeminiBudget(): { allowed: boolean; snapshot: QuotaSnapshot } {
   const budget = resolveDailyBudget();
@@ -811,7 +814,18 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
   let candidates: ModelCandidate[] = (opts.candidates || modelCandidates(opts.kind)).slice();
   const attempted = new Set<string>();
   const attempts: AttemptReport[] = [];
+  // ONE unit per QUESTION — the standalone app's rule (backend/agent.py:
+  // _gemini() spends once, then makes its call). This used to spend once per
+  // candidate model, so a single question whose first model was unavailable
+  // burned three, five, sometimes twenty units on retries that never fetched
+  // an answer — the day's 20 were gone after a handful of questions, and the
+  // same retry storm is what made replies take a minute. Retries of the same
+  // question are free; a new question spends again.
   const spend = opts.spend || trySpendGeminiBudget;
+  const budget = spend();
+  if (!budget.allowed) {
+    throw new BrainError(explainBrainFailure({ code: 'budget', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'budget', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+  }
   let discoveryDone = opts.allowDiscovery === false;
   let lastModel = candidates[0]?.model || '';
   let lastSource = candidates[0]?.source || '';
@@ -824,7 +838,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
         discoveryDone = true;
         try {
           const found = await discoverModels(caller, opts.kind);
-          const fresh = found.filter((c) => !attempted.has(c.model));
+          const fresh = found.filter((c) => !attempted.has(c.model)).slice(0, 2);
           if (fresh.length) {
             candidates = candidates.concat(fresh);
             continue;
@@ -839,11 +853,6 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
     attempted.add(next.model);
     lastModel = next.model;
     lastSource = next.source;
-
-    const budget = spend();
-    if (!budget.allowed) {
-      throw new BrainError(explainBrainFailure({ code: 'budget', model: next.model, modelSource: next.source, key, attempts }), 'budget', attempts, next.model, next.source);
-    }
 
     // The speed settings ride along with every text call: thinking off where the
     // model takes that setting, and a capped answer. See speedConfig().
@@ -967,6 +976,13 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
   const attempted = new Set<string>();
   const attempts: AttemptReport[] = [];
   const spend = opts.spend || trySpendGeminiBudget;
+  // ONE unit per QUESTION, as in runBrain() and the standalone app: spending
+  // per candidate model burned a day's budget on retries that fetched
+  // nothing, and those retries are also the minute-long waits.
+  const budget = spend();
+  if (!budget.allowed) {
+    throw new BrainError(explainBrainFailure({ code: 'budget', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'budget', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+  }
   let discoveryDone = !allowDiscovery;
   let lastModel = candidates[0]?.model || '';
   let lastSource = candidates[0]?.source || '';
@@ -979,7 +995,7 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
         discoveryDone = true;
         try {
           const found = await discoverModels(caller, opts.kind);
-          const fresh = found.filter((c) => !attempted.has(c.model));
+          const fresh = found.filter((c) => !attempted.has(c.model)).slice(0, 2);
           if (fresh.length) { candidates = candidates.concat(fresh); continue; }
         } catch (err) {
           console.warn('[config] model discovery failed (that is allowed — it is only a last resort):', err instanceof Error ? err.message : err);
@@ -992,10 +1008,6 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
     lastModel = next.model;
     lastSource = next.source;
 
-    const budget = spend();
-    if (!budget.allowed) {
-      throw new BrainError(explainBrainFailure({ code: 'budget', model: next.model, modelSource: next.source, key, attempts }), 'budget', attempts, next.model, next.source);
-    }
 
     const usedSpeed = opts.speed !== false && opts.kind === 'text';
     const ladder: Array<ThinkingMode | null> = usedSpeed ? [...thinkingModes(next.model), null] : [null];
