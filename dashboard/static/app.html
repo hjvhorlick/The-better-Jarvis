@@ -1602,10 +1602,10 @@
               <button class="preset-btn" id="btn-voice-server" style="flex:1; margin: 0;" onclick="setVoiceEngine('server')">🎧 JARVIS server voice</button>
             </div>
             <select id="sel-voice-engine" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setVoiceEngine(this.value)">
-              <option value="server">Voice engine: JARVIS server voice — every reply, always (the default)</option>
-              <option value="browser">Voice engine: This computer's voice only (free; for use with no internet or no key)</option>
+              <option value="browser">Voice engine: This computer's own voice — default, free, offline</option>
+              <option value="server">Voice engine: Gemini server voice — optional, uses API quota</option>
             </select>
-            <span class="settings-desc">The server voice is the one that always works, and it is what JARVIS uses unless you change it here. Each spoken sentence is one Gemini voice call, counted in its OWN daily budget (<span id="voice-budget-line">…</span>) — it never eats the answers' budget. Repeated lines ("Listening, sir") are cached and cost nothing after the first time.</span>
+            <span class="settings-desc">JARVIS uses this computer's built-in voice by default. Spoken replies do not call Gemini TTS or use a speech quota. Choose the Gemini server voice only if you specifically want it and accept its API limits. Browser voices depend on the voices installed in your operating system.</span>
             <span class="settings-desc">The microphone stays ON: in <b>Always listen</b> you simply talk — no "Hey Jarvis" needed before every sentence — and <b>Mute</b> silences it instantly (the same mute is the 🎙 button in the chat bar and the red-dot bar above the input). In <b>Wake word</b> mode JARVIS waits for "Hey Jarvis" first. Browsers only open a microphone after a click, so the very first click anywhere on the page arms it — after that it stays on by itself. The plain 🎤 button is still there for one dictated command.</span>
           </div>
 
@@ -4663,6 +4663,7 @@
     /* Hand the words to the dialogue and send them. */
     function micDeliver(text) {
       const clean = String(text || '').trim();
+      _fallbackEarCycle = false;
       micStopEverything();
       if (!clean) { micSetState('idle'); return; }
       micSetState('transcribing', 'Got it — sending your command…');
@@ -4682,13 +4683,15 @@
       const rate = Mic.rate || 48000;
       const srNote = Mic.srNote;
       const hadAudio = Mic.pcm.length > 0;
+      const wasFallbackEarCycle = _fallbackEarCycle;
+      _fallbackEarCycle = false;
       Mic.state = 'transcribing';                 // stops the capture handler at once
       micStopEverything();
 
       if (heard) { micSetState('idle'); return; }  // micDeliver already ran
       if (!hadAudio || samples < rate * MIC_MIN_AUDIO_S) {
         micSetState('idle');
-        if (reason !== 'user-stop') {
+        if (reason !== 'user-stop' && !wasFallbackEarCycle) {
           const why = srNote === 'unavailable'
             ? 'This browser has no speech recogniser of its own (Chrome and Edge do).'
             : srNote && srNote !== 'no-speech' && srNote !== 'aborted'
@@ -4703,6 +4706,7 @@
             ],
           );
         }
+        if (wasFallbackEarCycle) resumeListeningAfterSpeech();
         return;
       }
 
@@ -4719,6 +4723,7 @@
             ...(micInFrame() ? [{ label: '↗ Open in New Tab', run: () => openStandaloneTab() }] : []),
           ],
         );
+        if (wasFallbackEarCycle) resumeListeningAfterSpeech();
       }
     }
 
@@ -5021,10 +5026,15 @@
     // Which throat speaks: the browser's own voice (free, instant), the server's
     // Gemini voice (real audio, works even on a machine with no voices installed),
     // or — the default — the browser when it can, the server when it cannot.
-    // The owner's instruction: JARVIS's own server voice, always — never the
-    // browser's. (An older saved value of 'auto' means the same thing now.)
+    // Local speech is the default: it costs no Gemini calls. Migrate the old
+    // server-by-default setting once, then respect any deliberate later choice.
     const _savedEngine = localStorage.getItem('jarvis-voice-engine');
-    let _voiceEngine = _savedEngine === 'browser' ? 'browser' : 'server';
+    const _voiceEngineMigration = localStorage.getItem('jarvis-voice-engine-default-v2');
+    if (!_voiceEngineMigration) {
+      localStorage.setItem('jarvis-voice-engine', 'browser');
+      localStorage.setItem('jarvis-voice-engine-default-v2', '1');
+    }
+    let _voiceEngine = localStorage.getItem('jarvis-voice-engine') === 'server' ? 'server' : 'browser';
     let _browserVoiceFailed = false;   // has the browser's voice ever actually started?
     let _voiceProofDone = false;     // has the first click been answered with a word?
 
@@ -5368,10 +5378,9 @@
     }
 
     function engineUsesServer() {
-      // One rule, one switch: the server voice unless the owner deliberately
-      // chose this computer's voice (offline use). Nothing falls back by itself,
-      // so a failure is always reported instead of quietly sounding different.
-      return _voiceEngine !== 'browser';
+      // Gemini TTS is opt-in only. A local voice failure must never silently
+      // spend the user's API quota.
+      return _voiceEngine === 'server';
     }
 
     function renderVoiceEngine() {
@@ -5551,7 +5560,15 @@
     let _startedAt = 0;          // when the live session began (to spot one that dies instantly)
     let _requestedAt = 0;        // when the session was asked for (to spot one that never starts)
 
-    function listenSupported() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+    function browserRecognizerAvailable() { return !!(window.SpeechRecognition || window.webkitSpeechRecognition); }
+    function listenSupported() {
+      return browserRecognizerAvailable() || !!(
+        navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+        (window.AudioContext || window.webkitAudioContext)
+      );
+    }
+    let _fallbackEarCycle = false;
+    let _fallbackGestureArmed = false;
     function shouldListen() {
       return _micOn && !_muted && !_pausedForSpeech && !_needsGesture && Mic.state === 'idle';
     }
@@ -5676,7 +5693,25 @@
 
     function startListener() {
       const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SR) return;
+      if (!SR) {
+        if (!shouldListen() || Mic.state !== 'idle') { renderWakeBtn(); return; }
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia ||
+            !(window.AudioContext || window.webkitAudioContext)) {
+          micReport('🎤 This browser has no speech recogniser and cannot capture microphone audio. Open JARVIS in current Chrome or Edge, or use the 🎤 one-shot microphone button.', []);
+          return;
+        }
+        // Some browsers (including some Opera builds) lack SpeechRecognition.
+        // Use the existing raw-audio capture and server transcription as a
+        // continuous fallback. This uses Gemini for transcription only, never TTS.
+        if (!_fallbackGestureArmed) {
+          _fallbackGestureArmed = true;
+          armWakeOnGesture();
+          return;
+        }
+        _fallbackEarCycle = true;
+        void doMic();
+        return;
+      }
       if (!shouldListen() || _listener) { renderWakeBtn(); return; }
       const gen = ++_listenGen;
       const rec = new SR();
@@ -5980,7 +6015,8 @@
         _voiceProofDone = true;
         document.removeEventListener('pointerdown', once, true);
         document.removeEventListener('keydown', once, true);
-        if (_speakOn) speakReply('Voice online, sir.');
+        // Do not play a greeting over the first raw-audio fallback recording.
+        if (_speakOn && Mic.state === 'idle') speakReply('Voice online, sir.');
       };
       document.addEventListener('pointerdown', once, true);
       document.addEventListener('keydown', once, true);
