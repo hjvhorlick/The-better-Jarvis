@@ -77,24 +77,23 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   a `429` or rejects it, the second key takes over for the rest of the day.
   It only doubles the real allowance if it comes from a different Google
   account/project. Voice and local answers never count.
-- **Voice out** 🔊 — JARVIS speaks replies in this browser tab by default
-  (Settings → Voice, engine *Auto*): the browser's own voice needs nothing
-  installed and makes no Gemini TTS calls. If the browser has no working voice,
-  the same sentence is spoken by this computer instead (Kokoro in
-  `local_voice/service.py`, or the operating system's own voice when the Kokoro
-  files are not downloaded yet). Engine *Local* keeps speech on this computer
-  only; `GET /api/voice/health` says exactly which local pieces are present.
-- **Voice in** 🎤 — click anywhere (or the 🎤 button) once and allow the
-  microphone, then just talk: the browser's SpeechRecognition (Chrome, Edge,
-  Safari) turns speech into commands. In Chrome/Edge that recognition sends
-  audio to the browser maker's service; browsers without it (Firefox) use the
-  raw-microphone fallback — audio goes to faster-whisper on this computer.
-  The mic needs a secure page (`http://localhost:3000` or https).
-- **Always listening** 🎙 — after that first click JARVIS answers ordinary
-  speech with no "Hey Jarvis" before every sentence, restarts listening after
-  each reply, and never hears his own voice (listening pauses while he speaks).
-  The green bar above the chat shows the ear's status and the **🔇 Mute**
-  switch stops the microphone outright.
+- **Voice out** 🔊 — JARVIS speaks replies using the computer's own browser/system
+  voice by default. This is free and offline: spoken replies make no Gemini TTS
+  calls and use no speech quota. Settings → Voice offers Gemini server TTS as an
+  explicit optional choice only; it has its own model and daily budget
+  (`runtime/voice_quota.json`, `SUPPER_GEMINI_VOICE_BUDGET`). The local voice
+  depends on a voice installed in the operating system and exposed by the browser.
+  If no local voice is available, the app reports that instead of silently spending
+  Gemini quota.
+- **Voice in** 🎤 — one dictated command using browser recognition, with raw-audio
+  transcription on the server if recognition is unavailable.
+- **Always listening** 🎙 — the microphone is ON by default and answers to ordinary
+  speech, with no "Hey Jarvis" before every sentence. If the browser has no
+  SpeechRecognition API, the app uses the raw-audio transcription fallback and
+  restarts listening after each reply; that fallback uses Gemini for transcription
+  (not speech output). The green bar shows the ear's status and has a remembered
+  **🔇 Mute** button. Settings → Voice switches between *Always listen* and
+  *Wake word — "Hey Jarvis"*.
 - **Fast replies** — the answer is streamed into the chat as it is written, and the
   Gemini thinking step is switched off (thinkingBudget 0) with a capped answer
   length, which is what turns a ten-second wait into about a second.

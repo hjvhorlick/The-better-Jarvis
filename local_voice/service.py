@@ -23,11 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import importlib.util
 import json
 import os
-import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -35,10 +32,7 @@ import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-try:
-    import numpy as np
-except ImportError:  # hearing needs it; speaking (system voice) and /health do not
-    np = None  # type: ignore[assignment]
+import numpy as np
 
 ROOT = Path(__file__).resolve().parent.parent
 KOKORO_DIR = Path(os.environ.get("SUPPER_KOKORO_DIR", ROOT / "models" / "kokoro"))
@@ -185,52 +179,6 @@ def play(samples, rate: int) -> None:
         raise VoiceError("no-speaker", f"this computer's speakers could not play the voice ({err}). Check the output device.")
 
 
-def system_voice() -> str | None:
-    """The operating system's own speech command, if there is one.
-
-    Stdlib only — this is what keeps Local mode audible before the Kokoro
-    model files have been downloaded: macOS ships `say`, Windows ships SAPI
-    (via PowerShell), many Linux installs ship espeak-ng/espeak.
-    """
-    if sys.platform == "darwin":
-        return "say (macOS)" if shutil.which("say") else None
-    if sys.platform.startswith("win"):
-        return "Windows SAPI" if shutil.which("powershell") else None
-    for name in ("espeak-ng", "espeak", "spd-say", "flite"):
-        if shutil.which(name):
-            return name
-    return None
-
-
-def speak_system(text: str) -> None:
-    """Speak with the OS voice. Raises VoiceError when there is none/it fails."""
-    if sys.platform == "darwin" and shutil.which("say"):
-        cmd = ["say", text]
-    elif sys.platform.startswith("win") and shutil.which("powershell"):
-        escaped = text.replace("'", "''")
-        cmd = ["powershell", "-NoProfile", "-Command",
-               "Add-Type -AssemblyName System.Speech; "
-               f"(New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak('{escaped}')"]
-    else:
-        exe = next((n for n in ("espeak-ng", "espeak", "spd-say", "flite") if shutil.which(n)), None)
-        if exe is None:
-            # Last resort: pyttsx3 drives the same OS voices when installed.
-            try:
-                import pyttsx3
-            except ImportError:
-                raise VoiceError("no-system-voice", "No system voice found (no say/espeak/SAPI and pyttsx3 is not installed).")
-            engine = pyttsx3.init()
-            engine.say(text)
-            engine.runAndWait()
-            return
-        cmd = [exe, text] if exe != "flite" else ["flite", "-t", text]
-    try:
-        subprocess.run(cmd, check=True, timeout=120,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception as err:
-        raise VoiceError("no-system-voice", f"The system voice ({cmd[0]}) could not speak: {err}")
-
-
 def speak(text: str) -> dict:
     text = text.strip()
     if not text:
@@ -239,34 +187,18 @@ def speak(text: str) -> dict:
     with _speak_lock:
         global _speech_stopped
         _speech_stopped = False
-        try:
-            if hasattr(kokoro(), "create_stream"):
-                play_stream(text)
-            else:
-                # Older kokoro-onnx without streaming: make it all, then play it.
-                try:
-                    samples, rate = kokoro().create(text, voice=TTS_VOICE, speed=1.0, lang=kokoro_lang())
-                except VoiceError:
-                    raise
-                except Exception as err:
-                    raise VoiceError("failed", f"Kokoro could not make the voice: {err}")
-                play(samples, int(rate))
-        except VoiceError as kokoro_err:
-            if _speech_stopped:
-                return {"ok": True, "via": "kokoro"}
-            # Kokoro missing/broken must not mean silence: the OS voice speaks.
+        if hasattr(kokoro(), "create_stream"):
+            play_stream(text)
+        else:
+            # Older kokoro-onnx without streaming: make it all, then play it.
             try:
-                speak_system(text)
+                samples, rate = kokoro().create(text, voice=TTS_VOICE, speed=1.0, lang=kokoro_lang())
             except VoiceError:
-                raise VoiceError(
-                    kokoro_err.code,
-                    f"{kokoro_err.message} The operating system's own voice is also unavailable, "
-                    "so nothing could speak on this computer — the dashboard's Auto/Browser voice "
-                    "(Settings → Voice) speaks in the browser tab instead.",
-                ) from kokoro_err
-            log(f"spoke with the system voice instead ({kokoro_err.code}: {kokoro_err.message})")
-            return {"ok": True, "via": "system"}
-    return {"ok": True, "via": "kokoro"}
+                raise
+            except Exception as err:
+                raise VoiceError("failed", f"Kokoro could not make the voice: {err}")
+            play(samples, int(rate))
+    return {"ok": True}
 
 
 def close_stream() -> None:
@@ -330,8 +262,6 @@ def hear(rate: int, pcm_b64: str) -> dict:
 
 
 def hear_pcm(rate: int, raw: bytes) -> dict:
-    if np is None:
-        raise VoiceError("no-package", "numpy is not installed. Run: pip install -r backend/requirements-local-voice.txt")
     audio = np.frombuffer(raw[: len(raw) - (len(raw) % 2)], dtype="<i2").astype(np.float32) / 32768.0
     seconds = audio.size / float(rate or STT_RATE)
     peak = float(np.max(np.abs(audio))) if audio.size else 0.0
@@ -378,12 +308,6 @@ def health() -> dict:
         "voiceFilesPresent": kokoro_files_present(),
         "voiceFolder": str(KOKORO_DIR),
         "speechModel": STT_MODEL,
-        "systemVoice": system_voice(),
-        "packages": {
-            "kokoro_onnx": importlib.util.find_spec("kokoro_onnx") is not None,
-            "faster_whisper": importlib.util.find_spec("faster_whisper") is not None,
-            "sounddevice": importlib.util.find_spec("sounddevice") is not None,
-        },
     }
 
 

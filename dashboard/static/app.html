@@ -1353,7 +1353,6 @@
         <div class="listen-bar" id="listen-bar">
           <span class="listen-dot"></span>
           <span class="listen-bar-text" id="listen-text">Microphone on — just speak.</span>
-          <button class="listen-bar-btn" id="listen-open-tab" style="display:none" onclick="openStandaloneTab()" title="The preview frame cannot use the microphone — open JARVIS in its own tab and the mic and voice work">↗ Open in New Tab for mic &amp; voice</button>
           <button class="listen-bar-btn" id="listen-mute-btn" onclick="toggleMute()" title="Silence the microphone (JARVIS stops listening until you unmute)">🔇 Mute</button>
         </div>
 
@@ -1573,23 +1572,18 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 8px;">
-            <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
-              <label for="sel-voice-engine" style="font-size:12px; white-space:nowrap;">Voice engine</label>
-              <select id="sel-voice-engine" style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setVoiceEngine(this.value)">
-                <option value="auto">Auto — browser voice/mic first, this computer as backup (recommended)</option>
-                <option value="browser">This browser only — nothing to install, heard in this tab</option>
-                <option value="local">This computer only — faster-whisper hears, Kokoro/system voice speaks (private, offline)</option>
-              </select>
+            <div style="display: flex; gap: 8px; width: 100%;">
             </div>
             <div style="display: flex; gap: 8px; width: 100%;">
               <button class="preset-btn" id="btn-mute" style="flex:1; margin: 0;" onclick="toggleMute()">🔇 Mute listening</button>
             </div>
-            <span class="settings-desc">Click anywhere once, allow the microphone, then just talk. <b>Auto/Browser</b> uses this browser's built-in recognition (Chrome, Edge, Safari) and voice — no install, heard in this tab; in Chrome/Edge recognition audio goes to the browser maker's service. <b>Local</b> keeps audio on this computer (faster-whisper + Kokoro, needs <code>pip install -r backend/requirements-local-voice.txt</code> and the Kokoro files in <code>models/kokoro/</code> — see docs/LOCAL_VOICE.md). In Auto, whichever path works is the one that speaks, so a missing download can no longer leave JARVIS silent. Mic needs a secure page: <code>http://localhost:3000</code> or https. 🔇 Mute stops listening.</span>
-            <div class="voice-report" id="voice-health-report">Local voice health: not checked yet — open “voice test” in chat, or this line updates when Settings opens.</div>
+            <div style="display: flex; gap: 8px; width: 100%;">
+            </div>
+            <span class="settings-desc">JARVIS listens all the time: just talk. Your words are turned into text on this computer (faster-whisper), and every reply is spoken on this computer by the local voice (Kokoro). Gemini is not used for voice. 🔇 Mute is the only switch.</span>
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-voice-fix-2 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-always-on-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1814,7 +1808,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-voice-fix-2';
+    const JARVIS_BUILD = '2026-10-13-two-keys-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -2366,22 +2360,8 @@
       const lines = [];
       lines.push(`Secure page (needed for mic): ${window.isSecureContext ? 'yes' : 'NO — mic is blocked on insecure pages'}`);
       lines.push(`Running inside a frame: ${window.top !== window.self ? 'yes — frames often lose mic/speaker rights' : 'no'}`);
-      // The voice: browser first (nothing to install), local computer as backup.
-      const _srCtor = window.SpeechRecognition || window.webkitSpeechRecognition;
-      lines.push(`Voice engine: ${_voiceEngine} (Settings → Voice switches Auto / Browser / Local)`);
-      lines.push(`Browser hearing (SpeechRecognition): ${_srCtor ? 'available — no install needed' : 'NOT in this browser (e.g. Firefox) — the on-computer ear will be used'}`);
-      lines.push(`Browser voice (speechSynthesis): ${typeof window.speechSynthesis !== 'undefined' ? `available, ${(window.speechSynthesis.getVoices() || []).length} voice(s) loaded so far` : 'NOT available — the on-computer voice will be used'}`);
-      try {
-        const healthRes = await _authFetch('/api/voice/health');
-        const health = await healthRes.json().catch(() => ({}));
-        lines.push(health && health.ok
-          ? `Local voice (Kokoro/faster-whisper on this computer): ready — voice ${health.voice || '?'}, Kokoro files ${health.voiceFilesPresent ? 'present' : 'MISSING'}, system-voice fallback ${health.systemVoice || 'none'}`
-          : `Local voice (Kokoro/faster-whisper on this computer): not ready — ${(health && health.message) || 'no answer'} (browser voice/mic above still work in Auto)`);
-        const rep = document.getElementById('voice-health-report');
-        if (rep) rep.textContent = `Local voice health: ${health && health.ok ? 'ready' : 'not ready'} — ${(health && (health.message || health.note)) || 'browser voice/mic still work in Auto'}`;
-      } catch (err) {
-        lines.push(`Local voice health: could not ask the server (${err.message}) — browser voice/mic still work in Auto`);
-      }
+      // The voice: one path. The local voice service on this computer speaks and hears.
+      lines.push('Voice: this computer only (local_voice/service.py: Kokoro speaks, faster-whisper hears). No browser voice, no Gemini.');
       lines.push(`Microphone: ${Ear.ready ? 'open' : 'not open yet'}; ${_muted ? 'MUTED by you' : 'always listening'}; sentences waiting for the server: ${Ear.queue.length}`);
       lines.push(`Speaking now: ${Speech.busy ? 'yes' : 'no'}; replies waiting to be spoken: ${Speech.queue.length}`);
       lines.push(`Voice problem on screen: ${Ear.problem || 'none'}`);
@@ -2473,7 +2453,7 @@
       appendChat('system', 'Senses check:\n' + lines.join('\n'));
       // Finally, the proof: speak one line out loud — through the engine that is
       try {
-        appendChat('system', 'I am speaking a test line now (browser voice in this tab, or this computer\'s speakers in Local mode). If you did not hear it, press 🔊 Test Speakers in Settings → Voice.');
+        appendChat('system', 'I am speaking a test line through the local voice on this computer. If you did not hear it, press 🔊 Test Speakers in Settings → Voice.');
         speakReply('Voice check. If you hear this, my speakers work.');
       } catch (err) {
         appendChat('system', `Could not even try to speak: ${err.message}`);
@@ -4303,22 +4283,15 @@
       }
     })();
 
-    /* ══ THE VOICE — works out of the box, private path kept ═══════════════
-       Two layers, so the mic and the voice work on a fresh install:
-
-         1. THIS BROWSER (default, nothing to install): SpeechRecognition
-            hears you (Chrome/Edge/Safari) and speechSynthesis speaks —
-            audible in this tab, on this device. Chrome/Edge recognition
-            sends audio to the browser maker's service; pick "local" below
-            to keep audio on this computer.
-         2. THIS COMPUTER (fallback / "local" engine): the microphone's raw
-            audio goes to faster-whisper and replies are made by Kokoro in
-            local_voice/service.py — see /api/voice/health for what it needs.
-
-       "Auto" tries the browser first and falls back per sentence, so a
-       missing Kokoro download or a missing browser voice can no longer
-       leave JARVIS silent. One switch: 🔇 Mute. Problems show once, in the
-       green bar and one system line in the chat. */
+    /* ══ THE VOICE — one path, always on ══════════════════════════════════════
+       JARVIS listens all the time while the page is open and the mute switch
+       is off. The microphone's audio is cut into sentences by loudness; each
+       sentence goes to the JARVIS server, which turns it into words with
+       faster-whisper on this computer. Every reply is made and played by the
+       Kokoro voice on this computer.
+       The browser's own speech recogniser and its own voices are not used.
+       One switch: 🔇 Mute. When the voice fails, there is one place to look:
+       the line in the green bar, plus one system line in the chat saying why. */
 
     const EAR_MAX_S     = 15;     // longest single sentence sent to the server
     const EAR_END_MS    = 450;    // this much quiet ends a sentence — short, so JARVIS reacts as soon as you stop
@@ -4327,25 +4300,17 @@
 
     let _muted = false;           // not remembered: every page load listens
     let _voiceProofDone = false;  // has the first click been answered with a word?
-    let _voiceEngine = 'auto';    // 'auto' | 'browser' | 'local' — Settings → Voice
-    try {
-      const savedEngine = window.localStorage.getItem('jarvis-voice-engine');
-      if (savedEngine === 'browser' || savedEngine === 'local' || savedEngine === 'auto') _voiceEngine = savedEngine;
-    } catch (_) { /* storage unavailable: auto still works */ }
 
     const Ear = {
       ready: false, starting: false, ctx: null, stream: null, proc: null,
       rate: 48000, noise: 0.005, inSentence: false, loudBlocks: 0,
       chunks: [], samples: 0, quietSince: 0, resumeAt: 0,
       queue: [], sending: false, problem: '', lastHeard: { text: '', at: 0 },
-      mode: '', recog: null, recogLive: false, recogWanted: false,
-      restartTimer: 0, srFailures: 0, srBlocked: false, worklet: false,
     };
 
     const Speech = {
       busy: false, controller: null,
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
-      lastEngine: '', browserVoices: null,
     };
 
     /* The one place a voice problem is shown: the green bar, and one chat line. */
@@ -4362,71 +4327,18 @@
       if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click anywhere on the page to open it.';
       if (Speech.busy || Speech.queue.length) return 'JARVIS is speaking.';
       if (Ear.sending) return 'Turning your words into text…';
-      return Ear.mode === 'browser'
-        ? 'Listening (browser) — just speak.'
-        : 'Listening (on this computer) — just speak.';
+      return 'Listening — just speak.';
     }
 
     function renderEar() {
       const text = document.getElementById('listen-text');
       if (text) text.textContent = earStatusText();
-      const bar = document.getElementById('listen-bar');
-      if (bar) {
-        bar.classList.add('show');   // was never added before: the bar stayed hidden
-        bar.classList.toggle('muted', _muted);
-        bar.classList.toggle('speaking', !!(Speech.busy || Speech.queue.length));
-        bar.classList.toggle('hearing', Ear.inSentence);
-      }
-      const openTabBtn = document.getElementById('listen-open-tab');
-      if (openTabBtn) {
-        let framed = false;
-        try { framed = window.top !== window.self; } catch (_) { framed = true; }
-        openTabBtn.style.display = framed ? '' : 'none';
-      }
       document.querySelectorAll('#listen-mute-btn, #btn-mute').forEach((b) => {
         b.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
       });
-      const sel = document.getElementById('sel-voice-engine');
-      if (sel && sel.value !== _voiceEngine) sel.value = _voiceEngine;
     }
 
-    /* ── Browser speech: availability ───────────────────────────────────── */
-    function srClass() {
-      return window.SpeechRecognition || window.webkitSpeechRecognition || null;
-    }
-    function browserSpeechSupported() {
-      return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined';
-    }
-    function loadBrowserVoices() {
-      if (!browserSpeechSupported()) return Promise.resolve([]);
-      const now = window.speechSynthesis.getVoices() || [];
-      if (now.length) { Speech.browserVoices = now; return Promise.resolve(now); }
-      if (Speech._voicesPromise) return Speech._voicesPromise;
-      // getVoices() is empty on the first call in Chrome/Edge/Firefox: the
-      // list arrives with voiceschanged. Wait briefly, never forever.
-      Speech._voicesPromise = new Promise((resolve) => {
-        const done = () => {
-          const list = window.speechSynthesis.getVoices() || [];
-          Speech.browserVoices = list;
-          resolve(list);
-        };
-        try { window.speechSynthesis.addEventListener('voiceschanged', done, { once: true }); } catch (_) {}
-        setTimeout(done, 400);
-      }).then((list) => { Speech._voicesPromise = null; return list; });
-      return Speech._voicesPromise;
-    }
-    function pickBrowserVoice(voices) {
-      const list = voices && voices.length ? voices : (Speech.browserVoices || []);
-      const lang = (navigator.language || 'en-GB').toLowerCase();
-      return list.find((v) => (v.lang || '').toLowerCase() === lang)
-        || list.find((v) => /^en[-_]gb/i.test(v.lang || '') && /natural|neural|daniel|george/i.test(v.name || ''))
-        || list.find((v) => /^en[-_]gb/i.test(v.lang || ''))
-        || list.find((v) => /^en/i.test(v.lang || ''))
-        || list[0] || null;
-    }
-    if (browserSpeechSupported()) loadBrowserVoices();
-
-    /* ── Ears: shared ───────────────────────────────────────────────────── */
+    /* ── Ears ───────────────────────────────────────────────────────────── */
     function earPCM(input) {
       const out = new Int16Array(input.length);
       for (let i = 0; i < input.length; i++) {
@@ -4444,93 +4356,6 @@
       Ear.inSentence = false; Ear.loudBlocks = 0; Ear.chunks = []; Ear.samples = 0; Ear.quietSince = 0;
     }
 
-    function earHeard(text) {
-      const clean = String(text || '').replace(/\s+/g, ' ').trim();
-      if (!clean) return;
-      if (earGated()) return;               // never hear JARVIS's own reply
-      const key = clean.toLowerCase();
-      const now = Date.now();
-      if (key === Ear.lastHeard.text && now - Ear.lastHeard.at < 3000) return;   // the same words twice: one command
-      Ear.lastHeard = { text: key, at: now };
-      toast(`🎙 ${clean}`);
-      if (typeof window.sendCommand === 'function') window.sendCommand(clean);
-    }
-
-    /* ── Ears layer 1: the browser's own recogniser ─────────────────────── */
-    function earStartBrowser() {
-      const SR = srClass();
-      if (!SR || Ear.srBlocked) return false;
-      try {
-        const recog = new SR();
-        recog.continuous = true;
-        recog.interimResults = false;
-        recog.lang = navigator.language || 'en-GB';
-        recog.onresult = (event) => {
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            const result = event.results[i];
-            if (result && result.isFinal && result[0]) earHeard(result[0].transcript);
-          }
-        };
-        recog.onerror = (event) => {
-          const code = (event && event.error) || 'unknown';
-          if (code === 'no-speech' || code === 'aborted') return;   // onend restarts
-          if (code === 'not-allowed' || code === 'service-not-allowed') {
-            Ear.srBlocked = true;
-            Ear.recogWanted = false;
-            Ear.recogLive = false;
-            if (Ear.mode === 'browser') { Ear.mode = ''; Ear.ready = false; }
-            voiceProblem('Microphone permission was refused for speech recognition. Click the lock/sliders icon by the address bar, set Microphone to Allow, then click anywhere on the page.');
-            renderEar();
-            return;
-          }
-          // Chrome's recogniser needs the internet; repeated network failure
-          // means the on-computer ear is the one that can work here.
-          if (code === 'network' && ++Ear.srFailures >= 2 && !Ear.stream) {
-            Ear.recogWanted = false;
-            try { recog.stop(); } catch (_) {}
-            voiceProblem('The browser speech service is unreachable, so I am switching to the microphone on this computer.');
-            earStartLocal();
-            return;
-          }
-          if (code === 'audio-capture') {
-            Ear.recogWanted = false;
-            voiceProblem('No microphone was found by the browser. Plug one in, then click anywhere on the page.');
-          }
-        };
-        recog.onend = () => {
-          Ear.recogLive = false;
-          if (Ear.recogWanted && !_muted && !earGated()) {
-            clearTimeout(Ear.restartTimer);
-            Ear.restartTimer = setTimeout(() => { if (Ear.recogWanted && !_muted && !earGated()) earRestartBrowser(); }, 300);
-          }
-          renderEar();
-        };
-        Ear.recog = recog;
-        Ear.recogWanted = true;
-        recog.start();
-        Ear.recogLive = true;
-        Ear.mode = 'browser';
-        Ear.ready = true;
-        Ear.problem = '';
-        renderEar();
-        return true;
-      } catch (_) {
-        return false;   // caller falls back to the raw-microphone ear
-      }
-    }
-    function earRestartBrowser() {
-      if (!Ear.recog || Ear.recogLive) return;
-      try { Ear.recog.start(); Ear.recogLive = true; } catch (_) { /* already running */ }
-    }
-    function earStopBrowser() {
-      Ear.recogWanted = false;
-      clearTimeout(Ear.restartTimer);
-      if (Ear.recog) { try { Ear.recog.abort(); } catch (_) {} Ear.recog = null; }
-      Ear.recogLive = false;
-      if (Ear.mode === 'browser') { Ear.mode = ''; Ear.ready = false; }
-    }
-
-    /* ── Ears layer 2: raw microphone → faster-whisper on this computer ─── */
     function earFrame(input) {
       // While JARVIS is speaking, muted, or waiting for an answer, nothing is
       // heard — so JARVIS never hears its own voice.
@@ -4562,6 +4387,8 @@
       for (const c of chunks) { floats.set(c, at); at += c.length; }
       // Shrink to 16 kHz here, once, over the whole sentence — the rate the
       // speech model works at (and the rate the standalone app records at).
+      // Before this, 48 kHz sound was turned into base64 text and sent
+      // through two servers before being shrunk at the far end.
       if (rate !== 16000) {
         const n = Math.max(1, Math.round(floats.length * 16000 / rate));
         const out = new Float32Array(n);
@@ -4604,6 +4431,9 @@
         } else if (data.code === 'too-short') {
           // A cough, not a sentence: say nothing.
         } else if (data.code === 'empty' || data.code === 'too-quiet') {
+          // Sound arrived but no words could be made out (or only silence).
+          // Shown, not swallowed — otherwise "the mic never hears me" has no
+          // visible cause. voiceProblem() shows the same line only once.
           voiceProblem(data.message || 'I heard sound, but no words I could make out.');
         } else {
           voiceProblem(`I could not turn that into words: ${data.message || 'the server gave no reason'}`);
@@ -4615,151 +4445,61 @@
       }
     }
 
-    async function earAttachProcessor(ctx, source) {
-      // AudioWorklet is the supported way to tap microphone audio;
-      // ScriptProcessorNode is deprecated and only kept as a fallback.
-      if (ctx.audioWorklet && typeof window.AudioWorkletNode !== 'undefined') {
-        try {
-          const code = 'class JarvisEar extends AudioWorkletProcessor{process(inputs){const ch=inputs[0]&&inputs[0][0];if(ch)this.port.postMessage(ch.slice(0));return true}}registerProcessor("jarvis-ear",JarvisEar);';
-          const url = URL.createObjectURL(new Blob([code], { type: 'application/javascript' }));
-          try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
-          const node = new window.AudioWorkletNode(ctx, 'jarvis-ear');
-          node.port.onmessage = (e) => earFrame(e.data);
-          source.connect(node);
-          Ear.worklet = true;
-          return node;
-        } catch (_) { /* fall through to the legacy node */ }
-      }
-      const proc = ctx.createScriptProcessor(2048, 1, 1);
-      proc.onaudioprocess = (e) => earFrame(e.inputBuffer.getChannelData(0));
-      source.connect(proc);
-      Ear.worklet = false;
-      return proc;
+    function earHeard(text) {
+      const clean = String(text || '').replace(/\s+/g, ' ').trim();
+      if (!clean) return;
+      const key = clean.toLowerCase();
+      const now = Date.now();
+      if (key === Ear.lastHeard.text && now - Ear.lastHeard.at < 3000) return;   // the same words twice: one command
+      Ear.lastHeard = { text: key, at: now };
+      toast(`🎙 ${clean}`);
+      if (typeof window.sendCommand === 'function') window.sendCommand(clean);
     }
 
-    async function earStartLocal() {
-      if (Ear.stream || Ear.starting) return Ear.ready && Ear.mode === 'local';
+    async function earStart() {
+      if (Ear.ready || Ear.starting) return;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         voiceProblem('This browser cannot open a microphone, so JARVIS cannot hear you. Open JARVIS in Chrome or Edge.');
-        return false;
+        return;
       }
       Ear.starting = true;
       renderEar();
       try {
         const stream = await micOpenStream();
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        // Ask for 16 kHz — the rate the speech model works at. A browser that
-        // won't (it is only a request) is shrunk to 16 kHz when sent instead.
+        // Ask for 16 kHz — the rate the speech model works at, and the rate
+        // the standalone app records at. A browser that won't (it is only a
+        // request) is shrunk to 16 kHz when the sentence is sent instead.
         const ctx = new Ctx({ sampleRate: 16000 });
         if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
         const source = ctx.createMediaStreamSource(stream);
-        const proc = await earAttachProcessor(ctx, source);
+        const proc = ctx.createScriptProcessor(2048, 1, 1);
         const silent = ctx.createGain();
         silent.gain.value = 0;                      // keeps the audio graph running without playing the mic back
+        proc.onaudioprocess = (e) => earFrame(e.inputBuffer.getChannelData(0));
+        source.connect(proc);
         proc.connect(silent);
         silent.connect(ctx.destination);
-        Object.assign(Ear, { ctx, stream, proc, rate: ctx.sampleRate, ready: true, mode: 'local', problem: '' });
-        return true;
+        Object.assign(Ear, { ctx, stream, proc, rate: ctx.sampleRate, ready: true, problem: '' });
       } catch (err) {
         const why = micExplain(err);
         Ear.problem = why.short;
         micReport(`${why.short}. ${why.long}`, why.actions);
-        return false;
       } finally {
         Ear.starting = false;
         renderEar();
       }
     }
 
-    function earStopLocal() {
-      if (Ear.stream) Ear.stream.getTracks().forEach((t) => { try { t.stop(); } catch (_) {} });
-      if (Ear.ctx) { try { Ear.ctx.close(); } catch (_) {} }
-      Object.assign(Ear, { ctx: null, stream: null, proc: null });
-      earDropSentence();
-      if (Ear.mode === 'local') { Ear.mode = ''; Ear.ready = false; }
-    }
-
-    function earStopAll() {
-      earStopBrowser();
-      earStopLocal();
-      Ear.ready = false;
-      Ear.mode = '';
-    }
-
-    async function earStart() {
-      if (_muted || Ear.ready || Ear.starting) return;
-      if (!window.isSecureContext) {
-        voiceProblem('This page is not a secure context, so browsers block the microphone. Open JARVIS at http://localhost:3000 (or an https:// address), then click anywhere on the page.');
-        return;
-      }
-      // Inside a frame (e.g. the Arena live preview), the OUTER page decides
-      // whether this page may touch a microphone. If it says no, no prompt
-      // can ever appear here — the one working move is a tab of its own,
-      // which is why the listen bar grows an "Open in New Tab" button there.
-      const _pol = (typeof micPolicyAllows === 'function') ? micPolicyAllows() : null;
-      if (_pol === false) {
-        voiceProblem('The preview frame is not allowed to use the microphone, so I cannot hear you here. Press ↗ Open in New Tab above the chat — mic and voice work in that tab.');
-        return;
-      }
-      // Browser recognition first: no install, no model download. Firefox
-      // (no SpeechRecognition) and any start failure use the raw ear below.
-      if (_voiceEngine !== 'local' && earStartBrowser()) return;
-      await earStartLocal();
-    }
-
     function earGesture() {
       if (Ear.ctx && Ear.ctx.state === 'suspended') Ear.ctx.resume().catch(() => {});
-      if (browserSpeechSupported() && window.speechSynthesis.paused) { try { window.speechSynthesis.resume(); } catch (_) {} }
       if (!Ear.ready && !_muted) earStart();
     }
 
     /* ── Mouth ──────────────────────────────────────────────────────────── */
-    function speakBrowserChunk(text, gen) {
-      return new Promise((resolve) => {
-        let started = false;
-        let settled = false;
-        const finish = (ok) => { if (!settled) { settled = true; clearInterval(resumeTimer); resolve(ok && started); } };
-        let utterance;
-        try {
-          utterance = new window.SpeechSynthesisUtterance(text);
-        } catch (_) { resolve(false); return; }
-        const voice = pickBrowserVoice(Speech.browserVoices);
-        if (voice) utterance.voice = voice;
-        utterance.lang = (voice && voice.lang) || navigator.language || 'en-GB';
-        utterance.rate = 1;
-        utterance.onstart = () => { started = true; };
-        utterance.onend = () => { clearInterval(resumeTimer); if (!settled) { settled = true; resolve(true); } };
-        utterance.onerror = (e) => {
-          const code = (e && e.error) || '';
-          if (gen !== Speech.generation || code === 'interrupted' || code === 'canceled') { finish(false); return; }
-          finish(started);   // only a never-started failure may fall back
-        };
-        // Chrome desktop silently stops long utterances (~15 s): keeping the
-        // synthesiser resumed while our own utterance runs prevents that,
-        // and chunking (chunkForSpeech) keeps each piece short anyway.
-        const resumeTimer = setInterval(() => {
-          try { if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) { window.speechSynthesis.pause(); window.speechSynthesis.resume(); } } catch (_) {}
-        }, 5000);
-        try { window.speechSynthesis.speak(utterance); } catch (_) { finish(false); }
-        // A synthesiser that accepts the sentence and never starts is the
-        // classic "voice does not work" silence: give up so Auto can fall back.
-        setTimeout(() => { if (!started) finish(false); }, 2500);
-      });
-    }
-
-    async function speakBrowser(text, gen) {
-      const voices = await loadBrowserVoices();
-      if (!voices.length) return false;
-      Speech.browserVoices = voices;
-      for (const piece of chunkForSpeech(text)) {
-        if (gen !== Speech.generation) return true;   // stopped on purpose
-        const ok = await speakBrowserChunk(piece, gen);
-        if (!ok) return false;
-      }
-      return true;
-    }
-
-    async function speakLocal(text, gen) {
+    // The PC makes the voice and plays it. The answer comes back only when playback has finished,
+    // so Speech.busy (and the ear's pause) covers the whole sentence.
+    async function speakOne(text, gen) {
       const controller = new AbortController();
       Speech.controller = controller;
       let data = null;
@@ -4772,42 +4512,18 @@
         });
         data = await res.json();
       } catch (err) {
-        if (gen !== Speech.generation || (err && err.name === 'AbortError')) return { ok: false, stopped: true };
-        return { ok: false, message: 'The local voice is not answering. Check /api/voice/health or Settings → Voice for why. The reply is in the chat.' };
+        if (gen !== Speech.generation || (err && err.name === 'AbortError')) return;
+        voiceProblem('The local voice is not answering. Its messages are in the server console, marked [local-voice]. The reply is in the chat.');
+        return;
       } finally {
         if (Speech.controller === controller) Speech.controller = null;
       }
-      if (gen !== Speech.generation) return { ok: false, stopped: true };
+      if (gen !== Speech.generation) return;
       if (!data || !data.ok) {
-        return { ok: false, message: `JARVIS could not speak: ${(data && data.message) || 'the local voice gave no reason'}. The reply is in the chat.` };
-      }
-      return { ok: true };
-    }
-
-    // One sentence, through the engine Settings chose. Returns which spoke.
-    async function speakOne(text, gen) {
-      const wantBrowser = _voiceEngine === 'browser' || _voiceEngine === 'auto';
-      const wantLocal = _voiceEngine === 'local' || _voiceEngine === 'auto';
-      if (wantBrowser && browserSpeechSupported()) {
-        const ok = await speakBrowser(text, gen);
-        if (gen !== Speech.generation) return;
-        if (ok) { Speech.lastEngine = 'browser'; Ear.problem = ''; renderEar(); return; }
-        if (_voiceEngine === 'browser') {
-          voiceProblem('This browser has no working voice (none installed, or it would not start). Switch Settings → Voice to Auto or Local. The reply is in the chat.');
-          return;
-        }
-        // Auto: fall through to the computer's own voice for this sentence.
-      } else if (_voiceEngine === 'browser') {
-        voiceProblem('This browser has no speech synthesis at all. Switch Settings → Voice to Auto or Local. The reply is in the chat.');
+        voiceProblem(`JARVIS could not speak: ${(data && data.message) || 'the local voice gave no reason'}. The reply is in the chat.`);
         return;
       }
-      if (wantLocal) {
-        const result = await speakLocal(text, gen);
-        if (result.stopped || gen !== Speech.generation) return;
-        if (result.ok) { Speech.lastEngine = 'local'; Ear.problem = ''; }
-        else if (_voiceEngine === 'local' || !browserSpeechSupported()) voiceProblem(result.message);
-        else voiceProblem('Neither voice could speak: this browser has no working voice and the local voice is not answering (Settings → Voice shows the health check). The reply is in the chat.');
-      }
+      Ear.problem = '';
     }
 
     async function pumpSpeech() {
@@ -4815,24 +4531,16 @@
       const next = Speech.queue.shift();
       if (!next) {
         Ear.resumeAt = performance.now() + EAR_RESUME_MS;
-        if (Ear.recogWanted && !_muted) earRestartBrowser();
         renderEar();
         return;
       }
       Speech.busy = true;
-      earStopBrowserSoft();
       renderEar();
       const gen = Speech.generation;
       await speakOne(next, gen);
       if (gen !== Speech.generation) return;     // stopSpeaking() has already cleared everything
       Speech.busy = false;
       pumpSpeech();
-    }
-
-    // Pause (do not kill) browser recognition while JARVIS talks, so he
-    // never hears himself; pumpSpeech restarts it when the queue empties.
-    function earStopBrowserSoft() {
-      if (Ear.recog && Ear.recogLive) { try { Ear.recog.stop(); } catch (_) {} }
     }
 
     function speakPart(raw) {
@@ -4850,6 +4558,9 @@
         Speech.spoken.add(replyId);
         if (Speech.spoken.size > 200) Speech.spoken.delete(Speech.spoken.values().next().value);
       }
+      // ONE request for the whole reply: the voice service streams it piece
+      // by piece with no gaps. Cutting it up here meant every piece waited
+      // for the previous piece to finish before it was even made.
       const clean = cleanForSpeech(String(text));
       if (!clean) return;
       Speech.queue.push(clean.slice(0, 1400));
@@ -4883,10 +4594,7 @@
       Speech.queue.length = 0;
       Speech.busy = false;
       if (Speech.controller) Speech.controller.abort();
-      if (browserSpeechSupported()) { try { window.speechSynthesis.cancel(); } catch (_) {} }
       _authFetch('/api/voice/stop', { method: 'POST' }).catch(() => {});
-      Ear.resumeAt = performance.now() + EAR_RESUME_MS;
-      if (Ear.recogWanted && !_muted) earRestartBrowser();
       renderEar();
     }
 
@@ -4894,84 +4602,42 @@
     function toggleMute() {
       _muted = !_muted;
       if (_muted) {
-        earStopAll();
+        earDropSentence();
         toast('🔇 Muted — JARVIS is not listening');
       } else {
         Ear.lastHeard = { text: '', at: 0 };
-        Ear.srBlocked = false;
         toast('🎙 Listening again — just speak');
-        earStart();
+        if (!Ear.ready) earStart();
       }
       renderEar();
     }
-
-    function setVoiceEngine(engine) {
-      if (engine !== 'auto' && engine !== 'browser' && engine !== 'local') return;
-      _voiceEngine = engine;
-      try { window.localStorage.setItem('jarvis-voice-engine', engine); } catch (_) {}
-      stopSpeaking();
-      if (engine === 'local' && Ear.mode === 'browser') { earStopBrowser(); if (!_muted) earStartLocal(); }
-      if (engine !== 'local' && Ear.mode === 'local' && srClass()) { earStopLocal(); if (!_muted) earStart(); }
-      renderEar();
-    }
-    window.setVoiceEngine = setVoiceEngine;
-
-    window.jarvisSpeechStatus = () => ({
-      engine: _voiceEngine,
-      lastEngine: Speech.lastEngine,
-      usingServer: _voiceEngine === 'local' || (_voiceEngine === 'auto' && !browserSpeechSupported()),
-      supported: browserSpeechSupported(),
-      voices: (Speech.browserVoices || []).length,
-      busy: Speech.busy,
-      queued: Speech.queue.length,
-    });
-    window.jarvisMicStatus = () => ({
-      state: _muted ? 'muted' : Ear.ready ? 'listening' : Ear.starting ? 'starting' : 'off',
-      mode: Ear.mode,
-      ready: Ear.ready,
-      problem: Ear.problem,
-      browserRecognition: !!srClass(),
-      worklet: Ear.worklet,
-    });
-
-    async function refreshVoiceHealth() {
-      const rep = document.getElementById('voice-health-report');
-      if (!rep) return;
-      try {
-        const res = await _authFetch('/api/voice/health');
-        const health = await res.json().catch(() => ({}));
-        rep.textContent = health && health.ok
-          ? `Local voice health: ready — Kokoro files ${health.voiceFilesPresent ? 'present' : 'missing (system voice fallback: ' + (health.systemVoice || 'none') + ')'}, speech model ${health.speechModel || '?'}. Browser voice/mic: ${browserSpeechSupported() ? 'available' : 'unavailable'} / ${srClass() ? 'available' : 'unavailable'}.`
-          : `Local voice health: not ready — ${(health && health.message) || 'no answer from the server'}. Browser voice/mic in Auto still work; for Local, run: pip install -r backend/requirements-local-voice.txt and put the Kokoro files in models/kokoro/.`;
-      } catch (err) {
-        rep.textContent = `Local voice health: could not reach the JARVIS server (${err.message}). Browser voice/mic in Auto still work once the page is open.`;
-      }
-    }
-    window.refreshVoiceHealth = refreshVoiceHealth;
 
     /* ── Settings self-tests ────────────────────────────────────────────── */
     async function testSpeakersNow() {
       const say = (t) => { const r = document.getElementById('voice-test-report'); if (r) r.textContent = t; };
-      say('Speaking a test line…');
-      const gen = Speech.generation;
-      Speech.lastEngine = '';
-      Ear.problem = '';
-      await speakOne('Speakers test. If you can hear this, the voice works.', gen);
-      if (Speech.lastEngine === 'browser') {
-        say('✔ Spoke with this browser\'s voice, in this tab. If you heard nothing, check this device\'s volume/output.');
-      } else if (Speech.lastEngine === 'local') {
-        say('✔ Spoke with the local voice through this computer\'s speakers. If you heard nothing, check that computer\'s volume/output device.');
-      } else if (Ear.problem) {
-        say(`✖ ${Ear.problem}`);
-      } else {
-        say('✖ Nothing spoke. Open Settings → Voice, keep the engine on Auto, and try again after clicking once on the page.');
+      say('Asking the local voice to speak…');
+      let data = null;
+      try {
+        const res = await _authFetch('/api/voice/speak', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text: 'Speakers test. If you can hear this, the voice works.' }),
+        });
+        data = await res.json();
+      } catch (_) {
+        say('✖ The local voice is not answering. Its messages are in the server console, marked [local-voice].');
+        return;
       }
-      refreshVoiceHealth();
+      if (!data || !data.ok) {
+        say(`✖ The voice could not speak: ${(data && data.message) || 'no reason given'}`);
+        return;
+      }
+      say("✔ The local voice spoke through this computer's speakers. If you heard nothing, check the volume and output device.");
     }
     window.testSpeakersNow = testSpeakersNow;
 
-    /* Browsers will not open a microphone or play sound until the page has
-       been clicked. So the first click starts the ear and earns one short
+    /* Browsers will not play sound until the page has been clicked, and some
+       only unlock it on the FIRST click. So the first click earns one short
        sentence, proof out loud that JARVIS can be heard. */
     function armVoiceOnGesture() {
       if (_voiceProofDone) return;
@@ -4997,9 +4663,7 @@
 
     document.addEventListener('pointerdown', earGesture, true);
     document.addEventListener('keydown', earGesture, true);
-    // No blind earStart() on a timer: browsers block microphone access and
-    // suspend audio until a user gesture, so starting then only produced a
-    // refused prompt and a dead-looking mic. The first click starts it.
+    setTimeout(earStart, 900);
     armVoiceOnGesture();
     renderEar();
 
@@ -5148,7 +4812,6 @@
       else if (w && typeof bringToFront === 'function') bringToFront(w);
       if (w) { try { w.scrollIntoView({ block: 'nearest' }); } catch (_) {} }
       refreshVoiceBudget();
-      if (typeof window.refreshVoiceHealth === 'function') window.refreshVoiceHealth();
       const rep = document.getElementById('voice-test-report');
       if (rep) { rep.style.borderColor = 'var(--accent)'; setTimeout(() => { rep.style.borderColor = ''; }, 900); }
     }

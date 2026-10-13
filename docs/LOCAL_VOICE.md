@@ -1,32 +1,12 @@
 # JARVIS's voice on this computer
 
-The dashboard has two voice layers, chosen in Settings → Voice (engine):
+There is one voice path. It is the only voice generator the dashboard uses.
 
-- **Auto (default) / Browser:** the browser's own SpeechRecognition hears you
-  (Chrome, Edge, Safari) and its own voice speaks in the tab. Nothing to
-  install, nothing to download — this is why the mic and voice work on a fresh
-  `npm start`. Note: Chrome/Edge recognition sends audio to the browser
-  maker's service, and Chrome's voice list loads asynchronously.
-- **Local:** audio stays on this computer. The browser captures the microphone
-  (AudioWorklet, with the deprecated ScriptProcessor as fallback) and sends it
-  to faster-whisper; Kokoro (`local_voice/service.py`) makes every reply and
-  plays it through this computer's speakers. If the Kokoro files are missing,
-  the operating system's own voice (`say` / Windows SAPI / espeak) speaks
-  instead of silence.
-- In **Auto**, whichever layer works takes the sentence: a missing Kokoro
-  download can no longer leave JARVIS silent, and a browser with no voice
-  falls back to this computer per sentence.
+- **Speaking:** Kokoro (`local_voice/service.py`) makes every reply and plays it through this computer's speakers.
+- **Hearing:** the browser captures the microphone and sends the audio to the server, which passes it to faster-whisper on this computer.
 - **Gemini** is used only for answers (text). It never makes or hears the voice.
 
-Two platform rules explain most "the mic is dead" reports: browsers only hand
-a microphone to secure pages (`http://localhost:3000` counts; plain `http://`
-on another address does not), and microphone/AudioContext start requires a
-user gesture — so the ear starts on your first click or the 🎤 button, not on
-a timer. `GET /api/voice/health` (and Settings → Voice) reports which local
-pieces are present; the service is restarted automatically a few times if it
-crashes, and its lines are in the server console marked `[local-voice]`.
-
-## Setup for Local mode (once — Auto/Browser need none of this)
+## Setup (once)
 
 1. `pip install -r backend/requirements-local-voice.txt`
 2. Put the two Kokoro files in `models/kokoro/`:
@@ -41,13 +21,7 @@ crashes, and its lines are in the server console marked `[local-voice]`.
 Every voice message goes to the server console, marked `[local-voice]`. The green bar above the chat
 shows the same problem in one line. Common causes:
 
-- `Microphone permission was refused` / nothing happens on click — allow the mic via the lock icon by
-  the address bar; open JARVIS at `http://localhost:3000` (secure page), in its own tab (frames can
-  block the mic), and click once first (browsers require a gesture).
-- The browser voice never starts or lists no voices — keep the engine on *Auto*: the local voice
-  takes the sentence, and Test Speakers in Settings → Voice says which voice actually spoke.
-- `The Kokoro voice files are missing` — the two files are not in `models/kokoro/`. Until they are,
-  Local mode uses the operating system's own voice if it has one.
+- `The Kokoro voice files are missing` — the two files are not in `models/kokoro/`.
 - `sounddevice is not installed` / `speakers could not play` — install the requirements; check the output device.
 - `The local voice is not answering` — the service did not start; look at the `[local-voice]` lines at startup.
 
