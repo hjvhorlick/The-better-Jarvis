@@ -5569,6 +5569,7 @@
     }
     let _fallbackEarCycle = false;
     let _fallbackGestureArmed = false;
+    let _forceRawAudioFallback = false;
     function shouldListen() {
       return _micOn && !_muted && !_pausedForSpeech && !_needsGesture && Mic.state === 'idle';
     }
@@ -5692,7 +5693,7 @@
     }
 
     function startListener() {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const SR = _forceRawAudioFallback ? null : (window.SpeechRecognition || window.webkitSpeechRecognition);
       if (!SR) {
         if (!shouldListen() || Mic.state !== 'idle') { renderWakeBtn(); return; }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia ||
@@ -5731,10 +5732,21 @@
         const code = (e && e.error) || 'unknown';
         if (code === 'no-speech' || code === 'aborted' || code === 'audio-capture') return;   // onend brings it straight back
         if (code === 'not-allowed' || code === 'service-not-allowed') {
-          // The browser refused its own recogniser. Another click is usually all
-          // it wanted (its first session must be born in a gesture); two refusals
-          // in a row mean it is genuinely blocked, and then the owner is told so.
           stopListener();
+          const canCaptureRawAudio = !!(
+            navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+            (window.AudioContext || window.webkitAudioContext)
+          );
+          if (canCaptureRawAudio) {
+            // SpeechRecognition can exist but still be blocked by the browser's
+            // speech service. Switch to the existing raw-audio path instead of
+            // leaving the microphone permanently OFF.
+            _forceRawAudioFallback = true;
+            _fallbackGestureArmed = true;
+            micReport('🎤 The browser speech-recognition service is blocked. I will use microphone audio transcription instead; that fallback uses Gemini for transcription, but not for speaking.', []);
+            armWakeOnGesture();
+            return;
+          }
           _denied++;
           if (_denied <= 2) { armWakeOnGesture(); return; }
           _micOn = false; localStorage.setItem('jarvis-wake', 'off');
