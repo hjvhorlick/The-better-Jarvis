@@ -220,6 +220,70 @@ export function resolveKeySlot(slot: KeySlot): KeyInfo {
 
 /** The first (normal) key. */
 export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
+
+/* ── Image-search keys: Pexels and Pixabay ───────────────────────────────────
+ * Both give a free API key, and both are read exactly like the Gemini keys: the
+ * environment first, then config/api_keys.json, which is what Settings writes.
+ * Neither is required. With no key at all, image search falls back to Wikimedia
+ * Commons and Openverse, which need nothing — so a picture is always findable.
+ */
+export type ImageService = 'pexels' | 'pixabay';
+
+const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
+  pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
+  pixabay: { env: 'PIXABAY_API_KEY', field: 'pixabay_api_key', label: 'Pixabay', signup: 'https://pixabay.com/api/docs/' },
+};
+
+export interface ServiceKeyInfo {
+  key: string | null;
+  source: 'environment' | '.env' | 'config/api_keys.json' | null;
+  tail: string | null;
+  service: ImageService;
+  label: string;
+  detail: string;
+}
+
+/** Read one optional image-service key. Never throws: a missing key is normal. */
+export function resolveImageServiceKey(service: ImageService): ServiceKeyInfo {
+  const names = IMAGE_SERVICES[service];
+  const env = (process.env[names.env] || '').trim();
+  if (env) {
+    return {
+      key: env,
+      source: 'environment',
+      tail: env.slice(-4),
+      service,
+      label: names.label,
+      detail: `read from the environment (${names.env})`,
+    };
+  }
+  const file = readApiConfigFile();
+  const value = typeof file[names.field] === 'string' ? (file[names.field] as string).trim() : '';
+  if (value) {
+    return {
+      key: value,
+      source: 'config/api_keys.json',
+      tail: value.slice(-4),
+      service,
+      label: names.label,
+      detail: `read from config/api_keys.json (${names.field}) — saved by Settings → "Pictures"`,
+    };
+  }
+  return {
+    key: null,
+    source: null,
+    tail: null,
+    service,
+    label: names.label,
+    detail: `no ${names.label} key: I checked the environment (${names.env}) and ${API_CONFIG_PATH} (${names.field}). ` +
+      `A free key comes from ${names.signup}. It is optional — Wikimedia Commons and Openverse need no key at all.`,
+  };
+}
+
+/** Both image-service keys, for Settings and for the search engine's order. */
+export function resolveImageServiceKeys(): Record<ImageService, ServiceKeyInfo> {
+  return { pexels: resolveImageServiceKey('pexels'), pixabay: resolveImageServiceKey('pixabay') };
+}
 /** The optional second key, the fallback. */
 export function resolveGeminiKey2(): KeyInfo { return resolveKeySlot(2); }
 
@@ -936,23 +1000,12 @@ export function isOffline(): boolean {
   return offlineSnapshot().offline;
 }
 
-/**
- * The honest refusal for a feature that would need the internet. It says what
- * happened, that the chat itself is still working, and when the internet comes
- * back — because "you cannot do that" with no reason and no way out is exactly
- * what makes an assistant feel broken.
- */
-export function offlineRefusal(feature: string): string {
-  const state = offlineSnapshot();
-  if (!state.offline) return '';
-  const back = state.reason === 'google-stopped'
-    ? ' The keys come back at local midnight, or sooner if you add a key from another Google account in Settings → "The Brain".'
-    : state.reason === 'no-key'
-      ? ' Add a key in Settings → "The Brain" and it works at once.'
-      : ' Say "come back online" (or switch it in Settings) and it works again.';
-  return `${feature} needs the internet, and I am offline — ${state.why}. Nothing was fetched and nothing was counted.${back} ` +
-    `Everything on this computer still works: ${state.works.slice(0, 4).join(', ')}.`;
-}
+// There is deliberately no offlineRefusal() here any more. It used to write the
+// "this feature needs the internet and I am offline" paragraph, and it was
+// attached to video scripts, Internet Research and the picture maker. A quota
+// running out means "no Gemini" — it never meant "no internet" — so every one of
+// those features now reaches the open web instead of refusing, and the paragraph
+// itself is gone. Nothing in this app refuses a request because of a quota.
 
 // ── The voice's own counter (the voice is local now: it never touches Gemini) ─
 interface Counter { day: string; used: number; unreadable: boolean; }
@@ -1779,6 +1832,32 @@ function rewriteEnvLine(name: string, value: string | null): boolean {
  * Save a key where the app reads it. Slot 1 is the normal key (gemini_api_key),
  * slot 2 the fallback (gemini_api_key_2). Both follow the same rules.
  */
+/** Save one optional image-service key, exactly like the Gemini keys are saved. */
+export function saveImageServiceKey(service: ImageService, key: string): { savedTo: string[]; info: ServiceKeyInfo } {
+  const names = IMAGE_SERVICES[service];
+  const cleaned = key.trim();
+  if (cleaned.length < 8) throw new Error(`That does not look like a ${names.label} key — it needs at least 8 characters.`);
+  const file = readApiConfigForWriting();
+  file[names.field] = cleaned;
+  writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+  // Live at once, so the owner does not have to restart to see it work.
+  process.env[names.env] = cleaned;
+  return { savedTo: ['config/api_keys.json'], info: resolveImageServiceKey(service) };
+}
+
+/** Remove one image-service key. Pictures still work — Commons needs no key. */
+export function clearImageServiceKey(service: ImageService): { removed: boolean; info: ServiceKeyInfo } {
+  const names = IMAGE_SERVICES[service];
+  const file = readApiConfigForWriting();
+  const had = typeof file[names.field] === 'string' && Boolean(String(file[names.field]).trim());
+  if (had) {
+    delete file[names.field];
+    writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
+  }
+  delete process.env[names.env];
+  return { removed: had, info: resolveImageServiceKey(service) };
+}
+
 export function saveGeminiKey(key: string, slot: KeySlot = 1): SaveKeyResult {
   const cleaned = key.trim();
   if (cleaned.length < 10) throw new Error('That does not look like a Gemini API key — it needs at least 10 characters.');

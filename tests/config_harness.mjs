@@ -476,7 +476,10 @@ function freePort() {
     ok('…and an offline greeting stays brief and honest', /no Gemini key is set/.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
        String(greeting.body.reply));
     const chat = await post(srv, '/api/command', { text: 'what can you tell me offline' });
-    ok('…and an unanswered offline question names every place checked', /GEMINI_API_KEY/.test(String(chat.body.reply)) && /config\/api_keys\.json/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
+    // The old reply was a paragraph about being offline and where the key files
+    // live. That is exactly the clutter the owner asked to have gone: the chat
+    // answers the question, and says nothing about its own state.
+    ok('…and an unanswered question stays short, with no lecture about being offline', !/I am offline|Still working|nothing was counted|GEMINI_API_KEY/i.test(String(chat.body.reply)) && /learn:/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
     ok('…and no call was made without a key', !srv.stub.calls.some((c) => c.kind === 'generate'), `calls=${srv.stub.calls.length}`);
     const saved = await post(srv, '/api/settings/gemini-key', { key: 'a-new-harness-key-012345' });
     ok('saving a key clears the previous no-key status', saved.body.ok === true && !/no Gemini key is set|did not answer|offline/i.test(String((await post(srv, '/api/command', { text: 'hello' })).body.reply)),
@@ -554,8 +557,8 @@ function freePort() {
     // The owner's rule: a 429 is a WARNING, not a block. The chat does not stop
     // and it does not dump the provider error — the app goes OFFLINE, answers
     // from this computer, and says so in one line.
-    ok('429: the chat does NOT stop — it goes offline and answers locally', !/Google has stopped our calls for today/.test(String(chat.body.reply)) && /offline/i.test(String(chat.body.reply)) && /answered from this computer/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 120));
-    ok('429: …and the reply is a warning, not a wall of provider error', !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)) && /429/.test(String(chat.body.reply)) && /local midnight/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 140));
+    ok('429: the chat does NOT stop — it answers anyway, without a model', !/Google has stopped our calls for today/.test(String(chat.body.reply)) && String(chat.body.reply).trim().length > 0 && !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 120));
+    ok('429: …and the reply is not a wall of provider error or quota talk', !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)) && !/quota/i.test(String(chat.body.reply)) && !/\boffline\b/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 140));
     ok('429: …and it offers the local way forward (teach it, or wait for midnight)', /learn:/i.test(String(chat.body.reply)), 'offers "learn:"');
     // Local answers never go near the gate.
     const time = await post(srv3, '/api/command', { text: 'what time is it' });
@@ -737,7 +740,7 @@ function freePort() {
   try {
     const chat = await post(spent, '/api/command', { text: 'explain how a transistor works' });
     const sentAfterQuota = spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length;
-    ok('offline: the chat answers instead of stopping', chat.status === 200 && /offline/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 90));
+    ok('offline: the chat answers instead of stopping', chat.status === 200 && String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 90));
     const state = await get(spent, '/api/offline');
     ok('offline: /api/offline says offline, and why (Google\'s 429, not this app)', state.body.offline === true && state.body.reason === 'google-stopped' && /429/.test(String(state.body.why)), `${state.body.reason} — ${String(state.body.why).slice(0, 70)}`);
     ok('offline: …and lists what still works and what is refused', Array.isArray(state.body.works) && state.body.works.length > 3 && Array.isArray(state.body.refused) && state.body.refused.length > 2, `${state.body.works.length} work / ${state.body.refused.length} refused`);
@@ -748,11 +751,16 @@ function freePort() {
 
     // Nothing that needs the internet may be fetched — and nothing is counted.
     const research = await post(spent, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
-    ok('offline: Internet Research is refused before anything is fetched', research.status === 503 && /offline/i.test(String(research.body.error)) && /Nothing was fetched/.test(String(research.body.error)), String(research.body.error).slice(0, 100));
+    // A spent Gemini quota used to switch the internet off entirely. It does
+    // not: research gathering is not a Gemini call, so the task simply starts.
+    ok('offline: Internet Research still runs — a quota is not a block on the internet', research.status === 202 || research.status === 200, `status=${research.status} ${String(research.body.error || research.body.task?.id || '').slice(0, 60)}`);
     const picture = await post(spent, '/api/ai/image', { prompt: 'a teapot, glass, studio light' });
-    ok('offline: …and so are AI pictures', picture.status === 503 && /offline/i.test(String(picture.body.error)), String(picture.body.error).slice(0, 100));
+    // A picture is FOUND when it cannot be drawn: Pexels/Pixabay with a key,
+    // Commons/Openverse without. In this sandbox there is no route out, so what
+    // is proved here is that the refusal is honest and says nothing about quota.
+    ok('offline: AI pictures fall back to a found photograph, with no quota talk', picture.status === 200 ? Boolean(picture.body.found) : !/offline|quota/i.test(String(picture.body.error)), `status=${picture.status} ${String(picture.body.error || picture.body.url || '').slice(0, 70)}`);
     const researchChat = await post(spent, '/api/command', { text: 'research the history of the steam engine' });
-    ok('offline: …and by chat, before a task is queued', /needs the internet/.test(String(researchChat.body.reply)) && !/started/.test(String(researchChat.body.reply)), String(researchChat.body.reply).slice(0, 100));
+    ok('offline: …and by chat, research still starts', /started|Research/i.test(String(researchChat.body.reply)) && !/needs the internet/.test(String(researchChat.body.reply)), String(researchChat.body.reply).slice(0, 100));
 
     // Local work carries on, and costs nothing at all.
     const local = await post(spent, '/api/command', { text: 'what time is it' });
@@ -788,9 +796,9 @@ function freePort() {
     const on = await post(manual, '/api/offline', { on: true });
     ok('offline switch: switching offline says what still works', on.body.offline === true && on.body.reason === 'manual' && on.body.forced === true, `${on.body.reason}`);
     const chat = await post(manual, '/api/command', { text: 'explain how a transistor works' });
-    ok('offline switch: the chat answers locally and calls nothing', /offline/i.test(String(chat.body.reply)) && manual.stub.calls.length === before, String(chat.body.reply).slice(0, 90));
+    ok('offline switch: the chat still answers, and calls no model', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && manual.stub.calls.length === before, String(chat.body.reply).slice(0, 90));
     const research = await post(manual, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
-    ok('offline switch: …and the internet stays out of it', research.status === 503, String(research.body.error).slice(0, 80));
+    ok('offline switch: …and the internet is still available to it', research.status === 202 || research.status === 200, `status=${research.status}`);
     ok('offline switch: …and nothing was counted', !fs.existsSync(path.join(manual.cwd, 'runtime', 'quota.json')), 'no counter file written');
     ok('offline switch: it is remembered in runtime/offline.json', fs.existsSync(path.join(manual.cwd, 'runtime', 'offline.json')) && JSON.parse(fs.readFileSync(path.join(manual.cwd, 'runtime', 'offline.json'), 'utf-8')).forced === true, 'runtime/offline.json');
     const byVoice = await post(manual, '/api/command', { text: 'come back online' });
@@ -807,7 +815,7 @@ function freePort() {
     const state = await get(boot, '/api/offline');
     ok('offline from boot: SUPPER_OFFLINE=1 means local only from the first moment', state.body.offline === true && state.body.reason === 'manual', `${state.body.reason}`);
     const chat = await post(boot, '/api/command', { text: 'explain how a transistor works' });
-    ok('offline from boot: …and no call is made', /offline/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
+    ok('offline from boot: …and no model is called', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
     ok('offline from boot: the terminal said so at startup', /OFFLINE — local only/.test(boot.log()), (boot.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 110));
   } finally { await boot.stop(); }
 
@@ -819,7 +827,7 @@ function freePort() {
     const state = await get(noKey, '/api/offline');
     ok('no key: the app says offline, not broken', state.body.offline === true && state.body.reason === 'no-key', `${state.body.offline} / ${state.body.reason}`);
     const chat = await post(noKey, '/api/command', { text: 'explain how a transistor works' });
-    ok('no key: …and answers from this computer instead of failing', /offline/i.test(String(chat.body.reply)) && noKey.stub.calls.length === 0, `stub calls=${noKey.stub.calls.length}`);
+    ok('no key: …and answers from the open web instead of failing', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && noKey.stub.calls.length === 0, `stub calls=${noKey.stub.calls.length}`);
     const undo = await post(noKey, '/api/offline', { on: false });
     ok('no key: "come back online" cannot invent a key', undo.body.offline === true && undo.body.reason === 'no-key', `${undo.body.offline} / ${undo.body.reason}`);
     ok('no key: …and the switch says so plainly', /still offline/.test(String(undo.body.message)), String(undo.body.message).slice(0, 110));

@@ -1509,6 +1509,27 @@
             </div>
             <span class="settings-desc" id="gemini-key2-status">Checking…</span>
 
+            <!-- PICTURES, VIDEO AND SOUND: two optional FREE keys. Neither is
+                 required — with neither set, pictures come from Wikimedia
+                 Commons and Openverse, and sound from those plus the Internet
+                 Archive. These cost no quota and never touch Gemini. -->
+            <span class="settings-desc" style="margin-top: 14px;"><b>Pictures &amp; video — free keys</b> (optional, nothing to do with Gemini). <b>Pexels</b> and <b>Pixabay</b> both give a free API key and both serve photographs and video. Paste either one and “find me a picture of …” gets far better results. With neither set, JARVIS still finds pictures from Wikimedia Commons and Openverse, and sound from those plus the Internet Archive — so nothing here ever blocks a search.</span>
+            <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
+              <span class="settings-desc" style="min-width: 58px;">Pexels</span>
+              <input type="password" id="pexels-key-input" autocomplete="off" spellcheck="false" placeholder="free key from pexels.com/api"
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('pexels')">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('pexels')" title="Remove the Pexels key">Remove</button>
+            </div>
+            <div style="display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;">
+              <span class="settings-desc" style="min-width: 58px;">Pixabay</span>
+              <input type="password" id="pixabay-key-input" autocomplete="off" spellcheck="false" placeholder="free key from pixabay.com/api/docs"
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('pixabay')">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('pixabay')" title="Remove the Pixabay key">Remove</button>
+            </div>
+            <span class="settings-desc" id="image-keys-status">Checking…</span>
+
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
                  real 429 from Google stops calls, and only until local midnight. -->
             <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
@@ -1883,7 +1904,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-offline-mode-1';
+    const JARVIS_BUILD = '2026-10-13-open-web-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -2026,7 +2047,7 @@
 
     async function toggleOfflineMode() {
       const state = _offlineState || {};
-      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); return; }
+      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); return; }
       try {
         const res = await _authFetch('/api/offline', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: null }),
@@ -2206,6 +2227,80 @@
       refreshGeminiKeyStatus();
     }
     window.clearGeminiKey2 = clearGeminiKey2;
+
+    // ── Pictures & video: the two optional FREE keys ─────────────────────────
+    // These have nothing to do with Gemini and spend no quota. Neither is
+    // required: with neither set, pictures still come from Wikimedia Commons
+    // and Openverse, so saving one only ever improves a search.
+    async function refreshImageKeyStatus() {
+      const el = document.getElementById('image-keys-status');
+      try {
+        const res = await _authFetch('/api/settings/image-keys');
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(info.keys)) {
+          if (el) { el.textContent = `Could not read the picture keys: ${info.error || `HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        if (el) {
+          el.style.color = '';
+          el.textContent = info.keys.map((k) =>
+            `${k.label}: ${k.present ? `set (…${k.tail})` : 'not set — pictures still work via Wikimedia Commons / Openverse'}`).join('  ·  ');
+        }
+      } catch (err) {
+        if (el) { el.textContent = `Could not read the picture keys: ${err.message}`; el.style.color = '#ff6b6b'; }
+      }
+    }
+    window.refreshImageKeyStatus = refreshImageKeyStatus;
+
+    async function saveImageKey(service) {
+      const input = document.getElementById(`${service}-key-input`);
+      const el = document.getElementById('image-keys-status');
+      const key = (input?.value || '').trim();
+      if (!key) { if (el) { el.textContent = `Paste the ${service} key first.`; el.style.color = '#ff6b6b'; } return; }
+      if (el) { el.textContent = 'Saving…'; el.style.color = ''; }
+      try {
+        const res = await _authFetch('/api/settings/image-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service, key })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (el) { el.textContent = `Save failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        if (input) input.value = '';
+        toast(`${service === 'pexels' ? 'Pexels' : 'Pixabay'} key saved — pictures and video will use it at once`);
+      } catch (err) {
+        if (el) { el.textContent = `Save failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshImageKeyStatus();
+    }
+    window.saveImageKey = saveImageKey;
+
+    async function clearImageKey(service) {
+      const el = document.getElementById('image-keys-status');
+      if (el) { el.textContent = 'Removing…'; el.style.color = ''; }
+      try {
+        const res = await _authFetch('/api/settings/image-keys', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ service, clear: true })
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        toast(`${service === 'pexels' ? 'Pexels' : 'Pixabay'} key removed — pictures now come from Wikimedia Commons`);
+      } catch (err) {
+        if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshImageKeyStatus();
+    }
+    window.clearImageKey = clearImageKey;
 
     // ── Toast Utility ─────────────────────────────────────────────────────────
     let _toastTimer;
@@ -3115,7 +3210,7 @@
         FoleyAudio.grab();
         // Settings must show the truth about the brain key and the build every
         // time it opens.
-        if (winId === 'win-settings') refreshGeminiKeyStatus();
+        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); }
       } else {
         win.style.display = 'none';
         FoleyAudio.place();

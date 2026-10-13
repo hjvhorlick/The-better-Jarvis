@@ -24,11 +24,12 @@ import {
   brainCheck,
   classifyGeminiError,
   clearGeminiKey2,
+  clearImageServiceKey,
+  saveImageServiceKey,
   explainBrainFailure,
   onQuotaEvent,
   quotaSnapshot,
   offlineSnapshot,
-  offlineRefusal,
   setOfflineMode,
   voiceQuotaSnapshot,
   configStatus,
@@ -50,6 +51,16 @@ import {
   type OfflineSnapshot,
 } from './config.js';
 import { KnowledgeStore } from './knowledge.js';
+import {
+  answerFromWeb,
+  imageKeyStatus,
+  readUrl,
+  searchAudio,
+  searchImages,
+  searchVideos,
+  searchWeb,
+  type MediaHit,
+} from './search/engine.js';
 import { BrainStore, BrainStoreError, containsSensitiveContent, looksLikeCredentialInput, type BrainTurn } from './brain.js';
 import {
   DraftDesk,
@@ -78,7 +89,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-offline-mode-1';
+const SERVER_BUILD = '2026-10-13-open-web-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -771,17 +782,72 @@ function standaloneSystemInstruction(contextBlock: string): string {
  * a short honest line saying what happened (a warning, never a block) plus the
  * two things that still move the work forward on this computer.
  */
-function offlineChatReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>, state: OfflineSnapshot): string {
-  if (staleKnown) return `${knowledge.describeStale(staleKnown, resolveTextModel().model)}\n\n${state.warning}`;
-  const back = state.reason === 'google-stopped'
-    ? 'The keys come back at local midnight (Google resets its own daily quota then), or sooner if you add a key from another Google account in Settings → "The Brain".'
-    : state.reason === 'no-key'
-      ? `${KEY_HELP} Add one and fresh answers work at once — no restart.`
-      : 'Say "come back online" (or use the switch in Settings) and the keys are used again.';
-  const taught = `Nothing on this computer knows "${trimmed.slice(0, 60)}" yet. Two things still help: teach me with "learn: ${trimmed.slice(0, 40)} = <answer>" and I will answer it for ever with no call at all, or ask again once I am back online.`;
-  return `${state.warning} ${back}\n\n` +
-    `Still working, with no quota and no internet: ${state.works.slice(0, 5).join('; ')}.\n` +
-    `${taught}`;
+/**
+ * A real photograph of the subject, from the open web — no model, no quota.
+ * Used whenever a drawn picture is not available, so "make me a picture of the
+ * reactor" still produces a picture of the reactor.
+ */
+async function pictureFromWeb(subject: string): Promise<string> {
+  try {
+    const hits = await searchImages(subject, { maxResults: 6 });
+    const best = hits[0];
+    if (best) {
+      const imgMsg: LogMessage = {
+        type: 'log',
+        speaker: 'jarvis',
+        text: `Found one for you, sir — ${best.title}.`,
+        image: best.thumb || best.url,
+        timestamp: Date.now(),
+      };
+      messageHistory.push(imgMsg);
+      broadcast(imgMsg);
+      const credit = [best.author ? `by ${best.author}` : '', best.license || '', best.source]
+        .filter(Boolean).join(' · ');
+      return `Here is a real photograph of ${subject}: ${best.url}\n\n`
+        + `${hits.slice(0, 6).map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}`).join('\n')}\n\n`
+        + `(${credit}${credit ? ' — ' : ''}found on the open web, no model called, no quota used.)`;
+    }
+  } catch (err) {
+    console.warn('[JARVIS] the picture search failed:', err instanceof Error ? err.message : err);
+  }
+  const keys = imageKeyStatus().filter((k) => !k.present).map((k) => k.label);
+  return `I could not find a picture of “${subject.slice(0, 60)}” on the open web.`
+    + (keys.length
+      ? ` Add a free ${keys.join(' or ')} key in Settings → "Pictures" and the results get much better.`
+      : '');
+}
+
+/** Video and sound from the open web, the same way. */
+async function mediaFromWeb(subject: string, kind: 'video' | 'audio'): Promise<string> {
+  const noun = kind === 'video' ? 'video' : 'sound';
+  try {
+    const hits: MediaHit[] = kind === 'video'
+      ? await searchVideos(subject, { maxResults: 6 })
+      : await searchAudio(subject, { maxResults: 6 });
+    if (hits.length) {
+      return `Here is what I found for ${subject}:\n`
+        + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.author ? ` (by ${hit.author})` : ''}${hit.license ? ` · ${hit.license}` : ''}`).join('\n')
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used.)`;
+    }
+  } catch (err) {
+    console.warn(`[JARVIS] the ${noun} search failed:`, err instanceof Error ? err.message : err);
+  }
+  return `I could not find a ${noun} of “${subject.slice(0, 60)}” on the open web.`;
+}
+async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>): Promise<string> {
+  try {
+    const answer = await answerFromWeb(trimmed, { maxResults: 5 });
+    if (answer.fact || answer.hits.length) {
+      return `${answer.reply}\n\n(From the open web — Wikipedia and DuckDuckGo. No model was called and no quota was used.)`;
+    }
+  } catch (err) {
+    console.warn('[JARVIS] the open-web answer failed:', err instanceof Error ? err.message : err);
+  }
+  // Nothing on the web either. Then, and only then, say so — in one line, with
+  // the one thing that actually helps.
+  if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
+  return `I could not find anything on “${trimmed.slice(0, 60)}” — the open web gave me nothing, and Gemini is not answering right now. `
+    + `Teach me with “learn: ${trimmed.slice(0, 40)} = <answer>” and I will know it for ever.`;
 }
 
 async function processCommand(userCommand: string, onDelta?: (textSoFar: string) => void,
@@ -799,11 +865,6 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (looksLikeCredentialInput(trimmed)) return 'That message appears to contain a password, token, key, or other credential. I did not send it to Gemini or save it to memory; remove the value and resend if you intended a different question.';
   const studioIntent = parseStudioCommand(trimmed);
   if (studioIntent) {
-    // A video script is written by Gemini, so it is one of the things that
-    // needs the internet: refused up front while offline rather than after a
-    // doomed call.
-    const offlineNow = offlineSnapshot();
-    if (offlineNow.offline) return offlineRefusal('Writing that video script');
     try {
       const result = await executeStudioCommand(studioIntent, {
         store: videoProjectStore,
@@ -895,10 +956,13 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   );
   if (picMatch) {
     const subject = picMatch[1].trim();
-    // A picture is drawn by a Gemini model, so it needs the internet: refused
-    // up front while offline instead of after a doomed call.
+    // A drawn picture needs a Gemini model. A FOUND picture needs nothing but
+    // the internet, so when there is no model available this finds a real
+    // photograph of the same subject — Pexels or Pixabay if the owner has put a
+    // free key in Settings, otherwise Wikimedia Commons or Openverse. Either
+    // way the owner gets a picture, not a refusal.
     const offlineNow = offlineSnapshot();
-    if (offlineNow.offline) return offlineRefusal('Making that picture');
+    if (offlineNow.offline) return pictureFromWeb(subject);
     try {
       const img = await makeAiImage(subject);
       if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -1041,14 +1105,45 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     }
   }
   const researchIntent = parseResearchIntent(trimmed);
+  // ── THE OPEN WEB: search, pictures, video and sound with no model at all ──
+  // These never touch Gemini, so they work whatever the quota is doing and cost
+  // nothing. They sit AHEAD of Internet Research on purpose: "search the web for
+  // tea prices" is an ordinary search and gets real results for free, while
+  // "research X" or "compare X" still asks for the written, grounded report.
+  const webSearch = trimmed.match(/^(?:jarvis,?\s+)?(?:search|look up|google)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.{2,300})$/i)
+    || trimmed.match(/^(?:jarvis,?\s+)?(?:web|internet)\s+search\s+(?:for\s+)?(.{2,300})$/i);
+  if (webSearch) {
+    const subject = webSearch[1].trim();
+    try {
+      const hits = await searchWeb(subject, { maxResults: 6 });
+      const fact = hits.length ? null : null;
+      if (hits.length) {
+        return `Here is what the open web says about ${subject}:\n`
+          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n')
+          + '\n\n(No model was called and no quota was used.)';
+      }
+      void fact;
+      return `The open web gave me nothing for “${subject.slice(0, 60)}”. Nothing was counted.`;
+    } catch (err) {
+      console.warn('[JARVIS] web search failed:', err instanceof Error ? err.message : err);
+      return `I could not reach the open web for “${subject.slice(0, 60)}” — ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
   if (researchIntent?.kind === 'clarify') return 'What would you like me to research? Give me a specific question or topic; I have not searched the web yet.';
   if (researchIntent?.kind === 'research') {
-    // Internet Research is the one feature that is ONLY the internet: while
-    // offline it is refused before a task is even queued, so nothing claims a
-    // search that cannot happen.
-    const offlineNow = offlineSnapshot();
-    if (offlineNow.offline) return offlineRefusal('Internet Research');
-    if (!resolveGeminiKey().key) return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; I have not searched the web.';
+    // The written report is synthesised by a model, so that half needs a key.
+    // The searching half does not — so instead of refusing, this points at the
+    // open web, which is already wired up and costs nothing.
+    if (!resolveGeminiKey().key) {
+      const subject = researchIntent.question;
+      const hits = await searchWeb(subject, { maxResults: 6 }).catch(() => []);
+      if (hits.length) {
+        return `A written research report needs a model, and there is no Gemini key on this machine — but I searched the open web instead, which needs no key:\n`
+          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n')
+          + '\n\n(No model called, no quota used. Add a key in Settings → "The Brain" for the written report.)';
+      }
+      return 'A written research report needs a model, and there is no Gemini key on this machine. The open web gave me nothing either.';
+    }
     try {
       const task = researchTasks.start(researchIntent.question, null, brainTurn?.topic_id || '');
       broadcast({ type: 'rooms_control', action: 'goto', room: 'research' });
@@ -1266,15 +1361,22 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       : `I am online, sir. ${state.summary} Today: ${quotaSnapshot().summary}`;
   }
 
-  // ── OFFLINE GATE: no key, Google's quota spent, or the owner's switch ─────
-  // The question would have gone to Gemini. While offline it does not: the app
-  // answers from this computer and says so in one line. This is the difference
-  // between "the chat stopped" and "the chat went offline" — nothing is fetched,
-  // nothing is counted, and the conversation carries on.
+  const findPic = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:picture|image|photo|photos|pictures|images)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
+  if (findPic) return pictureFromWeb(findPic[1].trim());
+  const findVid = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:video|videos|clip|footage)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
+  if (findVid) return mediaFromWeb(findVid[1].trim(), 'video');
+  const findAudio = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:sound|sounds|music|song|audio|track)\s*(?:of|for|about)?\s+(.{2,300})$/i);
+  if (findAudio) return mediaFromWeb(findAudio[1].trim(), 'audio');
+
+  // ── No Gemini? Then the open web answers ──────────────────────────────────
+  // A quota running out means "no Gemini". It does not mean "no internet", and
+  // it is certainly not a reason to stop the conversation. The question goes to
+  // Wikipedia and DuckDuckGo instead — no key, no model, no quota, and nothing
+  // to apologise for. The owner asked a question; this answers it.
   const offline = offlineSnapshot();
   if (offline.offline) {
-    console.log(`[JARVIS] OFFLINE (${offline.reason}) — answering “${trimmed.slice(0, 50)}” from this computer; no call sent, nothing counted.`);
-    return offlineChatReply(trimmed, staleKnown, offline);
+    console.log(`[JARVIS] no Gemini right now (${offline.reason}) — answering “${trimmed.slice(0, 50)}” from the open web; no model, no quota.`);
+    return openWebReply(trimmed, staleKnown);
   }
 
   const ai = brainCaller();
@@ -1328,7 +1430,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
         // diagnosis stays in the server log, Settings and Brain Check; the chat
         // gets a local answer instead of a wall of error text.
         if (err.code === 'rate-limited' || err.code === 'google-stopped' || err.code === 'offline' || err.code === 'no-key') {
-          return offlineChatReply(trimmed, staleKnown, offlineSnapshot());
+          return openWebReply(trimmed, staleKnown);
         }
         // A stored answer from an earlier model, said plainly to be out of date, beats
         // silence — but it never replaces a call that could have been made.
@@ -2264,13 +2366,6 @@ app.get('/api/research/tasks', requireAuth, (req: Request, res: Response) => {
 });
 
 app.post('/api/research/tasks', requireAuth, (req: Request, res: Response) => {
-  // Internet Research is the internet: while offline it is refused before a
-  // task is queued, so nothing ever claims a search that cannot happen.
-  const offlineNow = offlineSnapshot();
-  if (offlineNow.offline) {
-    res.status(503).json({ ok: false, error: offlineRefusal('Internet Research'), offline: offlineNow });
-    return;
-  }
   if (!resolveGeminiKey().key) {
     res.status(503).json({ ok: false, error: 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.' });
     return;
@@ -2336,12 +2431,6 @@ app.patch('/api/research/reports/:id', requireAuth, (req: Request, res: Response
 app.post('/api/research/reports/:id/update', requireAuth, (req: Request, res: Response) => {
   const report = researchStore.get(req.params.id);
   if (!report) { res.status(404).json({ ok: false, error: 'Saved research report not found.' }); return; }
-  // Updating a report runs a fresh grounded search, so it needs the internet.
-  const offlineNow = offlineSnapshot();
-  if (offlineNow.offline) {
-    res.status(503).json({ ok: false, error: offlineRefusal('Updating that research report'), offline: offlineNow });
-    return;
-  }
   if (!resolveGeminiKey().key) {
     res.status(503).json({ ok: false, error: 'Updating research needs the existing Gemini API key. The saved report is unchanged.' });
     return;
@@ -2373,13 +2462,6 @@ app.post('/api/research/reports/:id/followup', requireAuth, async (req: Request,
   const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
   if (question.length < 5 || question.length > 1_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(question)) {
     res.status(400).json({ ok: false, error: 'Enter a follow-up between 5 and 1,000 characters.' });
-    return;
-  }
-  // A follow-up is answered by a Gemini model over the saved report, so it
-  // needs the internet even though no new search is run.
-  const offlineNow = offlineSnapshot();
-  if (offlineNow.offline) {
-    res.status(503).json({ ok: false, error: offlineRefusal('Answering that follow-up'), offline: offlineNow });
     return;
   }
   try {
@@ -2948,12 +3030,34 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
     res.status(400).json({ error: 'Say what the picture should be.' });
     return;
   }
-  // A picture is drawn by a Gemini model: refused up front while offline, with
-  // the reason, instead of after a doomed call.
-  const offlineNow = offlineSnapshot();
-  if (offlineNow.offline) {
-    res.status(503).json({ error: offlineRefusal('Making that picture'), offline: offlineNow });
-    return;
+  // A drawn picture needs a Gemini model. A FOUND picture needs only the
+  // internet, so with no model available this returns a real photograph of the
+  // same subject — Pexels or Pixabay if the owner has a free key in Settings,
+  // otherwise Wikimedia Commons or Openverse. No key, no model, no quota.
+  if (offlineSnapshot().offline) {
+    try {
+      const hits = await searchImages(String(prompt).trim(), { maxResults: 6 });
+      if (hits.length) {
+        res.json({
+          ok: true,
+          found: true,
+          url: hits[0].url,
+          thumb: hits[0].thumb,
+          title: hits[0].title,
+          source: hits[0].source,
+          author: hits[0].author,
+          license: hits[0].license,
+          page: hits[0].page,
+          note: 'A real photograph from the open web — no model was called and no quota was used.',
+        });
+        return;
+      }
+      res.status(503).json({ error: 'I could not draw that picture (no Gemini model available) and the open web had no photograph of it either.' });
+      return;
+    } catch (err) {
+      res.status(503).json({ error: `I could not draw that picture, and the picture search failed: ${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
   }
   try {
     const img = await makeAiImage(
@@ -3058,6 +3162,87 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
 //                               omitted/null = let Google's own state decide.
 // The switch is remembered in runtime/offline.json, so a deliberate "stay on
 // this computer today" survives a restart.
+// ── Pictures, video and sound: the optional free keys ───────────────────────
+// GET  /api/settings/image-keys        -> which of Pexels / Pixabay are set
+// POST /api/settings/image-keys        -> { service: 'pexels'|'pixabay', key }
+//                                         or { service, clear: true }
+// Neither key is required: with neither set, pictures still come from Wikimedia
+// Commons and Openverse, and sound from those plus the Internet Archive. The
+// key itself is stored in config/api_keys.json and never returned by any route.
+app.get('/api/settings/image-keys', requireAuth, (_req: Request, res: Response) => {
+  res.json({ ok: true, keys: imageKeyStatus() });
+});
+
+app.post('/api/settings/image-keys', requireAuth, (req: Request, res: Response) => {
+  const service = String(req.body?.service || '').toLowerCase();
+  if (service !== 'pexels' && service !== 'pixabay') {
+    res.status(400).json({ ok: false, error: 'Say which service: "pexels" or "pixabay".' });
+    return;
+  }
+  try {
+    if (req.body?.clear === true) {
+      const cleared = clearImageServiceKey(service);
+      res.json({ ok: true, service, cleared: cleared.removed, keys: imageKeyStatus() });
+      return;
+    }
+    const key = String(req.body?.key || '');
+    if (!key.trim()) {
+      res.status(400).json({ ok: false, error: 'Paste the key itself, or send clear: true to remove it.' });
+      return;
+    }
+    const saved = saveImageServiceKey(service, key);
+    console.log(`[JARVIS] ${saved.info.label} key saved (${saved.savedTo.join(', ')}) — ending …${saved.info.tail}.`);
+    res.json({ ok: true, service, savedTo: saved.savedTo, keys: imageKeyStatus() });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+// ── The open web, for anything on the page that wants it ────────────────────
+// These cost nothing: no key, no model, no quota. They are the reason a spent
+// Gemini quota is an inconvenience rather than a dead end.
+app.get('/api/web/search', requireAuth, async (req: Request, res: Response) => {
+  const q = boundedQuery(req, 'q', 300);
+  if (!q) { res.status(400).json({ ok: false, error: 'Say what to search for.' }); return; }
+  try {
+    const hits = await searchWeb(q, { maxResults: 8 });
+    res.json({ ok: true, query: q, hits, quotaUsed: false });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `The open web did not answer: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
+app.get('/api/web/media', requireAuth, async (req: Request, res: Response) => {
+  const q = boundedQuery(req, 'q', 300);
+  const kind = String(req.query.kind || 'image');
+  if (!q) { res.status(400).json({ ok: false, error: 'Say what to look for.' }); return; }
+  if (!['image', 'video', 'audio'].includes(kind)) {
+    res.status(400).json({ ok: false, error: 'kind must be "image", "video" or "audio".' });
+    return;
+  }
+  try {
+    const hits = kind === 'image'
+      ? await searchImages(q, { maxResults: 8 })
+      : kind === 'video'
+        ? await searchVideos(q, { maxResults: 8 })
+        : await searchAudio(q, { maxResults: 8 });
+    res.json({ ok: true, query: q, kind, hits, quotaUsed: false });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `The open web did not answer: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
+app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {
+  const url = boundedQuery(req, 'url', 2000);
+  if (!url) { res.status(400).json({ ok: false, error: 'Give me the address to read.' }); return; }
+  try {
+    const page = await readUrl(url);
+    res.json({ ok: true, ...page, quotaUsed: false });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `That page could not be read: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
 app.get('/api/offline', requireAuth, (_req: Request, res: Response) => {
   res.json({ ok: true, ...offlineSnapshot(), quota: quotaSnapshot() });
 });
