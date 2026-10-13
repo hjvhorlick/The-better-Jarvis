@@ -5552,7 +5552,10 @@
     let _awaitTimer = null;
     let _pendingWords = '';          // final fragments being joined into one command
     let _pendingTimer = null;
+    let _interimFallbackTimer = null; // submits interim-only results if the browser never finalises them
+    let _lastRecognizerError = '';
     const LISTEN_FINAL_JOIN_MS = 320;   // shorter response delay after a stable final result
+    const LISTEN_INTERIM_FALLBACK_MS = 1100; // safety net for browsers that never emit a final result
     const LISTEN_INTERIM_HOLD_MS = 550; // keep joining while recognition still reports live words
     let _interim = '';               // what is being said right now
     let _lastHeard = { text: '', at: 0 };
@@ -5569,6 +5572,7 @@
     }
     let _fallbackEarCycle = false;
     let _fallbackGestureArmed = false;
+    let _forceRawAudioFallback = false;
     function shouldListen() {
       return _micOn && !_muted && !_pausedForSpeech && !_needsGesture && Mic.state === 'idle';
     }
@@ -5692,7 +5696,7 @@
     }
 
     function startListener() {
-      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const SR = _forceRawAudioFallback ? null : (window.SpeechRecognition || window.webkitSpeechRecognition);
       if (!SR) {
         if (!shouldListen() || Mic.state !== 'idle') { renderWakeBtn(); return; }
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia ||
@@ -5729,20 +5733,22 @@
       rec.onerror = (e) => {
         if (gen !== _listenGen) return;
         const code = (e && e.error) || 'unknown';
-        if (code === 'no-speech' || code === 'aborted' || code === 'audio-capture') return;   // onend brings it straight back
-        if (code === 'not-allowed' || code === 'service-not-allowed') {
-          // The browser refused its own recogniser. Another click is usually all
-          // it wanted (its first session must be born in a gesture); two refusals
-          // in a row mean it is genuinely blocked, and then the owner is told so.
+        _lastRecognizerError = code;
+        if (code === 'no-speech' || code === 'aborted') return; // ordinary end-of-utterance events
+        const canCaptureRawAudio = !!(
+          navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+          (window.AudioContext || window.webkitAudioContext)
+        );
+        if (canCaptureRawAudio) {
+          // The settings meter can detect sound even when the browser's speech
+          // service cannot turn it into words. Try raw microphone transcription
+          // immediately; do not ask for another click and leave the ear inactive.
           stopListener();
-          _denied++;
-          if (_denied <= 2) { armWakeOnGesture(); return; }
-          _micOn = false; localStorage.setItem('jarvis-wake', 'off');
+          _forceRawAudioFallback = true;
+          _fallbackGestureArmed = true;
           _needsGesture = false;
-          renderWakeBtn();
-          const why = micExplain(Object.assign(new Error(code), { name: 'NotAllowedError' }));
-          toast(`🎤 ${why.short}`);
-          micReport(`🎤 ${why.short}.\n${why.long}`, why.actions);
+          micReport(`🎤 Browser speech recognition failed (${code}). Switching to microphone audio transcription. This uses Gemini for transcription, not for speaking.`, []);
+          scheduleListenRestart(250);
           return;
         }
         console.warn('[listen] the recogniser reported', code);
@@ -5762,9 +5768,20 @@
       _requestedAt = performance.now();
       try {
         rec.start();
-      } catch (_) {
+      } catch (err) {
         _listener = null;
-        scheduleListenRestart(600);
+        const code = err && (err.name || err.message) || 'start-failed';
+        _lastRecognizerError = String(code);
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia &&
+            (window.AudioContext || window.webkitAudioContext)) {
+          _forceRawAudioFallback = true;
+          _fallbackGestureArmed = true;
+          _needsGesture = false;
+          micReport(`🎤 Browser speech recognition could not start (${code}). Switching to microphone audio transcription.`, []);
+          scheduleListenRestart(250);
+        } else {
+          scheduleListenRestart(600);
+        }
       }
       renderWakeBtn();
     }
@@ -5784,6 +5801,8 @@
 
     function stopListener() {
       _listenGen++;
+      clearTimeout(_interimFallbackTimer);
+      _interimFallbackTimer = null;
       clearTimeout(_listenTimer);
       _listenTimer = null;
       const rec = _listener;
@@ -5815,6 +5834,22 @@
         if (r.isFinal) final += r[0].transcript; else interim += r[0].transcript;
       }
       _interim = (interim || '').trim().slice(0, 140);
+      if (final.trim()) {
+        clearTimeout(_interimFallbackTimer);
+        _interimFallbackTimer = null;
+      } else if (_interim) {
+        // Some browser speech services update the live transcript but never
+        // deliver isFinal. If the user pauses, promote that text into a command.
+        clearTimeout(_interimFallbackTimer);
+        _interimFallbackTimer = setTimeout(() => {
+          _interimFallbackTimer = null;
+          if (!_micOn || _muted || !_interim) return;
+          const fallback = _interim.trim();
+          _interim = '';
+          _pendingWords = (_pendingWords ? `${_pendingWords} ` : '') + fallback;
+          scheduleHeardFlush(0);
+        }, LISTEN_INTERIM_FALLBACK_MS);
+      }
       if (_interim) {
         const inp = document.getElementById('chat-input');
         if (inp && !inp.value.trim()) inp.value = _interim;
@@ -5863,6 +5898,8 @@
 
     function flushHeard() {
       _pendingTimer = null;
+      clearTimeout(_interimFallbackTimer);
+      _interimFallbackTimer = null;
       const heard = _pendingWords.replace(/\s+/g, ' ').trim();
       _pendingWords = '';
       _interim = '';
@@ -5999,6 +6036,9 @@
       pausedForSpeech: _pausedForSpeech,
       hearing: _interim,
       lastHeard: _lastHeard.text,
+      recognizerError: _lastRecognizerError,
+      usingRawAudioFallback: _forceRawAudioFallback,
+      interimFallbackPending: !!_interimFallbackTimer,
     });
     window.toggleMute = toggleMute;
     window.toggleListenMode = toggleListenMode;
