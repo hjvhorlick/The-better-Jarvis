@@ -62,7 +62,10 @@ def test_date_is_answered_locally(isolated):
 def test_status_reports_without_secrets(isolated, monkeypatch):
     a = _agent(isolated, key="super-secret-key-999", monkeypatch=monkeypatch)
     out = a.agent.handle("system status")
-    assert "set" in out["reply"] and "0 of 20" in out["reply"]
+    # The count is a tally, not a ceiling: the status names the warning level and
+    # the connection, and says plainly that nothing is blocked.
+    assert "set" in out["reply"] and "warning level 20" in out["reply"]
+    assert "Connection: online" in out["reply"]
     assert "super-secret-key-999" not in out["reply"]
 
 
@@ -85,34 +88,47 @@ def test_unmatched_text_goes_to_gemini_and_takes_one_unit(isolated, monkeypatch)
     assert len(a.models.calls) == 1 and a.budget.snapshot()["used"] == 1
 
 
-def test_no_key_and_no_rule_is_reported_and_costs_nothing(isolated):
+def test_no_key_answers_locally_instead_of_failing(isolated):
+    """No key is an offline MODE, not a dead end: the chat answers from here."""
     a = _agent(isolated)
-    with pytest.raises(BackendNotConfigured):
-        a.agent.handle("write me a haiku")
-    assert a.budget.snapshot()["used"] == 0
+    out = a.agent.handle("write me a haiku")
+    assert out["source"] == "local" and out["intent"] == "offline.no-key"
+    assert "offline" in out["reply"] and "nothing from the internet" in out["reply"].replace(
+        "fetched nothing from the internet", "nothing from the internet")
+    assert "api_keys.json" in out["reply"]              # it says where a key is read from
+    assert a.budget.snapshot()["used"] == 0             # nothing was counted
 
 
-def test_budget_stops_gemini_but_not_local_commands(isolated, monkeypatch):
+def test_the_count_never_stops_a_call_it_only_warns(isolated, monkeypatch):
+    """Past the warning level the app says so; the call still goes out."""
     a = _agent(isolated, key="k", limit=1, monkeypatch=monkeypatch)
     a.agent.handle("write me a haiku")
-    with pytest.raises(BudgetExhausted):
-        a.agent.handle("tell me a joke")
-    assert len(a.models.calls) == 1                       # the second call never left the machine
+    second = a.agent.handle("tell me a joke")
+    assert len(a.models.calls) == 2                       # the second call DID go out
+    assert second["source"] == "gemini"
+    assert a.budget.snapshot()["past_warn"] is True
+    assert "never blocks" in a.budget.warn()
     assert a.agent.handle("what time is it")["source"] == "local"
 
 
-def test_provider_quota_error_closes_the_budget_for_the_day(isolated, monkeypatch):
+def test_a_real_429_goes_offline_and_the_chat_carries_on(isolated, monkeypatch):
+    """Google's 429 is a warning, not a block: the app goes offline and keeps talking."""
     class Limited(Exception):
         code = 429
 
     models = FakeModels(error=Limited("quota"))
     a = _agent(isolated, models=models, key="k", monkeypatch=monkeypatch)
-    with pytest.raises(BudgetExhausted):
-        a.agent.handle("tell me a joke")
-    assert a.budget.snapshot()["remaining"] == 0
-    with pytest.raises(BudgetExhausted):
-        a.agent.handle("tell me another joke")
-    assert len(models.calls) == 1
+    first = a.agent.handle("tell me a joke")
+    assert first["source"] == "local" and first["intent"] == "offline.quota"
+    assert "offline" in first["reply"] and "429" in first["reply"]
+    assert a.budget.offline is True
+    # The count is NOT pretended to be used up — it was Google, not this app.
+    assert a.budget.snapshot()["used"] == 1
+    second = a.agent.handle("tell me another joke")
+    assert second["source"] == "local" and "local midnight" in second["reply"]
+    assert len(models.calls) == 1                         # no further call was sent
+    # …and local work carries on regardless.
+    assert a.agent.handle("what time is it")["source"] == "local"
 
 
 def test_start_my_hands_waits_for_the_owner(isolated):

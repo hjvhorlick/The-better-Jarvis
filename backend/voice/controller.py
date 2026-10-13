@@ -139,8 +139,11 @@ class VoiceController:
             else:
                 if not self._get_key():
                     raise VoiceError("No Gemini API key on this server. Voice needs one.", 503)
-                if not self._budget.try_spend():
-                    raise VoiceError("Today's Gemini budget is used up. Voice resumes after local midnight.", 429)
+                if self._budget.offline or not self._budget.try_spend():
+                    raise VoiceError(
+                        f"The Gemini Live voice needs the internet, and the app is offline — "
+                        f"{self._budget.offline_reason()}. The LOCAL voice still works: switch the "
+                        "engine to local, or wait for local midnight.", 503)
             stop = threading.Event()
             callbacks = dict(on_activity=self._touch, on_error=self._set_error)
             if local:

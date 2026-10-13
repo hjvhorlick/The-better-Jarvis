@@ -61,7 +61,12 @@ def _when(ts) -> str:
 
 
 class BudgetExhausted(RuntimeError):
-    """The daily Gemini budget is used up (or Gemini said its limit is reached)."""
+    """The day's Gemini calls are unavailable — Google's quota, or no key.
+
+    Kept for compatibility, but it is no longer raised at the chat: an
+    unavailable provider makes the app answer LOCALLY (offline mode) rather than
+    stopping the conversation. Only the diagnostics probe still reports it.
+    """
 
 
 class Agent:
@@ -210,12 +215,31 @@ class Agent:
             if result is None:
                 try:
                     result = self._gemini(text, workspace, turn=turn)
-                except (BackendNotConfigured, UpstreamError, BudgetExhausted):
-                    if stale_knowledge is None:
-                        raise                       # nothing stored to fall back on: report as before
-                    result = _answer(
-                        self._knowledge.describe_stale(stale_knowledge, self._current_text_model()),
-                        "knowledge", "knowledge.lookup.stale")
+                except (BackendNotConfigured, UpstreamError, BudgetExhausted) as exc:
+                    # The provider cannot be reached at all. The chat does not
+                    # stop: a stored answer (said plainly to be out of date) if
+                    # there is one, otherwise the honest offline answer. The
+                    # provider's own words stay in the server log.
+                    if stale_knowledge is not None:
+                        result = _answer(
+                            self._knowledge.describe_stale(stale_knowledge, self._current_text_model()),
+                            "knowledge", "knowledge.lookup.stale")
+                    else:
+                        reason = ("the Gemini provider could not be reached"
+                                  if isinstance(exc, UpstreamError) else str(exc))
+                        result = _answer(self._offline_reply(reason), "local", "offline.provider")
+                else:
+                    # The provider could not be used at all (no key, or Google's
+                    # quota). A stored answer — said plainly to be out of date —
+                    # is still more use than a bare offline note, so it is given
+                    # first, with the note beside it. Nothing here claims to be
+                    # a fresh answer.
+                    if (stale_knowledge is not None and result.get("source") == "local"
+                            and str(result.get("intent") or "").startswith("offline.")):
+                        result = _answer(
+                            f"{self._knowledge.describe_stale(stale_knowledge, self._current_text_model())}"
+                            f"\n\n{result.get('reply', '')}",
+                            "knowledge", "knowledge.lookup.stale")
             if turn is not None:
                 try:
                     self._brain.complete_turn(turn, result.get("reply", ""),
@@ -357,9 +381,8 @@ class Agent:
         request = (m.args.get("request") or "").strip()
         if not request:
             return {"reply": "Sir, what should I fix or improve?"}
-        if not self._budget.try_spend():
-            return {"reply": "Today's Gemini budget is used up, so I cannot draft a fix. "
-                             "Local commands still work."}
+        if self._budget.offline or not self._budget.try_spend():
+            return {"reply": self._offline_refusal("Drafting that fix")}
         files = proposer.context_files(self._repair.repo, m.args.get("raw") or request)
         try:
             answer = self._chat.complete(proposer.build_prompt(request, files), proposer.SYSTEM)
@@ -393,8 +416,8 @@ class Agent:
         query = router.WEB_PREFIX.sub("", m.args.get("raw") or "", count=1).strip()
         if not query or len(query) > 300 or any(ord(ch) < 32 for ch in query):
             return {"reply": "Sir, what should I search the web for? Keep it under 300 characters."}
-        if not self._budget.try_spend():
-            return {"reply": "Today's Gemini budget is used up, so I cannot search the web. Local commands still work."}
+        if self._budget.offline or not self._budget.try_spend():
+            return {"reply": self._offline_refusal("Searching the web")}
         try:
             if hasattr(self._chat, "complete_grounded"):
                 grounded = self._chat.complete_grounded(query, WEB_SYSTEM)
@@ -490,7 +513,13 @@ class Agent:
         b = self._budget.snapshot()
         my_hands = "on" if (self._session and self._session.status().get("running")) else "off"
         folders = len(self._roots())
-        return {"reply": (f"Gemini key: {key}. Gemini budget today: {b['used']} of {b['limit']} used. "
+        # The count is a tally, not a ceiling: it warns, and only Google's own
+        # 429 puts the app offline — which stops internet calls, never the chat.
+        connection = ("OFFLINE — local only (%s); nothing is fetched from the internet, "
+                      "and the chat keeps working" % b["offline_reason"]) if b["offline"] else "online"
+        warned = " ⚠ at or past your warning level (a warning only — nothing is blocked)." if b["past_warn"] else ""
+        return {"reply": (f"Gemini key: {key}. Connection: {connection}. Gemini calls today: {b['used']} "
+                          f"(warning level {b['limit']}).{warned} "
                           f"My Hands: {my_hands}. Allowed folders: {folders}.")}
 
     def _list_roots(self, m, confirmed):
@@ -812,13 +841,20 @@ class Agent:
     # ----- Gemini path -----
 
     def _gemini(self, text: str, workspace: str, *, turn: BrainTurn | None = None) -> dict:
+        # OFFLINE IS A MODE, NOT A DEAD END. No key, or Google's quota spent:
+        # nothing is fetched, nothing is counted, and the chat answers from this
+        # computer instead of stopping with an error.
         if not config.get_gemini_api_key():
-            raise BackendNotConfigured(
-                "No Gemini API key. Set GEMINI_API_KEY or add gemini_api_key to config/api_keys.json.")
+            return _answer(self._offline_reply(
+                "no Gemini key is set on this computer"), "local", "offline.no-key")
+        if self._budget.offline:
+            return _answer(self._offline_reply(self._budget.offline_reason()), "local", "offline.quota")
         if not self._budget.try_spend():
-            raise BudgetExhausted(
-                "Today's Gemini budget is used up. Local commands still work; "
-                "the budget resets at local midnight.")
+            # Only reached when the app went offline between the check and here.
+            return _answer(self._offline_reply(self._budget.offline_reason()), "local", "offline.quota")
+        warning = self._budget.warn()
+        if warning:
+            self._publish("chat_notice", message=warning, via="quota")
         try:
             if turn is not None:
                 reply = self._chat.reply(text, workspace=workspace, history=turn.history,
@@ -827,9 +863,14 @@ class Agent:
                 reply = self._chat.reply(text, workspace=workspace)
         except UpstreamError as e:
             if e.quota:
+                # Google's own 429: offline for the rest of the local day — but
+                # the conversation carries on locally, with one line of warning.
                 self._budget.mark_exhausted()
-                raise BudgetExhausted(
-                    "Gemini reports its limit is reached for now. Local commands still work.") from None
+                self._publish("chat_notice",
+                              message=f"OFFLINE — local only ({self._budget.offline_reason()}). "
+                                      "The chat keeps working; nothing is fetched from the internet.",
+                              via="quota")
+                return _answer(self._offline_reply(self._budget.offline_reason()), "local", "offline.quota")
             raise
         try:
             # Keep it, so the same question is free next time — with the model that
@@ -838,6 +879,31 @@ class Agent:
         except OSError:
             pass                                         # saving is a bonus; the answer still goes out
         return _answer(reply, "gemini", None)
+
+    def _offline_reply(self, why: str) -> str:
+        """The local answer for a question that would have gone to Gemini.
+
+        A warning, never a block: it says what happened in one line, that nothing
+        was fetched, when the internet comes back, and what still works here.
+        """
+        why = (why or "the Gemini provider is unavailable").strip()
+        back = ("The keys come back at local midnight, or sooner if you add a key from another "
+                "Google account." if "429" in why else
+                "Set GEMINI_API_KEY, or add gemini_api_key to config/api_keys.json, and fresh "
+                "answers work at once." if "key" in why else
+                "Say 'come back online' (or unset SUPPER_OFFLINE) and the keys are used again.")
+        entries = len(self._knowledge.list_entries()) if hasattr(self._knowledge, "list_entries") else 0
+        taught = ("Nothing on this computer knows that yet — teach me with "
+                  "'learn: <question> = <answer>' and I will answer it for ever with no call at all.")
+        return (f"I am offline ({why}), so I answered from this computer and fetched nothing from the "
+                f"internet. {back} Still working, with no quota and no internet: local commands, the "
+                f"local knowledge base ({entries} answers), memory and notes, reminders, the time and "
+                f"date, diagnostics, the files and folders, My Hands and the voice. {taught}")
+
+    def _offline_refusal(self, feature: str) -> str:
+        """The honest refusal for a feature that needs the internet."""
+        return (f"{feature} needs the internet, and I am offline — {self._budget.offline_reason()}. "
+                "Nothing was fetched and nothing was counted. Local commands still work.")
 
     # ----- helpers -----
 
