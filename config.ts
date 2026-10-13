@@ -889,6 +889,7 @@ export interface OfflineSnapshot {
 
 /** What runs on this computer and therefore keeps running offline. */
 export const OFFLINE_WORKS: string[] = [
+  'the open web — search, facts, pictures, video and sound, with no key and no quota',
   'chat and small talk (answered from this computer)',
   'the local knowledge base — every stored and taught answer, free',
   'memory, notes, topics, tasks and reminders',
@@ -899,11 +900,16 @@ export const OFFLINE_WORKS: string[] = [
   'the local voice (the browser voice, or Kokoro/faster-whisper on this machine)',
 ];
 
-/** What needs the internet, and is therefore refused while offline. */
+/**
+ * What genuinely needs a MODEL — not the internet. The internet is available
+ * whatever the quota is doing, so nothing here is refused for want of a
+ * connection; each of these simply has no model to do its particular job, and
+ * each has a key-free alternative that is used instead.
+ */
 export const OFFLINE_REFUSED: string[] = [
-  'a fresh open-ended answer from Gemini',
-  'Internet Research and any web search',
-  'AI pictures and video scripts',
+  'an answer written by a Gemini model (the open web answers instead)',
+  'a written, grounded research report (the sources are still found)',
+  'a picture DRAWN by a model (a real photograph is found instead)',
   'the server TTS voice (the local voice still speaks)',
 ];
 
@@ -976,7 +982,7 @@ export function offlineSnapshot(): OfflineSnapshot {
   }
   const offline = reason !== null;
   const summary = offline
-    ? `OFFLINE — local only (${why}). The chat keeps working; nothing is fetched from the internet${reason === 'google-stopped' ? ' until local midnight' : ''}.`
+    ? `No Gemini right now (${why}). Everything else keeps working — including the open web: search, facts, pictures and video cost no key and no quota${reason === 'google-stopped' ? '. The keys come back at local midnight' : ''}.`
     : 'Online — the keys are usable, and local answers are still tried first so most work never spends a call.';
   return {
     offline,
@@ -988,7 +994,7 @@ export function offlineSnapshot(): OfflineSnapshot {
     works: OFFLINE_WORKS,
     refused: OFFLINE_REFUSED,
     warning: offline
-      ? `I am offline (${why}), so I answered from this computer and fetched nothing from the internet.`
+      ? `There is no Gemini right now (${why}), so I answered from this computer and the open web instead — no model called, no quota used.`
       : '',
     summary,
     note: "Offline is a mode, not an error: the app counts and warns, Google's 429 only decides whether the internet may be used, and every local feature keeps working either way.",
@@ -1315,11 +1321,11 @@ export function explainBrainFailure(ctx: FailureContext): string {
       return `I have no Gemini key, sir. ${key.detail}. Add "gemini_api_key" to config/api_keys.json (Settings → "The Brain" writes it there), or set GEMINI_API_KEY — either is read at once, no restart.`;
     case 'google-stopped':
       return `Google has stopped our calls for today, sir — Google, not this app. ${googleStopStory()}` +
-        ` So I have gone OFFLINE and I am carrying on with everything on this computer: the chat keeps working and nothing is fetched from the internet.` +
-        ` That is a warning, not a block — calls resume at local midnight (Google's own daily quota resets at midnight Pacific), or sooner if you add a key from another Google account in Settings → "The Brain".`;
+        ` So there is no Gemini until local midnight, and I am answering from everything else: this computer and the open web, which needs no key and no quota.` +
+        ` That is a warning, not a block — the keys come back at local midnight (Google's own daily quota resets at midnight Pacific), or sooner if you add a key from another Google account in Settings → "The Brain".`;
     case 'offline':
-      return `I am OFFLINE because you switched me offline, sir, so nothing is fetched from the internet and no call is counted.` +
-        ` The chat and every local feature keep working. Say "come back online" (or use the switch in Settings) and the keys are used again at once.`;
+      return `You switched me off Gemini, sir, so no model is called and nothing is counted.` +
+        ` The chat, every local feature and the open web all keep working — search, facts, pictures and video need no key. Say "come back online" (or use the switch in Settings) and the keys are used again at once.`;
     case 'model-unavailable': {
       const tried = ctx.attempts.filter((a) => a.error).map((a) => a.model).join(', ') || ctx.model;
       return `The model name was withdrawn, sir — my key is fine, so do not change it. Google answered 404 NOT_FOUND for ${tried}.` +
@@ -1331,7 +1337,7 @@ export function explainBrainFailure(ctx: FailureContext): string {
         ` Paste a working key in Settings → "The Brain".` + (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'rate-limited':
       return `Google answered 429 — its own quota is used up for key ${key.slot} (ending in …${key.tail ?? '????'}) on ${ctx.model}. That is Google stopping us, sir, not this app: this app's count only warns. ${googleStopStory()}` +
-        ` I am OFFLINE now and carrying on locally — the chat keeps working and nothing is fetched from the internet. ` +
+        ` There is no Gemini for now, so I am answering from this computer and the open web instead — neither costs a quota. ` +
         `Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Neither the key nor the model name is at fault.` +
         (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'connection':

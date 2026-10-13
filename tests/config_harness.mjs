@@ -775,9 +775,11 @@ function freePort() {
     const small = await post(spent, '/api/command', { text: 'hello' });
     ok('offline: …and small talk stays small talk', /Good day/.test(String(small.body.reply)), String(small.body.reply).slice(0, 60));
     ok('offline: none of that reached Google or counted a call', spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length === sentAfterQuota && readCounter(spent).used === 2, `stub=${spent.stub.calls.length} used=${readCounter(spent).used}`);
-    ok('offline: the terminal announced it once, as a warning not a block', /OFFLINE — local only/.test(spent.log()) && /This is a warning, not a block/.test(spent.log()), (spent.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 130));
+    ok('offline: the terminal announced it once, as a warning not a block', /No Gemini right now/.test(spent.log()) && /This is a warning, not a block/.test(spent.log()), (spent.log().match(/.*No Gemini right now.*/) || [''])[0].slice(0, 130));
     const who = await post(spent, '/api/command', { text: 'are you offline' });
-    ok('offline: asking says so plainly, with what still works', /OFFLINE/.test(String(who.body.reply)) && /Still working/.test(String(who.body.reply)), String(who.body.reply).slice(0, 100));
+    // It says what is missing (a model) and what still works — including the
+    // open web, which used to be wrongly listed among the casualties.
+    ok('offline: asking says so plainly, with what still works', /No Gemini right now/.test(String(who.body.reply)) && /open web/.test(String(who.body.reply)), String(who.body.reply).slice(0, 110));
     // The owner's switch is only half the decision: it cannot lift Google's 429.
     // (It used to — "come back online" reported ONLINE while both keys were
     // still stopped, so the next question was sent, 429'd, and the app kept
@@ -806,7 +808,7 @@ function freePort() {
     const after = await post(manual, '/api/command', { text: 'explain how a transistor works' });
     ok('offline switch: …and the next question reaches Gemini again', after.body.reply === 'answered by harness-text-model' && manual.stub.calls.length === before + 1, String(after.body.reply).slice(0, 70));
     const goOffline = await post(manual, '/api/command', { text: 'go offline' });
-    ok('offline switch: "go offline" works by chat too', /Offline, sir/.test(String(goOffline.body.reply)), String(goOffline.body.reply).slice(0, 80));
+    ok('offline switch: "go offline" works by chat too', /No Gemini, sir/.test(String(goOffline.body.reply)) && /come back online/.test(String(goOffline.body.reply)), String(goOffline.body.reply).slice(0, 90));
   } finally { await manual.stop(); }
 
   // (c) SUPPER_OFFLINE=1: offline from boot, and the switch survives a restart.
@@ -816,7 +818,7 @@ function freePort() {
     ok('offline from boot: SUPPER_OFFLINE=1 means local only from the first moment', state.body.offline === true && state.body.reason === 'manual', `${state.body.reason}`);
     const chat = await post(boot, '/api/command', { text: 'explain how a transistor works' });
     ok('offline from boot: …and no model is called', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
-    ok('offline from boot: the terminal said so at startup', /OFFLINE — local only/.test(boot.log()), (boot.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 110));
+    ok('offline from boot: the terminal said so at startup', /No Gemini right now/.test(boot.log()), (boot.log().match(/.*No Gemini right now.*/) || [''])[0].slice(0, 110));
   } finally { await boot.stop(); }
 
   // (d) No key at all. The switch cannot invent one: "come back online" must

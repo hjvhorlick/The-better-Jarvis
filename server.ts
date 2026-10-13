@@ -776,7 +776,7 @@ function standaloneSystemInstruction(contextBlock: string): string {
 // ── OFFLINE: the chat carries on when the internet cannot be used ───────────
 /**
  * Google's quota running out is not a broken chat, it is a mode. When the app
- * is offline nothing is fetched from the internet and no call is counted — but
+ * no model is available, no call is counted — but
  * the conversation does not stop. This is the answer for a question that would
  * otherwise have gone to Gemini: a stored answer if there is one, and if not,
  * a short honest line saying what happened (a warning, never a block) plus the
@@ -1345,7 +1345,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (/\b(?:go|switch|stay|turn)\s+(?:yourself\s+)?offline\b|\boffline mode\b|\blocal only\b/i.test(lower)) {
     const state = setOfflineMode(true);
     broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
-    return `Offline, sir — everything stays on this computer and nothing is fetched from the internet until you say "come back online". The chat and every local feature keep working: ${state.works.slice(0, 5).join('; ')}.`;
+    return `No Gemini, sir — no model will be called and nothing will be counted, until you say "come back online". Everything else keeps working, including the open web: ${state.works.slice(0, 4).join('; ')}.`;
   }
   if (/\b(?:come|go|switch|turn)\s+(?:yourself\s+)?back\s+online\b|\b(?:go|switch|turn)\s+online\b/i.test(lower)) {
     const state = setOfflineMode(null);
@@ -1597,7 +1597,7 @@ function announceOfflineChange(): void {
   if (announcedOffline === state.offline) return;
   announcedOffline = state.offline;
   const text = state.offline
-    ? `OFFLINE — local only (${state.why}). The chat keeps working and nothing is fetched from the internet${state.reason === 'google-stopped' ? ' until local midnight' : ''}. This is a warning, not a block: every local feature still works, and no call is counted while offline.`
+    ? `No Gemini right now (${state.why})${state.reason === 'google-stopped' ? '; the keys come back at local midnight' : ''}. This is a warning, not a block: every local feature still works, the open web still works — search, facts, pictures and video need no key and no quota — and no call is counted.`
     : 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
   console.warn(`[JARVIS] ${text}`);
   const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
