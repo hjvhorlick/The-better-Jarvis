@@ -494,9 +494,9 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   ok('voice: the spoken text is the reply, not a status line', typeof firstVoice === 'string' && firstVoice.length > 2, firstVoice);
   ok('voice: a cancel never precedes the first speak', state.cancels === 0, `cancels=${state.cancels}`);
   const speech = window.jarvisSpeechStatus();
-  ok('voice: the server voice is the default', speech.engine === 'server' && speech.usingServer === true, JSON.stringify({ engine: speech.engine, using: speech.usingServer }));
+  ok('voice: the local browser voice is the default', speech.engine === 'browser' && speech.usingServer === false, JSON.stringify({ engine: speech.engine, using: speech.usingServer }));
   ok('voice: speech is on by default', speech.on === true, JSON.stringify({ on: speech.on, supported: speech.supported }));
-  ok('voice: the browser voice was NOT used', state.speakCalls.length === 0, JSON.stringify(state.speakCalls));
+  ok('voice: the local voice was used without Gemini TTS', state.speakCalls.length > 0 && state.voiceRequests.length === 0, JSON.stringify({ local: state.speakCalls, server: state.voiceRequests }));
 
   // JARVIS must not obey his own voice: replay part of what he just said.
   // (With the server voice the words live in the server requests, not the browser.)
@@ -630,7 +630,7 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
      JSON.stringify({ spoken: proof.state.speakCalls, asked: proof.state.voiceRequests }));
 }
 
-/* ── 9. THE VOICE ENGINE IS THE SERVER'S, AND REPEATS ARE FREE ───────────── */
+/* ── 9. LOCAL VOICE IS DEFAULT; OPTIONAL SERVER VOICE REPEATS ARE FREE ──── */
 {
   // Default: the local voice speaks; no Gemini TTS request is made.
   const { window, doc, state } = makeDom({ withSR: true, micAlwaysOn: true });
