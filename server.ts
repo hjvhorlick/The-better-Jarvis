@@ -12,6 +12,7 @@ import os from 'os';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import { spawn, type ChildProcess } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
@@ -24,9 +25,7 @@ import {
   classifyGeminiError,
   explainBrainFailure,
   markBudgetExhausted,
-  markVoiceBudgetExhausted,
   trySpendGeminiBudget,
-  trySpendVoiceBudget,
   voiceQuotaSnapshot,
   configStatus,
   resolveBaseUrl,
@@ -69,7 +68,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-mic-fix-1';
+const SERVER_BUILD = '2026-10-13-local-voice-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -1210,7 +1209,7 @@ function realStatusReport(): string {
     `• Conversation log: ${messageHistory.length} visible entries; durable turns use memory/recent_dialogue.json with overflow in memory/dialogue_archive.jsonl`,
     `• Stored memories: ${notes} in memory/long_term.json; migration ${brainStatus.migration?.state || 'unknown'}${brainStatus.storage_error ? ` (${brainStatus.storage_error})` : ''}`,
     `• Voice model: ${voice.model} (from ${voice.source})${voice.note}`,
-    '• Voice: speech out 🔊 and speech in 🎤 run in your browser; 🎙 toggles the "Hey Jarvis" wake word.',
+    '• Voice: speech out 🔊 and speech in 🎤 run in your browser; the microphone is always listening, and 🔇 mutes it.',
   ].join('\n');
 }
 
@@ -1283,24 +1282,6 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
 // is returned instead of silence.
 const MAX_VOICE_SECONDS = 15;
 
-function pcmToWav(pcm: Buffer, sampleRate: number): Buffer {
-  const header = Buffer.alloc(44);
-  header.write('RIFF', 0);
-  header.writeUInt32LE(36 + pcm.length, 4);
-  header.write('WAVE', 8);
-  header.write('fmt ', 12);
-  header.writeUInt32LE(16, 16);               // PCM chunk size
-  header.writeUInt16LE(1, 20);                // PCM format
-  header.writeUInt16LE(1, 22);                // mono
-  header.writeUInt32LE(sampleRate, 24);
-  header.writeUInt32LE(sampleRate * 2, 28);   // byte rate
-  header.writeUInt16LE(2, 32);                // block align
-  header.writeUInt16LE(16, 34);               // bits per sample
-  header.write('data', 36);
-  header.writeUInt32LE(pcm.length, 40);
-  return Buffer.concat([header, pcm]);
-}
-
 interface VoiceResult {
   type: 'transcript' | 'error';
   text?: string;
@@ -1311,35 +1292,18 @@ interface VoiceResult {
 
 async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceResult> {
   if (pcm.length < sampleRate * 2 * 0.4) {
-    return { type: 'error', code: 'too-short', message: 'I heard almost nothing, sir. Click the mic, speak, then click it again.' };
+    return { type: 'error', code: 'too-short', message: 'I heard almost nothing, sir. Say it again, a little louder.' };
   }
-  try {
-    const wav = pcmToWav(pcm, sampleRate);
-    const run = await runBrain<string>(brainCaller(), {
-      kind: 'text',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType: 'audio/wav', data: wav.toString('base64') } },
-            { text: 'Transcribe this audio exactly. Reply with only the words spoken, nothing else.' },
-          ],
-        },
-      ],
-      extract: (raw) => (typeof raw.text === 'string' && raw.text.trim() ? raw.text.trim() : null),
-    });
-    console.log(`[voice] transcribed ${(pcm.length / 2 / sampleRate).toFixed(1)}s with ${run.model}: "${run.value.slice(0, 120)}"`);
-    return { type: 'transcript', text: run.value };
-  } catch (err) {
-    if (err instanceof BrainError) {
-      console.warn(`[voice] transcription failed (${err.code}): ${err.message}`);
-      const code: VoiceResult['code'] =
-        err.code === 'no-key' ? 'no-key' : err.code === 'budget' || err.code === 'rate-limited' ? 'budget' : err.code === 'empty' ? 'empty' : 'failed';
-      return { type: 'error', code, message: err.message };
-    }
-    console.error('Voice transcription error:', err);
-    return { type: 'error', code: 'failed', message: `Voice transcription failed on the server in a way I cannot classify: ${(err as Error).message}. The server log has the full error.` };
+  const answer = await localVoice('/transcribe', { rate: sampleRate, pcm: pcm.toString('base64') }, 120_000);
+  if (answer.ok && answer.text) {
+    console.log(`[local-voice] heard: "${answer.text.slice(0, 120)}"`);
+    return { type: 'transcript', text: answer.text };
   }
+  return {
+    type: 'error',
+    code: answer.code === 'empty' || answer.code === 'too-short' ? answer.code : 'failed',
+    message: answer.message || 'The local voice could not hear that.',
+  };
 }
 
 audioWss.on('connection', (ws: WebSocket) => {
@@ -2215,259 +2179,89 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
   }
 });
 
-// ── JARVIS's own voice, generated by the server ─────────────────────────────
-// The page normally speaks with the browser's built-in voice, which is free and
-// instant — but some machines have no voice at all (a bare Linux desktop, a
-// webview, a locked-down phone, a preview frame that refuses), and on those the
-// owner hears nothing however loudly the app says the speakers are on. For them
-// the words are turned into real audio on the server by Gemini's voice model and
-// played by the page as an ordinary sound file — no dependence on what the
-// computer happens to have installed.
-/**
- * The app's own voice model — the CURRENT one.
- *
- * `gemini-3.8-flash-tts`: Google's flagship TTS model (released 22 September 2026,
- * no shutdown announced). It is the recommended replacement for every voice model
- * this app used before — `gemini-2.5-flash-preview-tts`, `gemini-2.5-pro-preview-tts`
- * and `gemini-3.1-flash-tts-preview` are scheduled to shut down on 17 November 2026.
- * Source: ai.google.dev/gemini-api/docs/deprecations (Audio models) and
- * ai.google.dev/gemini-api/docs/models/gemini-3.8-flash-tts, read 2026-10-12.
- *
- * The voice is its own model and its own setting: the text model is never asked to
- * speak. Valid owner-selected models are respected. Known legacy preview TTS model
- * settings are migrated to the current stable model before a request is sent.
- */
-const DEFAULT_VOICE_MODEL = 'gemini-3.8-flash-tts';
-/** Tried in order when a name is WITHDRAWN — never at the same time. */
-const FALLBACK_VOICE_MODELS = ['gemini-3.8-flash-lite-tts'];
-/**
- * Voice models this app used before, with the shutdown Google has announced. Kept so
- * the owner can be told plainly that a configured name is about to stop answering
- * rather than finding out from silence.
- */
-const RETIRED_VOICE_MODELS: Record<string, string> = {
-  'gemini-2.5-flash-preview-tts': '17 November 2026',
-  'gemini-2.5-pro-preview-tts': '17 November 2026',
-  'gemini-3.1-flash-tts-preview': '17 November 2026',
-};
+// ── JARVIS's voice: made and played on this computer by local_voice/service.py ──
+// Kokoro makes the voice and plays it through this computer's speakers; faster-whisper
+// turns the microphone's audio into words. Neither one calls Gemini, so the Gemini
+// budget is spent only on answers. The browser captures the microphone and never speaks.
+const LOCAL_VOICE_PORT = Number(process.env.SUPPER_LOCAL_VOICE_PORT) || 3101;
+const LOCAL_VOICE_URL = `http://127.0.0.1:${LOCAL_VOICE_PORT}`;
 
-/** A plain-language note when a voice name is due to be switched off, else ''. */
-function voiceRetirementNote(model: string): string {
-  const when = RETIRED_VOICE_MODELS[String(model || '').trim()];
-  if (!when) return '';
-  return ` ${model} is scheduled to be switched off on ${when}; the app uses ${DEFAULT_VOICE_MODEL} instead, `
-    + `and moves on to it by itself if ${model} stops answering.`;
+interface LocalVoiceAnswer {
+  ok: boolean;
+  code?: string;
+  message?: string;
+  text?: string;
 }
-const DEFAULT_VOICE_NAME = 'Charon';              // the deep, level voice
 
-function resolveVoiceModel(): { model: string; source: string; note: string } {
-  const appSetting = (process.env.SUPPER_VOICE_MODEL || '').trim();
-  const legacySetting = (process.env.GEMINI_TTS_MODEL || '').trim();
-  const configured = appSetting || legacySetting;
-  const sourceName = appSetting ? 'SUPPER_VOICE_MODEL' : legacySetting ? 'GEMINI_TTS_MODEL' : '';
-  const normalized = configured.replace(/^models\//, '');
-  const retirementDate = RETIRED_VOICE_MODELS[normalized];
-
-  // Migrate legacy preview TTS settings immediately. Leaving these overrides in
-  // place until Google's shutdown date can keep the voice on an old model even
-  // though the current stable TTS model is available.
-  if (configured && retirementDate) {
+async function localVoice(route: string, body: unknown, timeoutMs: number): Promise<LocalVoiceAnswer> {
+  try {
+    const res = await fetch(`${LOCAL_VOICE_URL}${route}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return (await res.json()) as LocalVoiceAnswer;
+  } catch {
     return {
-      model: DEFAULT_VOICE_MODEL,
-      source: `legacy ${sourceName} (${normalized}) automatically upgraded to ${DEFAULT_VOICE_MODEL}`,
-      note: `${normalized} is scheduled to be switched off on ${retirementDate}; the app automatically uses ${DEFAULT_VOICE_MODEL} instead.`,
+      ok: false,
+      code: 'offline',
+      message: 'The local voice service is not running on this computer. Its messages are in the server console, marked [local-voice].',
     };
   }
+}
 
+let localVoiceProcess: ChildProcess | null = null;
+
+/** Starts local_voice/service.py. Its messages are shown in the server console, marked [local-voice]. */
+function startLocalVoice(): void {
+  const python = (process.env.SUPPER_PYTHON || '').trim() || (process.platform === 'win32' ? 'python' : 'python3');
+  const script = path.join(process.cwd(), 'local_voice', 'service.py');
+  const relay = (chunk: Buffer) => {
+    for (const line of chunk.toString().split('\n')) {
+      if (line.trim()) console.log(line.startsWith('[local-voice]') ? line : `[local-voice] ${line}`);
+    }
+  };
+  try {
+    localVoiceProcess = spawn(python, [script], { cwd: process.cwd(), env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (err) {
+    console.error(`[local-voice] could not start ${python}: ${(err as Error).message}`);
+    return;
+  }
+  localVoiceProcess.stdout?.on('data', relay);
+  localVoiceProcess.stderr?.on('data', relay);
+  localVoiceProcess.on('error', (err) =>
+    console.error(`[local-voice] could not start ${python}: ${err.message}. Set SUPPER_PYTHON to the Python that has the requirements installed.`));
+  localVoiceProcess.on('exit', (code) =>
+    console.warn(`[local-voice] stopped (exit ${code}). Restart JARVIS to start it again.`));
+  process.on('exit', () => localVoiceProcess?.kill());
+}
+
+/** The voice in use, for the status panels. */
+function resolveVoiceModel(): { model: string; source: string; note: string } {
   return {
-    model: configured || DEFAULT_VOICE_MODEL,
-    source: configured ? sourceName : `the app's default voice model (${DEFAULT_VOICE_MODEL})`,
-    note: voiceRetirementNote(configured || DEFAULT_VOICE_MODEL),
+    model: `Kokoro ${(process.env.SUPPER_TTS_VOICE || 'af_heart').trim()} on this computer`,
+    source: 'local_voice/service.py',
+    note: '',
   };
 }
 
-/**
- * The models the mouth may use, in order. Valid owner settings are respected, while
- * known legacy preview TTS settings are migrated before a request. A withdrawn model
- * name or model-specific access denial may move to the next candidate; a refused key,
- * exhausted quota or dead connection is final because another model cannot mend it.
- *
- * The fallbacks are offered even when the owner pinned a name: if their pin is one of
- * the models Google switches off, the app keeps speaking instead of going silent.
- */
-function voiceModelCandidates(): Array<{ model: string; source: string }> {
-  const configured = resolveVoiceModel();
-  const list = [{ model: configured.model, source: configured.source }];
-  for (const name of [DEFAULT_VOICE_MODEL, ...FALLBACK_VOICE_MODELS]) {
-    if (name === configured.model || list.some((c) => c.model === name)) continue;
-    list.push({ model: name, source: `the app's current voice model (${name})` });
-  }
-  return list;
-}
-
-function resolveVoiceName(): string {
-  return (process.env.SUPPER_VOICE_NAME || '').trim() || DEFAULT_VOICE_NAME;
-}
-
-/**
- * One sentence in, one WAV out. The TTS model answers with raw PCM inside an
- * inline part; its mime type carries the sample rate, which is honoured rather
- * than assumed. Every failure is named for what it is — a withdrawn voice model,
- * a used-up quota, a refused key — instead of leaving the owner with silence.
- */
-/**
- * Sentences already spoken, kept in memory so a repeated line costs nothing —
- * "Listening, sir", "Muted, sir" and the rest are said many times a day, and the
- * owner's rule is to use the AI as little as possible. Bounded, newest first.
- */
-const voiceCache = new Map<string, { wav: Buffer; model: string }>();
-const VOICE_CACHE_MAX = 80;
-
-/**
- * Turn one model's answer into bytes the browser can play.
- *
- * Two shapes reach this function and they must not be confused. The older
- * preview TTS models answer with RAW PCM and a mime type carrying the rate
- * (`audio/L16;codec=pcm;rate=24000`) — those bytes need the 44-byte WAV header
- * built here. The current TTS models answer with a COMPLETE WAV file (it
- * already begins with `RIFF`), as Google's own cookbook notes when it branches
- * on `pcm[:4] == b"RIFF"`. Wrapping a WAV in a second WAV header produces a
- * file the browser refuses to play — a request that reports success and is
- * heard as silence, which is the worst possible failure for a voice.
- */
-function wavFromVoiceAnswer(data: Buffer, mimeType: string): { wav: Buffer; rate: number } {
-  if (data.length > 12 && data.subarray(0, 4).toString('latin1') === 'RIFF' && data.subarray(8, 12).toString('latin1') === 'WAVE') {
-    // Already a container: play it exactly as it arrived.
-    const rate = data.readUInt32LE(24) || 24000;
-    return { wav: data, rate };
-  }
-  const rate = Number((/rate=(\d+)/i.exec(mimeType || '') || [])[1]) || 24000;
-  return { wav: pcmToWav(data, rate), rate };
-}
-
-/** One attempt at one model. Throws an error carrying the classified code. */
-async function speakOnce(
-  client: NonNullable<ReturnType<typeof buildGeminiClient>['client']>,
-  model: string,
-  modelSource: string,
-  spoken: string,
-): Promise<{ wav: Buffer; model: string; ms: number; rate: number }> {
-  const started = Date.now();
-  let raw: GeminiRaw;
-  try {
-    raw = await client.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts: [{ text: spoken }] }],
-      config: {
-        responseModalities: ['AUDIO'],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: resolveVoiceName() } } },
-      },
-    } as never) as unknown as GeminiRaw;
-  } catch (err) {
-    const classified = classifyGeminiError(err);
-    // A refused SENTENCE may only close the VOICE's own counter. It used to
-    // close the brain's, so one quota message from the mouth stopped every
-    // answer for the rest of the day.
-    if (classified.code === 'rate-limited') markVoiceBudgetExhausted();
-    let message = explainBrainFailure({
-      code: classified.code, model, modelSource, key: resolveGeminiKey(), raw: classified.raw, attempts: [],
-    });
-    if (classified.code === 'model-unavailable') {
-      // The brain's message names the brain's settings; the mouth has its own.
-      message += ` The voice model is its own setting: SUPPER_VOICE_MODEL (the app's current voice model is ${DEFAULT_VOICE_MODEL}).`;
-      message += voiceRetirementNote(model);
-    }
-    if (classified.code === 'rate-limited') {
-      message += ' The browser\'s own voice (Settings → Voice → "This computer\'s voice") costs nothing and still works meanwhile.';
-    }
-    throw Object.assign(new Error(message), { code: classified.code });
-  }
-
-  const parts = raw.candidates?.[0]?.content?.parts || [];
-  const audio = parts.find((p) => p.inlineData && p.inlineData.data);
-  if (!audio || !audio.inlineData) {
-    const said = parts.find((p) => typeof p.text === 'string');
-    throw Object.assign(new Error(
-      said && said.text
-        ? `the voice model answered with words instead of sound ("${String(said.text).slice(0, 90)}") — set SUPPER_VOICE_MODEL to a voice model your key may use`
-        : `${model} sent nothing back that can be played. Set SUPPER_VOICE_MODEL to a voice model your key may use.`,
-    ), { code: 'failed' });
-  }
-  const { wav, rate } = wavFromVoiceAnswer(Buffer.from(audio.inlineData.data, 'base64'), audio.inlineData.mimeType || '');
-  return { wav, model, ms: Date.now() - started, rate };
-}
-
-async function synthesizeVoice(text: string): Promise<{ wav: Buffer; model: string; ms: number; cached: boolean }> {
-  const { client } = buildGeminiClient();
-  if (!client) {
-    throw Object.assign(new Error('no Gemini key is set, so the server cannot speak — add it in Settings → "The Brain"'), { code: 'no-key' });
-  }
-  const spoken = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 1200);
-  if (!spoken) throw Object.assign(new Error('there was nothing to say'), { code: 'empty' });
-  const candidates = voiceModelCandidates();
-  // A sentence already said is replayed from memory — checked BEFORE the budget,
-  // because remembering costs nothing and must not spend a unit. The cache key
-  // names the first choice only: remembering is about the WORDS, and a sentence
-  // already spoken is replayed whatever model happened to say it first.
-  const cacheKey = `${resolveVoiceName()}|${spoken}`;
-  const cached = voiceCache.get(cacheKey);
-  if (cached) return { wav: cached.wav, model: cached.model, ms: 0, cached: true };
-
-  const voiceBudget = trySpendVoiceBudget();
-  if (!voiceBudget.allowed) {
-    const snap = voiceQuotaSnapshot();
-    throw Object.assign(new Error(
-      `the voice's own daily budget is used up (${snap.used} of ${snap.limit} spoken sentences; the count is runtime/voice_quota.json and it resets at local midnight). ` +
-      `Text answers are unaffected — this is the voice's own counter. Raise SUPPER_GEMINI_VOICE_BUDGET for more, or switch the voice engine to this computer's voice (that one is free).`,
-    ), { code: 'voice-budget' });
-  }
-
-  let lastError: (Error & { code?: string }) | null = null;
-  let withdrawal: (Error & { code?: string }) | null = null;   // the root cause: a name is gone
-  const tried: string[] = [];
-  for (const candidate of candidates) {
-    tried.push(candidate.model);
-    try {
-      const result = await speakOnce(client, candidate.model, candidate.source, spoken);
-      voiceCache.set(cacheKey, { wav: result.wav, model: result.model });
-      while (voiceCache.size > VOICE_CACHE_MAX) voiceCache.delete(voiceCache.keys().next().value as string);
-      return { wav: result.wav, model: result.model, ms: result.ms, cached: false };
-    } catch (err) {
-      const failure = err as Error & { code?: string };
-      lastError = failure;
-      // Only a withdrawn name or model-specific access denial is worth another model.
-      // A refused key, spent quota or dead connection fails every model the same way.
-      if (failure.code !== 'model-unavailable') break;
-      if (!withdrawal) withdrawal = failure;
-      console.warn(`[voice] ${candidate.model} is unavailable (${failure.message.slice(0, 120)}) — trying the next voice model.${voiceRetirementNote(candidate.model)}`);
-    }
-  }
-  // The root cause is reported, not the last thing that happened to fail: if the
-  // owner's own voice name has been withdrawn, the message must say so (and where
-  // to change it) even when every current name after it also failed.
-  if (withdrawal) {
-    throw Object.assign(new Error(`${withdrawal.message} Tried: ${tried.join(', ')}.`), { code: 'model-unavailable' });
-  }
-  throw lastError || Object.assign(new Error('the voice model could not be reached'), { code: 'failed' });
-}
-
-// POST /api/voice/speak -> the server says one sentence out loud, as a WAV file.
-// Body: { text }. Answer: { ok, audio (base64 WAV), mime, model, ms }.
+// POST /api/voice/speak -> speak one sentence on this computer. Answers when playback has finished.
+// Body: { text }. Answer: { ok } or { ok: false, code, message }.
 app.post('/api/voice/speak', requireAuth, async (req: Request, res: Response) => {
-  const text = typeof req.body?.text === 'string' ? req.body.text : '';
-  if (!text.trim()) {
+  const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
+  if (!text) {
     res.status(400).json({ ok: false, code: 'empty', message: 'There was nothing to say, sir.' });
     return;
   }
-  try {
-    const result = await synthesizeVoice(text);
-    console.log(`[voice] ${result.cached ? 'replayed a remembered sentence' : `spoke ${result.wav.length} bytes with ${result.model} in ${result.ms} ms`}`);
-    res.json({ ok: true, audio: result.wav.toString('base64'), mime: 'audio/wav', model: result.model, ms: result.ms, cached: result.cached });
-  } catch (err) {
-    const code = (err as { code?: string }).code || 'failed';
-    console.warn(`[voice] the server voice failed (${code}): ${(err as Error).message}`);
-    res.json({ ok: false, code, message: (err as Error).message });
-  }
+  const answer = await localVoice('/speak', { text }, 180_000);
+  res.json(answer.ok ? { ok: true } : { ok: false, code: answer.code || 'failed', message: answer.message || 'The local voice could not speak.' });
+});
+
+// POST /api/voice/stop -> stop the sentence being spoken now.
+app.post('/api/voice/stop', requireAuth, async (_req: Request, res: Response) => {
+  await localVoice('/stop', {}, 5_000);
+  res.json({ ok: true });
 });
 
 // POST /api/wake -> Wake up JARVIS
@@ -2875,4 +2669,5 @@ app.get('*all', (req: Request, res: Response) => {
 // Start server
 server.listen(PORT, HOST, () => {
   console.log(`[JARVIS] Core system running on http://${HOST}:${PORT}`);
+  startLocalVoice();
 });

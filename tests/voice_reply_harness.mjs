@@ -436,7 +436,7 @@ if (!JSDOM) {
             return { ok: true, status: 200, json: async () => ({ ok: true, reply: commandReply, id: sent.requestId }) };
           }
           if (p.includes('/api/settings/gemini-key')) {
-            return { ok: true, status: 200, json: async () => ({ present: true, tail: 'cdef', source: 'config/api_keys.json', model: 'harness-text', modelSource: 'SUPPER_TEXT_MODEL', quota: { used: 1, limit: 20 }, voice: { used: 1, limit: 400 }, assistantName: 'JARVIS', userName: '', build: '2026-10-13-mic-fix-1', configRoot: '/tmp/jarvis' }) };
+            return { ok: true, status: 200, json: async () => ({ present: true, tail: 'cdef', source: 'config/api_keys.json', model: 'harness-text', modelSource: 'SUPPER_TEXT_MODEL', quota: { used: 1, limit: 20 }, voice: { used: 1, limit: 400 }, assistantName: 'JARVIS', userName: '', build: '2026-10-13-one-switch-1', configRoot: '/tmp/jarvis' }) };
           }
           return { ok: true, status: 200, json: async () => ({}) };
         };

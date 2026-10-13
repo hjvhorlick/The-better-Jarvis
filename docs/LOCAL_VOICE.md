@@ -1,3 +1,32 @@
+# JARVIS's voice on this computer
+
+There is one voice path. It is the only voice generator the dashboard uses.
+
+- **Speaking:** Kokoro (`local_voice/service.py`) makes every reply and plays it through this computer's speakers.
+- **Hearing:** the browser captures the microphone and sends the audio to the server, which passes it to faster-whisper on this computer.
+- **Gemini** is used only for answers (text). It never makes or hears the voice.
+
+## Setup (once)
+
+1. `pip install -r backend/requirements-local-voice.txt`
+2. Put the two Kokoro files in `models/kokoro/`:
+   - `kokoro-v1.0.onnx`
+   - `voices-v1.0.bin`
+   Both are on the kokoro-onnx release page, `https://github.com/thewh1teagle/kokoro-onnx/releases` (release `model-files-v1.0`).
+3. If the Python that has these packages is not `python3` (or `python` on Windows), start JARVIS with `SUPPER_PYTHON=/path/to/python`.
+4. Start JARVIS (`npm start`). The voice service starts with it.
+
+## When the voice fails: one place to look
+
+Every voice message goes to the server console, marked `[local-voice]`. The green bar above the chat
+shows the same problem in one line. Common causes:
+
+- `The Kokoro voice files are missing` — the two files are not in `models/kokoro/`.
+- `sounddevice is not installed` / `speakers could not play` — install the requirements; check the output device.
+- `The local voice is not answering` — the service did not start; look at the `[local-voice]` lines at startup.
+
+---
+
 # Local voice: setup and what it does
 
 Status: built and tested with fake speech engines. The real microphone, speaker and speech models
