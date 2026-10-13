@@ -839,6 +839,21 @@ export function describeSources(): Array<{ id: string; label: string; kinds: Med
 export const MEDIA_KINDS: MediaKind[] = ['image', 'video', 'audio', 'book', 'model'];
 
 /**
+ * How each kind is spoken about in the interface. This lives here, next to the
+ * kinds themselves, because the page had its own copy — and that copy was
+ * missing `model`, so the two suppliers of 3D models were described as supplying
+ * "model". A Record over MediaKind means adding a kind without a word here fails
+ * to compile rather than leaking the raw word into the interface.
+ */
+export const MEDIA_KIND_WORDS: Record<MediaKind, string> = {
+  image: 'pictures',
+  video: 'video',
+  audio: 'sound',
+  book: 'books',
+  model: '3D models',
+};
+
+/**
  * Find any kind of file. Walks the registry in order for that kind and returns
  * the first supplier that produced anything — so a supplier that is down, has no
  * key, or changed its markup is simply passed over, never reported.
