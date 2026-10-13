@@ -232,7 +232,7 @@ export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
  * picture keys and now covers music and places too. Every one of these is
  * OPTIONAL: behind each keyed supplier sits at least one that needs nothing.
  */
-export type ImageService = 'pexels' | 'pixabay' | 'jamendo' | 'geoapify' | 'locationiq';
+export type ImageService = 'pexels' | 'pixabay' | 'jamendo' | 'geoapify' | 'locationiq' | 'thingiverse';
 
 const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
   pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
@@ -246,6 +246,10 @@ const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: 
   // structured address fields.
   geoapify: { env: 'GEOAPIFY_API_KEY', field: 'geoapify_api_key', label: 'Geoapify', signup: 'https://www.geoapify.com/get-started/' },
   locationiq: { env: 'LOCATIONIQ_API_KEY', field: 'locationiq_api_key', label: 'LocationIQ', signup: 'https://locationiq.com/docs' },
+  // 3D PRINTABLE MODELS. Thingiverse gives a free App Token; register an app at
+  // the developer portal and the token alone is enough to read. Commons needs
+  // nothing and hosts STL files of its own, so a missing token is not a block.
+  thingiverse: { env: 'THINGIVERSE_APP_TOKEN', field: 'thingiverse_app_token', label: 'Thingiverse', signup: 'https://www.thingiverse.com/developers' },
 };
 
 export interface ServiceKeyInfo {
@@ -302,6 +306,7 @@ export function resolveImageServiceKeys(): Record<ImageService, ServiceKeyInfo> 
     jamendo: resolveImageServiceKey('jamendo'),
     geoapify: resolveImageServiceKey('geoapify'),
     locationiq: resolveImageServiceKey('locationiq'),
+    thingiverse: resolveImageServiceKey('thingiverse'),
   };
 }
 /** The optional second key, the fallback. */

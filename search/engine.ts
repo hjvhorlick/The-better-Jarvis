@@ -34,7 +34,7 @@ export interface WebHit {
   source: string;
 }
 
-export type MediaKind = 'image' | 'video' | 'audio' | 'book';
+export type MediaKind = 'image' | 'video' | 'audio' | 'book' | 'model';
 
 export interface MediaHit {
   kind: MediaKind;
@@ -533,6 +533,113 @@ async function firstWorking(engines: Engine[], skip: string[] = []): Promise<Med
   return [];
 }
 
+/**
+ * Thingiverse — 3D printable models. A free App Token from the developer portal
+ * is enough to read; the full OAuth dance is only for writing.
+ *
+ * HONEST NOTE ON THE SHAPE: the search path and its query parameter are the one
+ * part of this file not confirmed against a live response, because this sandbox
+ * cannot reach api.thingiverse.com. Working code in the wild calls
+ * GET /search/ with `type=things`, `sort`, `page` and `per_page`, and answers
+ * either with a bare array or with a `hits` wrapper — so both are read, and both
+ * spellings of the query parameter are tried. A live search on the owner's
+ * machine is what settles it.
+ */
+export function parseThingiverse(payload: unknown): MediaHit[] {
+  const list = Array.isArray(payload)
+    ? payload
+    : (payload as { hits?: unknown[] })?.hits || [];
+  const out: MediaHit[] = [];
+  for (const raw of list) {
+    const item = raw as {
+      id?: number | string; name?: string; public_url?: string; thumbnail?: string;
+      creator?: { name?: string }; like_count?: number;
+    };
+    if (!item.name) continue;
+    const page = item.public_url || (item.id ? `https://www.thingiverse.com/thing:${item.id}` : null);
+    out.push({
+      kind: 'model',
+      title: toPlainText(item.name, 160),
+      // The listing gives the thing's page, not the STL. Pointing at the page is
+      // honest; inventing a download URL from the id is not.
+      url: page || `https://www.thingiverse.com/thing:${item.id}`,
+      thumb: item.thumbnail || null,
+      page,
+      source: 'Thingiverse',
+      author: item.creator?.name ? toPlainText(item.creator.name, 90) : null,
+      license: 'See the licence on the model page — Thingiverse models are not all alike',
+    });
+  }
+  return out;
+}
+
+async function thingiverseSearch(query: string, options: EngineOptions): Promise<MediaHit[]> {
+  const token = resolveImageServiceKeys().thingiverse.key;
+  if (!token) return [];
+  const perPage = Math.min(options.maxResults ?? 6, 30);
+  // Both spellings, documented path first: `q=` as a parameter, then the
+  // path form. Whichever the API is currently serving, one of these answers.
+  const candidates = [
+    `https://api.thingiverse.com/search/?q=${encodeURIComponent(query.trim())}&type=things&sort=relevant&per_page=${perPage}`,
+    `https://api.thingiverse.com/search/${encodeURIComponent(query.trim())}/things?per_page=${perPage}`,
+  ];
+  let lastError: unknown = null;
+  for (const url of candidates) {
+    try {
+      const page = await getBody(url, options, { headers: { Authorization: `Bearer ${token}` } });
+      const hits = parseThingiverse(jsonString(page.body));
+      if (hits.length) return hits;
+    } catch (err) { lastError = err; }
+  }
+  if (lastError) throw lastError;
+  return [];
+}
+
+/**
+ * Commons hosts STL files of its own — File:Dawn 3D Model.stl is one, served as
+ * application/sla. They sit under MediaWiki's "drawing" file type, which also
+ * covers SVG, so the parser keeps only the formats a printer can actually use.
+ */
+export function parseCommonsModels(payload: unknown): MediaHit[] {
+  const printable = /stl|sla|obj|3mf|amf|ply/i;
+  const pages = (payload as { query?: { pages?: unknown[] } })?.query?.pages || [];
+  const out: MediaHit[] = [];
+  for (const raw of pages) {
+    const item = raw as {
+      title?: string; imageinfo?: Array<{
+        url?: string; thumburl?: string; descriptionurl?: string; mime?: string;
+        extmetadata?: Record<string, { value?: string }>;
+      }>;
+    };
+    const info = item.imageinfo?.[0];
+    // An SVG is a drawing, not something you can print. Filtered here rather than
+    // left for the owner to discover at the slicer.
+    if (!info?.url || !printable.test(String(info.mime || ''))) continue;
+    const meta = info.extmetadata || {};
+    const clean = (value?: string) => (value ? toPlainText(value, 120) : null);
+    out.push({
+      kind: 'model',
+      title: toPlainText(String(item.title || '').replace(/^File:/i, ''), 160),
+      url: info.url,
+      thumb: info.thumburl || null,
+      page: info.descriptionurl || `https://commons.wikimedia.org/wiki/${encodeURIComponent(String(item.title || ''))}`,
+      source: 'Wikimedia Commons',
+      author: clean(meta.Artist?.value),
+      license: clean(meta.LicenseShortName?.value),
+    });
+  }
+  return out;
+}
+
+async function commonsModelSearch(query: string, options: EngineOptions): Promise<MediaHit[]> {
+  const url = 'https://commons.wikimedia.org/w/api.php?action=query&format=json&formatversion=2'
+    + '&generator=search&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|extmetadata&iiurlwidth=320'
+    + `&gsrlimit=${Math.min(options.maxResults ?? 6, 20)}`
+    + `&gsrsearch=${encodeURIComponent(`filetype:drawing ${query.trim()} (stl OR 3d OR model)`)}`;
+  const page = await getBody(url, options);
+  return parseCommonsModels(jsonString(page.body));
+}
+
 /* ── the supplier registry ───────────────────────────────────────────────────
  * A supplier is a row of data, not a chain of code. Each one declares which
  * kinds of file it can hand over and, if it wants a key, which key. Order in
@@ -563,6 +670,7 @@ const KINDS = {
   picsFilm: ['image', 'video'] as MediaKind[],
   sound: ['audio'] as MediaKind[],
   reads: ['book'] as MediaKind[],
+  solid: ['model'] as MediaKind[],
 };
 
 const MEDIA_SOURCES: MediaSource[] = [
@@ -593,10 +701,18 @@ const MEDIA_SOURCES: MediaSource[] = [
     search: (q, _kind, o) => gutenbergSearch(q, o),
   },
   {
-    id: 'commons', label: 'Wikimedia Commons', kinds: [...KINDS.picsFilm, 'audio'] as MediaKind[],
-    blurb: 'Pictures, video and sound with no key at all. Every file carries its own licence, which is read and kept.',
+    id: 'thingiverse', label: 'Thingiverse', kinds: KINDS.solid, key: 'thingiverse',
+    blurb: '3D printable models — the largest legacy library. A free App Token from the developer portal reads it; the licence is per model, so it is read on the page.',
+    signup: 'https://www.thingiverse.com/developers',
+    search: (q, kind, o) => (kind === 'model' ? thingiverseSearch(q, o) : Promise.resolve([])),
+  },
+  {
+    id: 'commons', label: 'Wikimedia Commons', kinds: [...KINDS.picsFilm, 'audio', 'model'] as MediaKind[],
+    blurb: 'Pictures, video, sound and STL files with no key at all. Every file carries its own licence, which is read and kept.',
     signup: 'https://commons.wikimedia.org/',
-    search: (q, kind, o) => (kind === 'book' ? Promise.resolve([]) : commonsSearch(q, kind, o)),
+    search: (q, kind, o) => (kind === 'model'
+      ? commonsModelSearch(q, o)
+      : kind === 'book' ? Promise.resolve([]) : commonsSearch(q, kind, o)),
   },
   {
     id: 'openverse', label: 'Openverse', kinds: [...KINDS.pics, ...KINDS.sound] as MediaKind[],
@@ -631,7 +747,7 @@ export function describeSources(): Array<{ id: string; label: string; kinds: Med
 }
 
 /** The kinds of file this build knows how to go and fetch. */
-export const MEDIA_KINDS: MediaKind[] = ['image', 'video', 'audio', 'book'];
+export const MEDIA_KINDS: MediaKind[] = ['image', 'video', 'audio', 'book', 'model'];
 
 /**
  * Find any kind of file. Walks the registry in order for that kind and returns
@@ -667,6 +783,11 @@ export async function searchAudio(query: string, options: EngineOptions = {}): P
 /** Books: Project Gutenberg through Gutendex. No key, and public domain. */
 export async function searchBooks(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
   return searchMedia('book', query, options);
+}
+
+/** 3D printable models: Thingiverse when a token is loaded, Commons STL otherwise. */
+export async function searchModels(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
+  return searchMedia('model', query, options);
 }
 
 /** Which of the optional keys are set — for Settings, never the key itself. */
