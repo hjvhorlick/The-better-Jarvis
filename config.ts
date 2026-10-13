@@ -134,6 +134,136 @@ function writeFileAtomic(file: string, text: string): void {
   fs.renameSync(tmp, file);
 }
 
+/* ── Custom suppliers ────────────────────────────────────────────────────────
+ * The owner's own applications, or any website with a JSON API, can be
+ * registered as a supplier here — no code change and no restart. That is the
+ * point: "that website becomes a supplier of whatever items you can download"
+ * should not mean asking for an edit to search/engine.ts.
+ *
+ * A supplier is a description, not code. It says where to ask, how to pass a
+ * key if it wants one, and where in the answer the file and its title live.
+ * Everything it returns is treated as untrusted text and only ever displayed.
+ *
+ * SECURITY: the endpoint is fetched through the same fetcher as every built-in
+ * supplier, so it inherits the public-address pinning, redirect, size and
+ * timeout limits. An endpoint on a private network is refused by that fetcher
+ * rather than by a special rule here, which means one guard, not two.
+ */
+export const SUPPLIERS_CONFIG_PATH = path.join(REPO_ROOT, 'config', 'suppliers.json');
+
+/**
+ * Where the registered suppliers actually live. An override exists so a test can
+ * point this at a temporary file: without it the suite writes to the owner's real
+ * config/suppliers.json, which is how the first run of these tests left five
+ * invented suppliers and two fake keys sitting in a real config directory.
+ */
+function suppliersFile(): string {
+  const override = process.env.SUPPER_SUPPLIERS_FILE;
+  return override && override.trim() ? override.trim() : SUPPLIERS_CONFIG_PATH;
+}
+
+export interface CustomSupplier {
+  /** Stable id, used as the key slot and by `skip`. Letters, digits, dash. */
+  id: string;
+  label: string;
+  /** Which kinds of file it hands over: image, video, audio, book, model. */
+  kinds: string[];
+  /** URL to ask. `{query}` and `{limit}` are substituted, nothing else. */
+  endpoint: string;
+  /** Header the key goes in, when the supplier wants one. */
+  keyHeader?: string;
+  /** Text placed before the key in that header, e.g. "Bearer ". */
+  keyPrefix?: string;
+  /** Dot path to the array of results, e.g. "hits" or "data.items". Empty = the body is the array. */
+  listPath?: string;
+  titlePath?: string;
+  urlPath?: string;
+  thumbPath?: string;
+  authorPath?: string;
+  licensePath?: string;
+  /** The key itself, kept beside the definition so one file describes a supplier. */
+  key?: string;
+  /** One line shown in the registration area. */
+  note?: string;
+}
+
+const SUPPLIER_ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
+
+/** Read the custom suppliers. Never throws: a missing or broken file means none. */
+export function listCustomSuppliers(): CustomSupplier[] {
+  const file = readJsonSafe(suppliersFile());
+  const list = (file?.suppliers as unknown[] | undefined) || [];
+  if (!Array.isArray(list)) return [];
+  return list.filter((entry): entry is CustomSupplier =>
+    Boolean(entry) && typeof entry === 'object'
+    && typeof (entry as CustomSupplier).id === 'string'
+    && typeof (entry as CustomSupplier).endpoint === 'string');
+}
+
+/**
+ * Register or replace a supplier. The endpoint is checked before anything is
+ * written, because a supplier that cannot be asked is worse than no supplier:
+ * it would sit in the chain silently failing.
+ */
+export function saveCustomSupplier(input: Partial<CustomSupplier>): CustomSupplier {
+  const id = String(input.id || '').trim().toLowerCase();
+  if (!SUPPLIER_ID_RE.test(id)) throw new Error('The id must be 2-40 characters: lowercase letters, digits and dashes.');
+  const label = String(input.label || '').trim().slice(0, 60);
+  if (!label) throw new Error('Give the supplier a name to show in Settings.');
+  const endpoint = String(input.endpoint || '').trim();
+  if (!/^https?:\/\//i.test(endpoint)) throw new Error('The endpoint must start with http:// or https://.');
+  if (!endpoint.includes('{query}')) throw new Error('The endpoint must contain {query}, which is where the search text goes.');
+  const kinds = (Array.isArray(input.kinds) ? input.kinds : [])
+    .map((k) => String(k).trim().toLowerCase())
+    .filter((k) => ['image', 'video', 'audio', 'book', 'model'].includes(k));
+  if (!kinds.length) throw new Error('Say which kind of file it supplies: image, video, audio, book or model.');
+  if (!String(input.titlePath || '').trim()) throw new Error('Say where the title is in the answer, e.g. "name" or "title".');
+  if (!String(input.urlPath || '').trim()) throw new Error('Say where the file or page address is, e.g. "url" or "public_url".');
+
+  const supplier: CustomSupplier = {
+    id, label, kinds, endpoint,
+    ...(input.keyHeader ? { keyHeader: String(input.keyHeader).trim().slice(0, 80) } : {}),
+    ...(input.keyPrefix ? { keyPrefix: String(input.keyPrefix).slice(0, 20) } : {}),
+    listPath: String(input.listPath || '').trim(),
+    titlePath: String(input.titlePath).trim(),
+    urlPath: String(input.urlPath).trim(),
+    ...(input.thumbPath ? { thumbPath: String(input.thumbPath).trim() } : {}),
+    ...(input.authorPath ? { authorPath: String(input.authorPath).trim() } : {}),
+    ...(input.licensePath ? { licensePath: String(input.licensePath).trim() } : {}),
+    ...(input.key ? { key: String(input.key).trim() } : {}),
+    ...(input.note ? { note: String(input.note).trim().slice(0, 200) } : {}),
+  };
+
+  const existing = listCustomSuppliers().filter((s) => s.id !== id);
+  // New suppliers go FIRST: the owner just registered this one, so it is the one
+  // they want answered. A built-in still catches anything it misses.
+  const next = [supplier, ...existing];
+  writeFileAtomic(suppliersFile(), JSON.stringify({ suppliers: next }, null, 2) + '\n');
+  return supplier;
+}
+
+export function removeCustomSupplier(id: string): boolean {
+  const wanted = String(id).trim().toLowerCase();
+  const before = listCustomSuppliers();
+  const next = before.filter((s) => s.id !== wanted);
+  if (next.length === before.length) return false;
+  writeFileAtomic(suppliersFile(), JSON.stringify({ suppliers: next }, null, 2) + '\n');
+  return true;
+}
+
+/** A supplier as Settings shows it — the key is described, never returned. */
+export function customSupplierStatus(): Array<{ id: string; label: string; kinds: string[]; hasKey: boolean; keyTail: string | null; endpoint: string; note: string | null }> {
+  return listCustomSuppliers().map((s) => ({
+    id: s.id,
+    label: s.label,
+    kinds: [...s.kinds],
+    hasKey: Boolean(s.key),
+    keyTail: s.key ? s.key.slice(-4) : null,
+    endpoint: s.endpoint,
+    note: s.note ?? null,
+  }));
+}
+
 /** Which of the two Gemini keys: 1 is the normal one, 2 the optional fallback. */
 export type KeySlot = 1 | 2;
 

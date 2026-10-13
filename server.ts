@@ -85,6 +85,7 @@ import { ResearchWorkflowError, runResearchWorkflow, MAX_RESEARCH_QUESTION_CHARS
 import { buildFollowupPrompt, groundingToInputs } from './research/report.js';
 import { parseResearchIntent } from './research/intent.js';
 import { isSafePublicHttpUrl } from './research/fetch.js';
+import { customSupplierStatus, removeCustomSupplier, saveCustomSupplier, type CustomSupplier } from './config.js';
 import { searchPlaces, describePlaceSources, type PlaceHit } from './search/places.js';
 import type { ResearchDocument, ResearchTaskStatus } from './research/types.js';
 
@@ -3407,6 +3408,38 @@ app.get('/api/web/place', requireAuth, async (req: Request, res: Response) => {
     res.json({ ok: true, query: q, hits, quotaUsed: false });
   } catch (err) {
     res.status(502).json({ ok: false, error: `The map sources did not answer: ${explainFetchError(err)}` });
+  }
+});
+
+/**
+ * The registration area for the owner's own suppliers. A website becomes a
+ * supplier of whatever it can hand over — their book app, their stock library,
+ * anything with a JSON API — without an edit to this file or a restart.
+ *
+ * The endpoint is fetched through the same fetcher as the built-in suppliers, so
+ * it inherits the public-address pinning, redirect, size and timeout limits.
+ * Pointing one at a private network is refused by that fetcher, not by a rule
+ * here, which keeps the guard in one place.
+ */
+app.get('/api/web/suppliers', requireAuth, (_req: Request, res: Response) => {
+  res.json({ ok: true, suppliers: customSupplierStatus(), quotaUsed: false });
+});
+
+app.post('/api/web/suppliers', requireAuth, express.json({ limit: '64kb' }), (req: Request, res: Response) => {
+  try {
+    const body = (req.body || {}) as Partial<CustomSupplier> & { remove?: boolean };
+    if (body.remove) {
+      const removed = removeCustomSupplier(String(body.id || ''));
+      res.json({ ok: true, removed, suppliers: customSupplierStatus() });
+      return;
+    }
+    const saved = saveCustomSupplier(body);
+    // Saved with the key masked, because the response is not a place to echo a
+    // secret back to a browser.
+    const { key: _key, ...safe } = saved;
+    res.json({ ok: true, saved: { ...safe, hasKey: Boolean(saved.key) }, suppliers: customSupplierStatus() });
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'That supplier could not be saved.' });
   }
 });
 

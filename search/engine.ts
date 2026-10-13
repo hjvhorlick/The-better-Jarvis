@@ -25,7 +25,7 @@
  * with no Pexels and no Pixabay key, pictures still come from Commons.
  */
 import { fetchPublicBody, fetchPublicPage, type ExtractedPage, type FetchOptions } from '../research/fetch.js';
-import { resolveImageServiceKeys, type ImageService } from '../config.js';
+import { resolveImageServiceKeys, listCustomSuppliers, type ImageService, type CustomSupplier } from '../config.js';
 
 export interface WebHit {
   title: string;
@@ -728,14 +728,103 @@ const MEDIA_SOURCES: MediaSource[] = [
   },
 ];
 
+/* ── suppliers the owner registered themselves ──────────────────────────────
+ * These are data in config/suppliers.json, not entries in the table above, so
+ * an application becomes a supplier without an edit here or a restart. They are
+ * tried FIRST, because the owner just registered them and that is the answer
+ * they are expecting; the built-ins still catch anything they miss.
+ *
+ * The endpoint is fetched through getBody, so it inherits the same public
+ * address pinning, redirect, size and timeout limits as every built-in. There
+ * is no separate rule for custom endpoints and no separate hole to leave in one.
+ */
+
+/** Read `a.b.c` out of an untrusted answer. Never throws; absent is null. */
+function dig(value: unknown, dotPath: string): unknown {
+  if (!dotPath) return value;
+  let cursor: unknown = value;
+  for (const part of dotPath.split('.')) {
+    if (cursor === null || typeof cursor !== 'object') return null;
+    cursor = (cursor as Record<string, unknown>)[part];
+  }
+  return cursor ?? null;
+}
+
+/**
+ * Turn one registered supplier's answer into hits. Everything read from the
+ * response is treated as untrusted text and only ever displayed.
+ */
+export function parseCustomSupplier(payload: unknown, supplier: CustomSupplier, kind: MediaKind): MediaHit[] {
+  const listValue = supplier.listPath ? dig(payload, supplier.listPath) : payload;
+  const rows = Array.isArray(listValue) ? listValue : [];
+  const out: MediaHit[] = [];
+  for (const raw of rows) {
+    const title = dig(raw, supplier.titlePath);
+    const url = dig(raw, supplier.urlPath);
+    // A row with no title or no address is not a result. Dropping it is better
+    // than showing a blank line the owner has to interpret.
+    if (typeof title !== 'string' && typeof title !== 'number') continue;
+    if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) continue;
+    const thumb = dig(raw, supplier.thumbPath || '');
+    const author = dig(raw, supplier.authorPath || '');
+    const license = dig(raw, supplier.licensePath || '');
+    out.push({
+      kind,
+      title: toPlainText(String(title), 160),
+      url,
+      thumb: typeof thumb === 'string' && /^https?:\/\//i.test(thumb) ? thumb : null,
+      page: url,
+      source: supplier.label,
+      author: typeof author === 'string' ? toPlainText(author, 90) : null,
+      license: typeof license === 'string' ? toPlainText(license, 120) : null,
+    });
+  }
+  return out;
+}
+
+async function customSupplierSearch(supplier: CustomSupplier, query: string, kind: MediaKind, options: EngineOptions): Promise<MediaHit[]> {
+  const limit = Math.min(options.maxResults ?? 6, 50);
+  const url = supplier.endpoint
+    .split('{query}').join(encodeURIComponent(query.trim()))
+    .split('{limit}').join(String(limit));
+  const headers: Record<string, string> = {};
+  if (supplier.key && supplier.keyHeader) {
+    headers[supplier.keyHeader] = `${supplier.keyPrefix || ''}${supplier.key}`;
+  }
+  const page = await getBody(url, options, { headers });
+  return parseCustomSupplier(jsonString(page.body), supplier, kind);
+}
+
+/** The registered suppliers as MediaSources, so the one chain serves both. */
+function customSources(): MediaSource[] {
+  return listCustomSuppliers().map((supplier) => ({
+    id: supplier.id,
+    label: supplier.label,
+    kinds: supplier.kinds.filter((k): k is MediaKind => MEDIA_KINDS.includes(k as MediaKind)),
+    blurb: supplier.note || `Registered by the owner — ${supplier.endpoint.replace(/\{query\}/g, '…').slice(0, 90)}`,
+    signup: null,
+    search: (q, kind, o) => customSupplierSearch(supplier, q, kind, o),
+  }));
+}
+
 /**
  * The registry as the owner sees it: every supplier, what it covers, and whether
  * the key it wants is present. Nothing here is a gate — a supplier with no key
  * is simply further down the order, and the key-free ones always answer.
  */
-export function describeSources(): Array<{ id: string; label: string; kinds: MediaKind[]; needsKey: boolean; keyPresent: boolean; blurb: string; signup: string | null }> {
+export function describeSources(): Array<{ id: string; label: string; kinds: MediaKind[]; needsKey: boolean; keyPresent: boolean; blurb: string; signup: string | null; custom?: boolean }> {
   const keys = resolveImageServiceKeys();
-  return MEDIA_SOURCES.map((source) => ({
+  const registered = customSources().map((source) => ({
+    id: source.id,
+    label: source.label,
+    kinds: [...source.kinds],
+    needsKey: false,
+    keyPresent: true,
+    blurb: source.blurb,
+    signup: null,
+    custom: true,
+  }));
+  return [...registered, ...MEDIA_SOURCES.map((source) => ({
     id: source.id,
     label: source.label,
     kinds: [...source.kinds],
@@ -743,7 +832,7 @@ export function describeSources(): Array<{ id: string; label: string; kinds: Med
     keyPresent: source.key ? Boolean(keys[source.key].key) : true,
     blurb: source.blurb,
     signup: source.signup ?? null,
-  }));
+  }))];
 }
 
 /** The kinds of file this build knows how to go and fetch. */
@@ -755,7 +844,10 @@ export const MEDIA_KINDS: MediaKind[] = ['image', 'video', 'audio', 'book', 'mod
  * key, or changed its markup is simply passed over, never reported.
  */
 export async function searchMedia(kind: MediaKind, query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
-  const chain = MEDIA_SOURCES
+  // Registered suppliers first: the owner just added them, so they are the
+  // answer being asked for. The built-ins run afterwards and catch anything the
+  // registered one does not have.
+  const chain = [...customSources(), ...MEDIA_SOURCES]
     .filter((source) => source.kinds.includes(kind))
     .map((source) => ({ name: source.id, run: () => source.search(query, kind, options) }));
   return firstWorking(chain, options.skip);

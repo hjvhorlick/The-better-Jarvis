@@ -1517,6 +1517,47 @@
             <span class="settings-desc" style="margin-top: 14px;"><b>Suppliers — what JARVIS can go and fetch</b> (optional keys, nothing to do with Gemini). Each supplier hands over a different kind of file, and together they cover pictures, video, sound and books. Paste a key and that supplier moves to the front of the queue for the kinds it covers. Leave them all empty and JARVIS still fetches every kind from the suppliers that need nothing at all.</span>
             <div id="supplier-registry"><span class="settings-desc">Reading the supplier list…</span></div>
             <span class="settings-desc" style="margin-top: 6px;"><b>Why the keys are optional:</b> Pexels and Pixabay have no audio endpoint in their public APIs — that is in both sets of documentation — so music comes from Jamendo, or from Wikimedia Commons, Openverse and the Internet Archive when there is no client ID. Books come from Project Gutenberg, which needs no key because the whole catalogue is public domain. A missing key narrows the choice of supplier; it never stops a search.</span>
+            <!-- REGISTER YOUR OWN SUPPLIER. This is the point of the registry:
+                 an application becomes a source of files without an edit to any
+                 code and without a restart. The endpoint is fetched through the
+                 same fetcher as the built-in suppliers, so it inherits their
+                 public-address, redirect, size and timeout limits. -->
+            <span class="settings-desc" style="margin-top: 16px;"><b>Register your own supplier</b> — any website with a JSON API, or one of your own applications. Nothing here needs a restart, and removing one is one click.</span>
+            <div id="custom-supplier-list" style="margin-top: 6px;"></div>
+            <details style="margin-top: 8px; border: 1px solid var(--glass-border); border-radius: 10px; padding: 8px 10px; background: rgba(0,0,0,0.22);">
+              <summary style="cursor: pointer; color: var(--jg-gold-pale); font-size: 12px;">Add a supplier</summary>
+              <div style="display: grid; grid-template-columns: 130px 1fr; gap: 6px; align-items: center; margin-top: 8px; font-size: 12px;">
+                <span class="settings-desc">Id</span>
+                <input id="cs-id" placeholder="my-book-app" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Name</span>
+                <input id="cs-label" placeholder="My Book App" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Supplies</span>
+                <div id="cs-kinds" style="display: flex; gap: 10px; flex-wrap: wrap; color: var(--jg-gold-pale);">
+                  <label><input type="checkbox" value="image"> pictures</label>
+                  <label><input type="checkbox" value="video"> video</label>
+                  <label><input type="checkbox" value="audio"> sound</label>
+                  <label><input type="checkbox" value="book"> books</label>
+                  <label><input type="checkbox" value="model"> 3D models</label>
+                </div>
+                <span class="settings-desc">Endpoint</span>
+                <input id="cs-endpoint" placeholder="https://my.app/api/search?q={query}&limit={limit}" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Title is at</span>
+                <input id="cs-title" placeholder="title  — or results.title for a nested answer" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">File / page is at</span>
+                <input id="cs-url" placeholder="url  — or results.url" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Results list at</span>
+                <input id="cs-list" placeholder="leave empty if the answer is already a list" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Key header</span>
+                <input id="cs-keyheader" placeholder="optional — e.g. Authorization" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+                <span class="settings-desc">Key</span>
+                <input id="cs-key" type="password" placeholder="optional — kept in config/suppliers.json" style="background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:7px 10px; font-size:12px;">
+              </div>
+              <div style="display: flex; gap: 8px; margin-top: 10px; align-items: center;">
+                <button class="preset-btn" style="padding: 6px 16px; margin: 0;" onclick="saveCustomSupplier()">Register</button>
+                <span class="settings-desc" id="cs-status"></span>
+              </div>
+              <span class="settings-desc" style="display: block; margin-top: 6px;">The endpoint must contain <b>{query}</b>, which is replaced with what you asked for. <b>{limit}</b> is replaced with how many you want. Dot paths read nested answers, so <code>data.items</code> reaches into <code>{"data":{"items":[…]}}</code>.</span>
+            </details>
             <span class="settings-desc" id="image-keys-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
@@ -2036,7 +2077,7 @@
 
     async function toggleOfflineMode() {
       const state = _offlineState || {};
-      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); return; }
+      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); refreshCustomSuppliers(); return; }
       try {
         const res = await _authFetch('/api/offline', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: null }),
@@ -2329,6 +2370,119 @@
       }
     }
     window.refreshSupplierRegistry = refreshSupplierRegistry;
+
+    // ── registering a supplier of your own ───────────────────────────────────
+    // A website becomes a source of files here, with no edit to any code and no
+    // restart. Registered suppliers are tried before the built-in ones, because
+    // you just added them and that is the answer you are asking for.
+    async function refreshCustomSuppliers() {
+      const box = document.getElementById('custom-supplier-list');
+      if (!box) return;
+      try {
+        const res = await _authFetch('/api/web/suppliers');
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(info.suppliers)) {
+          box.textContent = `Could not read your suppliers: ${info.error || `HTTP ${res.status}`}`;
+          return;
+        }
+        box.textContent = '';
+        if (!info.suppliers.length) {
+          const none = document.createElement('span');
+          none.className = 'settings-desc';
+          none.textContent = 'None registered yet — the built-in suppliers above are all in use.';
+          box.append(none);
+          return;
+        }
+        for (const s of info.suppliers) {
+          const row = document.createElement('div');
+          row.style.cssText = 'display: flex; gap: 8px; align-items: center; margin-top: 6px; padding: 6px 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(0,0,0,0.22);';
+          const name = document.createElement('b');
+          name.textContent = s.label;
+          const meta = document.createElement('span');
+          meta.className = 'settings-desc';
+          meta.style.cssText = 'flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;';
+          meta.textContent = `${(s.kinds || []).join(', ')}${s.hasKey ? ` · key …${s.keyTail}` : ' · no key'} · ${s.endpoint}`;
+          meta.title = s.endpoint;
+          const remove = document.createElement('button');
+          remove.className = 'preset-btn';
+          remove.style.cssText = 'padding: 5px 12px; margin: 0;';
+          remove.textContent = 'Remove';
+          remove.title = `Remove ${s.label}`;
+          remove.onclick = () => removeCustomSupplier(s.id, s.label);
+          row.append(name, meta, remove);
+          box.append(row);
+        }
+      } catch (err) {
+        box.textContent = `Could not read your suppliers: ${err.message}`;
+      }
+    }
+    window.refreshCustomSuppliers = refreshCustomSuppliers;
+
+    async function saveCustomSupplier() {
+      const el = document.getElementById('cs-status');
+      const say = (text, bad) => { if (el) { el.textContent = text; el.style.color = bad ? '#ff6b6b' : ''; } };
+      const value = (id) => (document.getElementById(id)?.value || '').trim();
+      const kinds = [...document.querySelectorAll('#cs-kinds input:checked')].map((i) => i.value);
+      const body = {
+        id: value('cs-id'),
+        label: value('cs-label'),
+        kinds,
+        endpoint: value('cs-endpoint'),
+        titlePath: value('cs-title'),
+        urlPath: value('cs-url'),
+        listPath: value('cs-list'),
+        keyHeader: value('cs-keyheader'),
+        key: value('cs-key'),
+      };
+      say('Registering…');
+      try {
+        const res = await _authFetch('/api/web/suppliers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok) { say(info.error || `the server answered HTTP ${res.status}`, true); return; }
+        for (const id of ['cs-id', 'cs-label', 'cs-endpoint', 'cs-title', 'cs-url', 'cs-list', 'cs-keyheader', 'cs-key']) {
+          const input = document.getElementById(id);
+          if (input) input.value = '';
+        }
+        document.querySelectorAll('#cs-kinds input:checked').forEach((i) => { i.checked = false; });
+        say('Registered — it is used at once, no restart.');
+        toast(`${body.label} registered as a supplier`);
+      } catch (err) {
+        say(`Registering failed: ${err.message}`, true);
+        return;
+      }
+      refreshCustomSuppliers();
+      refreshSupplierRegistry();
+    }
+    window.saveCustomSupplier = saveCustomSupplier;
+
+    async function removeCustomSupplier(id, label) {
+      const el = document.getElementById('cs-status');
+      try {
+        const res = await _authFetch('/api/web/suppliers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ remove: true, id })
+        });
+        if (!res.ok) {
+          const info = await res.json().catch(() => ({}));
+          if (el) { el.textContent = `Remove failed: ${info.error || `HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          return;
+        }
+        if (el) { el.textContent = `${label} removed.`; el.style.color = ''; }
+        toast(`${label} removed — the built-in suppliers carry on as before`);
+      } catch (err) {
+        if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
+        return;
+      }
+      refreshCustomSuppliers();
+      refreshSupplierRegistry();
+    }
+    window.removeCustomSupplier = removeCustomSupplier;
+
 
     async function saveImageKey(service) {
       const input = document.getElementById(`${service}-key-input`);
@@ -3290,7 +3444,7 @@
         FoleyAudio.grab();
         // Settings must show the truth about the brain key and the build every
         // time it opens.
-        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); }
+        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); refreshCustomSuppliers(); }
       } else {
         win.style.display = 'none';
         FoleyAudio.place();
