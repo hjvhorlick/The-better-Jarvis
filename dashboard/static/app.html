@@ -1363,7 +1363,6 @@
                them onto it) — that is the place that shows what came in. -->
           <input class="chat-input" id="chat-input" placeholder="Give JARVIS a directive or ask a question…" autocomplete="off">
 
-          <button class="chat-btn" id="btn-mic" onclick="doMic()" title="Microphone on/off — click, allow the mic, then just speak">🎤</button>
           <button class="chat-btn chat-btn-send" onclick="doSend()">Send</button>
         </div>
       </div>
@@ -1584,9 +1583,8 @@
             </div>
             <div style="display: flex; gap: 8px; width: 100%;">
               <button class="preset-btn" id="btn-mute" style="flex:1; margin: 0;" onclick="toggleMute()">🔇 Mute listening</button>
-              <button class="preset-btn" style="flex:1; margin: 0;" onclick="doMic()">🎤 Mic on/off</button>
             </div>
-            <span class="settings-desc">Click anywhere (or 🎤) once, allow the microphone, then just talk. <b>Auto/Browser</b> uses this browser's built-in recognition (Chrome, Edge, Safari) and voice — no install, heard in this tab; in Chrome/Edge recognition audio goes to the browser maker's service. <b>Local</b> keeps audio on this computer (faster-whisper + Kokoro, needs <code>pip install -r backend/requirements-local-voice.txt</code> and the Kokoro files in <code>models/kokoro/</code> — see docs/LOCAL_VOICE.md). In Auto, whichever path works is the one that speaks, so a missing download can no longer leave JARVIS silent. Mic needs a secure page: <code>http://localhost:3000</code> or https. 🔇 Mute stops listening.</span>
+            <span class="settings-desc">Click anywhere once, allow the microphone, then just talk. <b>Auto/Browser</b> uses this browser's built-in recognition (Chrome, Edge, Safari) and voice — no install, heard in this tab; in Chrome/Edge recognition audio goes to the browser maker's service. <b>Local</b> keeps audio on this computer (faster-whisper + Kokoro, needs <code>pip install -r backend/requirements-local-voice.txt</code> and the Kokoro files in <code>models/kokoro/</code> — see docs/LOCAL_VOICE.md). In Auto, whichever path works is the one that speaks, so a missing download can no longer leave JARVIS silent. Mic needs a secure page: <code>http://localhost:3000</code> or https. 🔇 Mute stops listening.</span>
             <div class="voice-report" id="voice-health-report">Local voice health: not checked yet — open “voice test” in chat, or this line updates when Settings opens.</div>
           </div>
 
@@ -4361,7 +4359,7 @@
     function earStatusText() {
       if (_muted) return 'Muted — JARVIS is not listening. Press 🔇 Mute to listen again.';
       if (Ear.problem) return `⚠ ${Ear.problem}`;
-      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click 🎤 (or anywhere on the page) to open it.';
+      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click anywhere on the page to open it.';
       if (Speech.busy || Speech.queue.length) return 'JARVIS is speaking.';
       if (Ear.sending) return 'Turning your words into text…';
       return Ear.mode === 'browser'
@@ -4481,7 +4479,7 @@
             Ear.recogWanted = false;
             Ear.recogLive = false;
             if (Ear.mode === 'browser') { Ear.mode = ''; Ear.ready = false; }
-            voiceProblem('Microphone permission was refused for speech recognition. Click the lock/sliders icon by the address bar, set Microphone to Allow, then press 🎤.');
+            voiceProblem('Microphone permission was refused for speech recognition. Click the lock/sliders icon by the address bar, set Microphone to Allow, then click anywhere on the page.');
             renderEar();
             return;
           }
@@ -4496,7 +4494,7 @@
           }
           if (code === 'audio-capture') {
             Ear.recogWanted = false;
-            voiceProblem('No microphone was found by the browser. Plug one in, then press 🎤.');
+            voiceProblem('No microphone was found by the browser. Plug one in, then click anywhere on the page.');
           }
         };
         recog.onend = () => {
@@ -4691,7 +4689,7 @@
     async function earStart() {
       if (_muted || Ear.ready || Ear.starting) return;
       if (!window.isSecureContext) {
-        voiceProblem('This page is not a secure context, so browsers block the microphone. Open JARVIS at http://localhost:3000 (or an https:// address), then press 🎤.');
+        voiceProblem('This page is not a secure context, so browsers block the microphone. Open JARVIS at http://localhost:3000 (or an https:// address), then click anywhere on the page.');
         return;
       }
       // Inside a frame (e.g. the Arena live preview), the OUTER page decides
@@ -4907,15 +4905,6 @@
       renderEar();
     }
 
-    /* The mic button: a real user gesture, which is what browsers require
-       before they will hand over a microphone or unlock speech. */
-    function doMic() {
-      if (_muted) { toggleMute(); return; }
-      if (Ear.ready) { earStopAll(); Ear.ready = false; toast('🎤 Microphone off — press 🎤 to listen again'); renderEar(); return; }
-      earStart();
-    }
-    window.doMic = doMic;
-
     function setVoiceEngine(engine) {
       if (engine !== 'auto' && engine !== 'browser' && engine !== 'local') return;
       _voiceEngine = engine;
@@ -5010,7 +4999,7 @@
     document.addEventListener('keydown', earGesture, true);
     // No blind earStart() on a timer: browsers block microphone access and
     // suspend audio until a user gesture, so starting then only produced a
-    // refused prompt and a dead-looking mic. The first click (or 🎤) starts it.
+    // refused prompt and a dead-looking mic. The first click starts it.
     armVoiceOnGesture();
     renderEar();
 
