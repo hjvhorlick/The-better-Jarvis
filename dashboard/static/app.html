@@ -1563,6 +1563,28 @@
         <div>
           <div class="settings-section-title">Voice — Microphone & Speakers</div>
 
+          <!-- Which engine. The two are genuinely different machines: this
+               browser's voice/ear run on the computer the page is open on, the
+               server's run on the computer JARVIS is installed on. Auto is
+               right unless you know you want the other one. -->
+          <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
+            <span class="settings-label">Voice engine</span>
+            <span class="settings-desc" id="voice-engine-desc">JARVIS speaks and listens with this browser — free, offline, and on the machine you are actually sitting at.</span>
+            <select id="sel-voice-engine" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setVoiceEngine(this.value)">
+              <option value="auto">Auto — this browser first, this computer as the fallback</option>
+              <option value="server">This computer (the server's own voice &amp; ears only)</option>
+            </select>
+          </div>
+
+          <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
+            <span class="settings-label">Speaking voice (this browser)</span>
+            <select id="sel-browser-voice" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setBrowserVoice(this.value)">
+              <option value="">Choose the best voice automatically</option>
+            </select>
+          </div>
+
+          <div class="voice-report" id="voice-engine-report">Checking what this browser can do…</div>
+
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 8px;">
             <div style="display: flex; gap: 8px; width: 100%;">
               <button class="preset-btn" style="flex:1; margin: 0;" onclick="testMicNow()">🎤 Test Mic</button>
@@ -1808,7 +1830,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-two-keys-1';
+    const JARVIS_BUILD = '2026-10-13-browser-voice-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -2360,9 +2382,18 @@
       const lines = [];
       lines.push(`Secure page (needed for mic): ${window.isSecureContext ? 'yes' : 'NO — mic is blocked on insecure pages'}`);
       lines.push(`Running inside a frame: ${window.top !== window.self ? 'yes — frames often lose mic/speaker rights' : 'no'}`);
-      // The voice: one path. The local voice service on this computer speaks and hears.
-      lines.push('Voice: this computer only (local_voice/service.py: Kokoro speaks, faster-whisper hears). No browser voice, no Gemini.');
-      lines.push(`Microphone: ${Ear.ready ? 'open' : 'not open yet'}; ${_muted ? 'MUTED by you' : 'always listening'}; sentences waiting for the server: ${Ear.queue.length}`);
+      // The voice: two engines, and which one this page is really using.
+      const speaking = (Voice.engine === 'auto' && browserCanSpeak()) ? 'browser' : browserCanSpeak() && Voice.engine !== 'server' ? 'browser' : 'server';
+      lines.push(`Voice engine setting: ${Voice.engine === 'server' ? 'this computer (the server)' : 'auto'}`);
+      lines.push(speaking === 'browser'
+        ? `Mouth: this browser's own voice${Voice.voice ? ` — ${Voice.voice.name} (${Voice.voice.lang})` : ' (no voice listed yet)'}${Voice.synthProblem ? ` — problem: ${Voice.synthProblem}` : ''}`
+        : `Mouth: the computer running JARVIS (Kokoro). This browser: ${Voice.synthProblem || 'no voice listed'}`);
+      const earsNow = hearEngine();
+      lines.push(earsNow === 'browser'
+        ? `Ears: this browser's own recogniser${Listen.active ? ' (open)' : ''}${Voice.recogProblem ? ` — problem: ${Voice.recogProblem}` : ''}`
+        : `Ears: the JARVIS server (faster-whisper)${Voice.recogProblem ? ` — the browser's recogniser said: ${Voice.recogProblem}` : ''}`);
+      lines.push(Voice.recogClass ? 'Browser recogniser: available' : 'Browser recogniser: not available in this browser (Firefox has none)');
+      lines.push(`Microphone: ${Ear.ready ? 'open (server ear)' : Listen.active ? 'open (browser ear)' : 'not open yet'}; ${_muted ? 'MUTED by you' : 'always listening'}; sentences waiting for the server: ${Ear.queue.length}`);
       lines.push(`Speaking now: ${Speech.busy ? 'yes' : 'no'}; replies waiting to be spoken: ${Speech.queue.length}`);
       lines.push(`Voice problem on screen: ${Ear.problem || 'none'}`);
       lines.push(`Mic API: ${navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'available' : 'MISSING'}`);
@@ -2453,7 +2484,9 @@
       appendChat('system', 'Senses check:\n' + lines.join('\n'));
       // Finally, the proof: speak one line out loud — through the engine that is
       try {
-        appendChat('system', 'I am speaking a test line through the local voice on this computer. If you did not hear it, press 🔊 Test Speakers in Settings → Voice.');
+        appendChat('system', speaking === 'browser'
+          ? 'I am speaking a test line with this browser’s own voice — it comes out of the speakers of the computer you are sitting at. If you did not hear it, press 🔊 Test Speakers in Settings → Voice.'
+          : 'I am speaking a test line through the voice of the computer running JARVIS — you hear it only when that is the machine you are sitting at. If you did not hear it, press 🔊 Test Speakers in Settings → Voice, or set Voice engine to Auto.');
         speakReply('Voice check. If you hear this, my speakers work.');
       } catch (err) {
         appendChat('system', `Could not even try to speak: ${err.message}`);
@@ -4283,15 +4316,29 @@
       }
     })();
 
-    /* ══ THE VOICE — one path, always on ══════════════════════════════════════
-       JARVIS listens all the time while the page is open and the mute switch
-       is off. The microphone's audio is cut into sentences by loudness; each
-       sentence goes to the JARVIS server, which turns it into words with
-       faster-whisper on this computer. Every reply is made and played by the
-       Kokoro voice on this computer.
-       The browser's own speech recogniser and its own voices are not used.
-       One switch: 🔇 Mute. When the voice fails, there is one place to look:
-       the line in the green bar, plus one system line in the chat saying why. */
+    /* ══ THE VOICE — two engines, one switch ═════════════════════════════════
+       There are two ways to hear and two ways to speak, and the page uses the
+       one that actually works where the page is open.
+
+         hearing  · THIS BROWSER — the browser's own speech recogniser. Nothing
+                    to install, no model to download, and it hears you whenever
+                    the page is on a machine with a microphone.
+                  · THIS COMPUTER — the microphone's audio is cut into sentences
+                    by loudness and sent to the JARVIS server, which turns it
+                    into words with faster-whisper. This needs the local voice
+                    service: Python packages AND a model file.
+
+         speaking · THIS BROWSER — the browser's own voice (speechSynthesis):
+                    free, offline, no models, and it comes out of the speakers of
+                    the machine you are actually sitting at.
+                  · THIS COMPUTER — Kokoro makes the voice on the server and
+                    plays it through the SERVER's speakers. Correct when the
+                    browser and the server are the same machine; silent when they
+                    are not (a preview or remote page would hear nothing at all).
+
+       Auto (the default) prefers this browser and falls back to this computer.
+       One switch: 🔇 Mute. When the voice fails there is one place to look: the
+       line in the green bar, plus one system line in the chat saying why. */
 
     const EAR_MAX_S     = 15;     // longest single sentence sent to the server
     const EAR_END_MS    = 450;    // this much quiet ends a sentence — short, so JARVIS reacts as soon as you stop
@@ -4300,6 +4347,29 @@
 
     let _muted = false;           // not remembered: every page load listens
     let _voiceProofDone = false;  // has the first click been answered with a word?
+
+    /* ── Which engine ───────────────────────────────────────────────────────
+       'auto'   this browser first, this computer's voice service as the fallback
+       'server' this computer first, this browser as the fallback
+       Remembered in localStorage, so a choice survives a reload. */
+    const VOICE_ENGINE_KEY = 'jarvis_voice_engine';
+    const VOICE_NAME_KEY   = 'jarvis_voice_name';
+    function _voicePref(key, dflt) { try { return localStorage.getItem(key) || dflt; } catch (_) { return dflt; } }
+    function _voicePrefSet(key, val) { try { localStorage.setItem(key, val); } catch (_) {} }
+
+    const Voice = {
+      engine: _voicePref(VOICE_ENGINE_KEY, 'auto'),          // auto | server
+      synth: (typeof window.speechSynthesis !== 'undefined') ? window.speechSynthesis : null,
+      recogClass: window.SpeechRecognition || window.webkitSpeechRecognition || null,
+      voices: [],            // the browser's own voices, once it has listed them
+      voice: null,           // the one chosen (a British male, when there is one)
+      voiceName: _voicePref(VOICE_NAME_KEY, ''),             // '' = choose the best automatically
+      synthProblem: '',      // why this browser cannot speak
+      synthDead: false,      // it failed mid-sentence: stop choosing it until the voices change
+      recogProblem: '',      // why this browser cannot listen
+      recogFatal: false,     // the recogniser refused for good (permission / no service)
+      recogMisses: 0,        // network hiccups in a row — a few and the engine changes
+    };
 
     const Ear = {
       ready: false, starting: false, ctx: null, stream: null, proc: null,
@@ -4313,7 +4383,304 @@
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
     };
 
-    /* The one place a voice problem is shown: the green bar, and one chat line. */
+    /* The browser's own ear: one live recogniser, restarted after it stops. */
+    const Listen = {
+      recog: null, active: false, paused: false, missing: 0,
+      restart: 0, interim: '', engine: 'browser', lastStart: 0,
+    };
+
+    /* ── This browser's own voice and ear ───────────────────────────────────
+       Nothing here needs a package, a model or a download: the browser has
+       both, and they run on the machine the page is open on. */
+
+    function browserVoiceList() {
+      if (!Voice.synth) return [];
+      try { return Voice.synth.getVoices() || []; } catch (_) { return []; }
+    }
+
+    /** The butler's voice, if this machine has one: English, British, male.
+        A non-English voice still scores: a machine whose only voice is French
+        is better off reading English with a French accent than saying nothing
+        at all, and the panel says which voice was chosen. */
+    function voiceScore(v) {
+      const name = String(v.name || '').toLowerCase();
+      const lang = String(v.lang || '').toLowerCase().replace('_', '-');
+      let score = lang.startsWith('en-gb') ? 30 : lang.startsWith('en') ? 22 : 1;
+      if (/male/.test(name)) score += 10;
+      if (/\b(female|woman)\b/.test(name)) score -= 12;
+      if (/(george|daniel|arthur|oliver|ryan|guy|thomas|james|david|alex|fred)/.test(name)) score += 12;
+      if (/(google|microsoft|natural|neural|premium|enhanced|siri)/.test(name)) score += 4;
+      if (v.localService) score += 2;                     // works with no internet
+      if (v.default) score += 3;
+      return score;
+    }
+
+    function bestBrowserVoice() {
+      let best = null, bestScore = -1;
+      for (const v of Voice.voices) {
+        const s = voiceScore(v);
+        if (s > bestScore) { best = v; bestScore = s; }
+      }
+      return bestScore < 0 ? null : best;
+    }
+
+    /** The browser lists its voices asynchronously, and again when they change. */
+    function refreshBrowserVoiceList(voicesChanged) {
+      if (voicesChanged) { Voice.synthDead = false; Voice.synthProblem = ''; }
+      Voice.voices = browserVoiceList();
+      if (!Voice.voices.length) { Voice.voice = null; renderVoiceEngineReport(); return; }
+      const chosen = Voice.voiceName ? Voice.voices.find((v) => v.name === Voice.voiceName) : null;
+      Voice.voice = chosen || bestBrowserVoice();
+      if (Voice.voice) Voice.synthProblem = '';
+      renderVoiceEngineReport();
+    }
+
+    /** Can this browser actually speak? A voice must be listed, not just the API:
+        Chrome on a bare Linux box has speechSynthesis and no voice at all, and
+        then every request fails silently — which sounds exactly like "he will
+        not talk". An empty list means use the other engine, not keep trying. */
+    function browserCanSpeak() {
+      if (Voice.synthDead) return false;          // it tried and failed: do not clear that reason
+      if (!Voice.synth) {
+        Voice.synthProblem = 'this browser has no speech engine (speechSynthesis is missing).';
+        return false;
+      }
+      if (!Voice.voices.length) {
+        Voice.synthProblem = 'this browser has not listed a single voice to speak with.';
+        return false;
+      }
+      return !!Voice.voice;                       // a voice must actually have been chosen
+    }
+
+    function initVoices() {
+      if (Voice.synth) {
+        try { Voice.synth.onvoiceschanged = () => refreshBrowserVoiceList(true); } catch (_) {}
+        refreshBrowserVoiceList();
+        // Some browsers fill the list a moment later; re-read it, then leave it.
+        [300, 1000, 2500].forEach((ms) => setTimeout(refreshBrowserVoiceList, ms));
+      }
+      if (!Voice.recogClass) {
+        Voice.recogProblem = 'this browser has no speech recogniser (SpeechRecognition is missing) — its ears will be the JARVIS server’s.';
+      }
+      renderVoiceEngineReport();
+    }
+
+    /** Speak one sentence with the browser's own voice. true = it was said. */
+    function sayWithBrowser(text, gen) {
+      return new Promise((resolve) => {
+        if (!Voice.synth || !Voice.voice) { resolve(false); return; }
+        const clean = cleanForSpeech(text);
+        if (!clean) { resolve(true); return; }
+        let settled = false, started = false, startGuard = 0, endGuard = 0;
+        const finish = (spoke) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(startGuard); clearTimeout(endGuard);
+          resolve(spoke);
+        };
+        const utter = new SpeechSynthesisUtterance(clean);
+        utter.voice = Voice.voice;
+        utter.lang = Voice.voice.lang || 'en-GB';
+        utter.rate = 1; utter.pitch = 0.95; utter.volume = 1;
+        utter.onstart = () => {
+          started = true;
+          clearTimeout(startGuard);
+          // Safety net only, and it assumes the words WERE said: wrongly saying
+          // "false" here would repeat the sentence in the other voice.
+          endGuard = setTimeout(() => finish(true), clean.length * 160 + 8000);
+        };
+        utter.onend = () => finish(true);
+        utter.onerror = (e) => {
+          const code = (e && e.error) || '';
+          if (code === 'interrupted' || code === 'canceled') { finish(true); return; }
+          Voice.synthProblem = code === 'not-allowed'
+            ? 'this browser would not let the page speak (the page has not been clicked yet, or sound is blocked).'
+            : `this browser’s voice failed (${code || 'no reason given'}).`;
+          Voice.synthDead = true;
+          finish(false);
+        };
+        startGuard = setTimeout(() => {
+          if (started) return;
+          Voice.synthProblem = 'this browser listed a voice but never began speaking — on Linux that usually means no speech engine (espeak-ng or speech-dispatcher) is installed.';
+          Voice.synthDead = true;
+          finish(false);
+        }, 2500);
+        try {
+          if (Voice.synth.paused) Voice.synth.resume();
+          Voice.synth.cancel();      // nothing may pile up inside the browser's queue
+          Voice.synth.speak(utter);
+        } catch (err) {
+          Voice.synthProblem = `this browser’s voice could not be used (${err.message}).`;
+          Voice.synthDead = true;
+          finish(false);
+        }
+      });
+    }
+
+    function stopBrowserVoice() {
+      if (!Voice.synth) return;
+      try { Voice.synth.cancel(); } catch (_) {}
+    }
+
+    /* ── The browser's ear ──────────────────────────────────────────────── */
+
+    /** A recogniser error in plain words. null = normal, nothing to report. */
+    function recogExplain(code) {
+      const framedPolicy = micPolicyAllows();
+      switch (code) {
+        case 'not-allowed':
+        case 'service-not-allowed':
+          if (framedPolicy === false) {
+            return {
+              short: 'The preview frame forbids the microphone',
+              long: 'This page is shown inside a frame that is not allowed to touch the microphone, so the permission prompt can never appear here. Open JARVIS in its own tab and it works.',
+              actions: micInFrame() ? [{ label: '↗ Open in New Tab', run: () => openStandaloneTab() }] : [],
+            };
+          }
+          return {
+            short: 'Microphone permission was refused',
+            long: 'The browser would not give this page a microphone. Click the lock / sliders icon at the left of the address bar, set Microphone to "Allow", then reload.',
+          };
+        case 'audio-capture':
+          return { short: 'No microphone was found', long: 'The browser cannot see a microphone on this computer. Plug one in (or check the system sound settings), then press the mic button again.' };
+        case 'network':
+          return { short: 'The browser’s speech service is unreachable', long: 'This browser does its recognising on a server of its own and could not reach it, so the JARVIS server’s ears will be used instead.' };
+        case 'language-not-supported':
+          return { short: 'The browser does not recognise that language', long: '' };
+        case 'no-speech':
+        case 'aborted':
+          return null;                       // ordinary — silence, or we stopped it
+        default:
+          return { short: `The browser’s ear failed (${code || 'no reason given'})`, long: '' };
+      }
+    }
+
+    function recogStop() {
+      const r = Listen.recog;
+      Listen.recog = null;
+      Listen.active = false;
+      Listen.interim = '';
+      if (r) {
+        r.onend = null; r.onerror = null; r.onresult = null; r.onstart = null;
+        try { r.abort(); } catch (_) {}
+      }
+    }
+
+    function recogRestartSoon() {
+      clearTimeout(Listen.restart);
+      Listen.restart = setTimeout(() => {
+        if (Listen.paused || _muted || Voice.recogFatal) return;
+        if (hearEngine() === 'browser' && !Listen.recog) recogSpawn();
+      }, 350);
+    }
+
+    /** Hand the ears over to the server, and say why. */
+    function earsFallBack(reason, actions) {
+      Voice.recogFatal = true;
+      recogStop();
+      Listen.engine = 'server';
+      if (reason) micReport(`🎤 ${reason}`, actions || []);
+      renderEar();
+      if (!_muted && !Ear.ready) earStart();
+    }
+
+    function recogSpawn() {
+      if (!Voice.recogClass || Voice.recogFatal || _muted || Listen.paused || Listen.recog) return;
+      let r = null;
+      try {
+        r = new Voice.recogClass();
+      } catch (err) {
+        earsFallBack(`The browser’s speech recogniser could not be started (${err.message}), so JARVIS is listening with the server’s ears instead.`);
+        return;
+      }
+      r.continuous = true;
+      r.interimResults = true;
+      r.maxAlternatives = 1;
+      r.lang = (Voice.voice && Voice.voice.lang) || 'en-GB';
+      r.onstart = () => {
+        Listen.active = true;
+        Listen.interim = '';
+        Voice.recogProblem = '';
+        Voice.recogMisses = 0;
+        Ear.problem = '';
+        renderEar();
+      };
+      r.onresult = (ev) => {
+        // Gated exactly like the raw-audio ear: nothing is heard while JARVIS
+        // is speaking, while muted, or in the moment just after a reply.
+        if (earGated()) { Listen.interim = ''; return; }
+        let said = '', pending = '';
+        for (let i = ev.resultIndex; i < ev.results.length; i++) {
+          const res = ev.results[i];
+          const alt = res[0] ? res[0].transcript : '';
+          if (res.isFinal) said += alt; else pending += alt;
+        }
+        Listen.interim = pending;
+        renderEar();
+        if (said.trim()) { Listen.interim = ''; earHeard(said); }
+      };
+      r.onerror = (ev) => {
+        const code = (ev && ev.error) || '';
+        const why = recogExplain(code);
+        if (!why) { Listen.interim = ''; return; }
+        if (code === 'network') {
+          // A wobble is normal; three in a row means this browser cannot do it.
+          if (++Voice.recogMisses < 3) { Voice.recogProblem = why.short; renderEar(); return; }
+        }
+        earsFallBack(`${why.short}. ${why.long}`.trim(), why.actions);
+      };
+      r.onend = () => {
+        // Chrome ends the session on its own after a pause: start it again, or
+        // "always listening" would quietly become "listens once".
+        Listen.active = false;
+        if (Listen.recog === r) Listen.recog = null;
+        renderEar();
+        if (!Listen.paused && !_muted && !Voice.recogFatal) recogRestartSoon();
+      };
+      Listen.recog = r;
+      Listen.lastStart = performance.now();
+      try {
+        r.start();
+      } catch (err) {
+        // InvalidStateError: it was already started. Anything else: try again shortly.
+        if (!/already started/i.test(err.message || '')) { Listen.recog = null; recogRestartSoon(); }
+      }
+    }
+
+    function recogPause() {
+      Listen.paused = true;
+      clearTimeout(Listen.restart);
+      recogStop();
+      renderEar();
+    }
+
+    function recogResume() {
+      if (!Listen.paused) return;
+      Listen.paused = false;
+      if (!_muted && hearEngine() === 'browser') recogSpawn();
+      renderEar();
+    }
+
+    /** Which ear this page is using, right now. */
+    function hearEngine() {
+      if (Ear.ready) return 'server';                       // the raw-audio ear is already open
+      if (Voice.recogFatal || !Voice.recogClass) return 'server';
+      if (Voice.engine === 'server') return 'server';
+      return 'browser';
+    }
+
+    function listenRunning() {
+      return Listen.active || !!Listen.recog || Ear.ready || Ear.starting;
+    }
+
+    /** Open the ears — whichever engine this page is set to use. */
+    function listenStart() {
+      if (_muted) return;
+      if (hearEngine() === 'browser') { Listen.paused = false; recogSpawn(); }
+      else earStart();
+    }
+
+    /* ── The one place a voice problem is shown: the green bar, and one chat line. */
     function voiceProblem(text) {
       if (Ear.problem === text) return;
       Ear.problem = text;
@@ -4324,10 +4691,16 @@
     function earStatusText() {
       if (_muted) return 'Muted — JARVIS is not listening. Press 🔇 Mute to listen again.';
       if (Ear.problem) return `⚠ ${Ear.problem}`;
-      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click anywhere on the page to open it.';
       if (Speech.busy || Speech.queue.length) return 'JARVIS is speaking.';
+      if (hearEngine() === 'browser') {
+        if (Listen.interim) return `🎙 hearing: “${Listen.interim.trim()}”`;
+        if (Voice.recogProblem) return `⚠ ${Voice.recogProblem}`;
+        if (Listen.active) return 'Listening with this browser’s own ear — just speak.';
+        return Listen.paused ? 'Ear paused while JARVIS speaks.' : 'Opening this browser’s ear…';
+      }
+      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click anywhere on the page to open it.';
       if (Ear.sending) return 'Turning your words into text…';
-      return 'Listening — just speak.';
+      return 'Listening with the server’s ear — just speak.';
     }
 
     function renderEar() {
@@ -4458,6 +4831,9 @@
 
     async function earStart() {
       if (Ear.ready || Ear.starting) return;
+      // The browser's own ear is the one in use — do not also hold the raw
+      // microphone open for the server's ear.
+      if (hearEngine() === 'browser') return;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         voiceProblem('This browser cannot open a microphone, so JARVIS cannot hear you. Open JARVIS in Chrome or Edge.');
         return;
@@ -4493,13 +4869,38 @@
 
     function earGesture() {
       if (Ear.ctx && Ear.ctx.state === 'suspended') Ear.ctx.resume().catch(() => {});
-      if (!Ear.ready && !_muted) earStart();
+      if (!_muted && !listenRunning()) listenStart();
     }
 
     /* ── Mouth ──────────────────────────────────────────────────────────── */
+    // Two engines, tried in the order this page is set to use them. The browser
+    // speaks on the machine you are sitting at (no models, no downloads); the
+    // server speaks on the machine JARVIS runs on, which is the same machine
+    // when both are local and a different one for a preview or remote page.
+    async function speakOne(text, gen) {
+      const browserFirst = Voice.engine !== 'server';
+      if (browserFirst && browserCanSpeak() && Voice.voice) {
+        const spoke = await sayWithBrowser(text, gen);
+        if (gen !== Speech.generation) return;
+        if (spoke) { Ear.problem = ''; return; }
+        // This browser cannot say it after all. Say so once, then try the
+        // computer's voice — silence is never the answer.
+        voiceProblem(`This browser could not speak: ${Voice.synthProblem} Trying the voice on the computer running JARVIS.`);
+      }
+      const result = await speakViaServer(text, gen);
+      // The owner asked for this computer's voice and it could not speak. Rather
+      // than leave him in silence, say what happened and use this browser's voice.
+      if (result === 'failed' && Voice.engine === 'server' && browserCanSpeak() && Voice.voice) {
+        const spoke = await sayWithBrowser(text, gen);
+        if (gen !== Speech.generation) return;
+        if (spoke) appendChat('system', 'This computer could not speak, so this browser’s own voice said it instead. Press 🔊 Test Speakers in Settings → Voice to see the full reason.');
+      }
+      renderVoiceEngineReport();
+    }
+
     // The PC makes the voice and plays it. The answer comes back only when playback has finished,
     // so Speech.busy (and the ear's pause) covers the whole sentence.
-    async function speakOne(text, gen) {
+    async function speakViaServer(text, gen) {
       const controller = new AbortController();
       Speech.controller = controller;
       let data = null;
@@ -4512,29 +4913,39 @@
         });
         data = await res.json();
       } catch (err) {
-        if (gen !== Speech.generation || (err && err.name === 'AbortError')) return;
-        voiceProblem('The local voice is not answering. Its messages are in the server console, marked [local-voice]. The reply is in the chat.');
-        return;
+        if (gen !== Speech.generation || (err && err.name === 'AbortError')) return 'aborted';
+        voiceProblem('Neither voice could speak. This browser: '
+          + (Voice.synthProblem || 'no reason recorded')
+          + ' This computer: the local voice is not answering — its messages are in the server console, marked [local-voice]. The reply is in the chat.');
+        return 'failed';
       } finally {
         if (Speech.controller === controller) Speech.controller = null;
       }
-      if (gen !== Speech.generation) return;
+      if (gen !== Speech.generation) return 'aborted';
       if (!data || !data.ok) {
-        voiceProblem(`JARVIS could not speak: ${(data && data.message) || 'the local voice gave no reason'}. The reply is in the chat.`);
-        return;
+        const browserNote = Voice.synthProblem ? `This browser: ${Voice.synthProblem} ` : '';
+        const why = (data && data.message) || 'the local voice gave no reason';
+        if (Voice.engine === 'server') appendChat('system', `This computer\u2019s voice could not speak: ${why}`);
+        voiceProblem(`JARVIS could not speak. ${browserNote}This computer: ${why}. The reply is in the chat.`);
+        return 'failed';
       }
       Ear.problem = '';
+      return 'ok';
     }
 
     async function pumpSpeech() {
       if (Speech.busy) return;
       const next = Speech.queue.shift();
       if (!next) {
+        // The last sentence has been said: hold the ears for a moment so JARVIS
+        // never hears his own tail, then start listening again.
         Ear.resumeAt = performance.now() + EAR_RESUME_MS;
+        setTimeout(recogResume, EAR_RESUME_MS);
         renderEar();
         return;
       }
       Speech.busy = true;
+      recogPause();          // the browser's ear must not hear JARVIS's own voice
       renderEar();
       const gen = Speech.generation;
       await speakOne(next, gen);
@@ -4594,7 +5005,9 @@
       Speech.queue.length = 0;
       Speech.busy = false;
       if (Speech.controller) Speech.controller.abort();
+      stopBrowserVoice();
       _authFetch('/api/voice/stop', { method: 'POST' }).catch(() => {});
+      setTimeout(recogResume, EAR_RESUME_MS);
       renderEar();
     }
 
@@ -4603,36 +5016,155 @@
       _muted = !_muted;
       if (_muted) {
         earDropSentence();
+        recogPause();
         toast('🔇 Muted — JARVIS is not listening');
       } else {
         Ear.lastHeard = { text: '', at: 0 };
         toast('🎙 Listening again — just speak');
-        if (!Ear.ready) earStart();
+        listenStart();
       }
       renderEar();
     }
 
+    /* ── The engine panel: what this page will really use, and how to change it ── */
+
+    /** Release the raw-audio ear: stop the tracks, close the audio graph. */
+    function earStop() {
+      if (Ear.proc) { try { Ear.proc.disconnect(); } catch (_) {} }
+      if (Ear.ctx) { try { Ear.ctx.close(); } catch (_) {} }
+      if (Ear.stream) { try { Ear.stream.getTracks().forEach((t) => t.stop()); } catch (_) {} }
+      earDropSentence();
+      Object.assign(Ear, { ready: false, starting: false, ctx: null, stream: null, proc: null, problem: '' });
+      renderEar();
+    }
+
+    let _voiceServerInfo = null;   // the last /api/system-status answer
+    function refreshVoiceServerInfo() {
+      fetch('/api/system-status').then((r) => (r.ok ? r.json() : null)).then((data) => {
+        _voiceServerInfo = data;
+        renderVoiceEngineReport();
+      }).catch(() => {});
+    }
+
+    /** The lines under the engine selector: what is speaking, what is hearing. */
+    function voiceEngineRows() {
+      const rows = [];
+      const browserVoice = Voice.voice ? `${Voice.voice.name} (${Voice.voice.lang})` : '';
+      const speaking = (Voice.engine === 'auto' && browserCanSpeak()) ? 'browser'
+        : Voice.engine === 'server' ? 'server'
+          : browserCanSpeak() ? 'browser' : 'server';
+      rows.push(speaking === 'browser'
+        ? `🔊 Speaking: this browser${browserVoice ? ` — ${browserVoice}` : ''}`
+        : `🔊 Speaking: this computer (the server’s voice)${Voice.synthProblem && Voice.engine === 'auto' ? ` — this browser cannot speak: ${Voice.synthProblem}` : ''}`);
+      const ears = hearEngine();
+      rows.push(ears === 'browser'
+        ? '🎤 Hearing: this browser’s own recogniser'
+        : `🎤 Hearing: this computer (the server’s ears)${Voice.recogProblem ? ` — ${Voice.recogProblem}` : ''}`);
+      const local = _voiceServerInfo && _voiceServerInfo.voiceLocal;
+      if (local) {
+        rows.push(`🖥 This computer’s voice service: ${local.ready ? 'ready' : 'NOT available'}${local.message ? ` — ${local.message}` : ''}`);
+      }
+      if (Voice.voice && !/^en/i.test(Voice.voice.lang || '')) {
+        rows.push(`ℹ This machine has no English voice, so ${Voice.voice.name} will read English with a ${Voice.voice.lang} accent.`);
+      }
+      if (!Voice.recogClass) rows.push('ℹ This browser has no recogniser (Firefox), so the server’s ears are used. Chrome, Edge and Safari have one built in.');
+      return rows;
+    }
+
+    function fillBrowserVoiceSelect() {
+      const sel = document.getElementById('sel-browser-voice');
+      if (!sel) return;
+      const want = Voice.voices.length + 1;
+      if (sel.options.length !== want) {
+        sel.innerHTML = '';
+        const auto = document.createElement('option');
+        auto.value = '';
+        auto.textContent = 'Choose the best voice automatically';
+        sel.appendChild(auto);
+        Voice.voices.forEach((v) => {
+          const o = document.createElement('option');
+          o.value = v.name;
+          o.textContent = `${v.name} — ${v.lang}`;
+          sel.appendChild(o);
+        });
+      }
+      sel.value = Voice.voiceName;
+      sel.disabled = !Voice.voices.length;
+    }
+
+    function renderVoiceEngineReport() {
+      const desc = document.getElementById('voice-engine-desc');
+      if (desc) {
+        desc.textContent = Voice.engine === 'server'
+          ? 'JARVIS uses the voice and the ears of the computer he runs on. Right when this page is open on that same machine.'
+          : 'JARVIS speaks and listens with this browser — free, offline, and on the machine you are actually sitting at.';
+      }
+      const sel = document.getElementById('sel-voice-engine');
+      if (sel && sel.value !== Voice.engine) sel.value = Voice.engine;
+      fillBrowserVoiceSelect();
+      const el = document.getElementById('voice-engine-report');
+      if (el) el.textContent = voiceEngineRows().join('\n');
+    }
+
+    function setVoiceEngine(value) {
+      Voice.engine = value === 'server' ? 'server' : 'auto';
+      _voicePrefSet(VOICE_ENGINE_KEY, Voice.engine);
+      recogStop();                 // let go of whichever ear is open…
+      if (Ear.ready) earStop();    // …including the raw microphone, if it was
+      Listen.paused = false;
+      renderVoiceEngineReport();
+      renderEar();
+      if (!_muted) listenStart();  // …then open the one this engine asks for
+      toast(Voice.engine === 'server' ? '🔊 Voice: this computer' : '🔊 Voice: this browser');
+    }
+
+    function setBrowserVoice(name) {
+      Voice.voiceName = name || '';
+      _voicePrefSet(VOICE_NAME_KEY, Voice.voiceName);
+      refreshBrowserVoiceList();
+      renderVoiceEngineReport();
+      if (Voice.voice && !_muted) sayWithBrowser('This is the voice I will use, sir.', Speech.generation);
+    }
+
+    window.setVoiceEngine = setVoiceEngine;
+    window.setBrowserVoice = setBrowserVoice;
+
     /* ── Settings self-tests ────────────────────────────────────────────── */
+    // Test Speakers tests the engine the page is actually set to use — before
+    // this it always asked the server to speak, and reported "✔ spoke through
+    // this computer's speakers" even when the person at the browser heard
+    // nothing, because the sound came out of a different machine.
     async function testSpeakersNow() {
       const say = (t) => { const r = document.getElementById('voice-test-report'); if (r) r.textContent = t; };
-      say('Asking the local voice to speak…');
+      const line = 'Speakers test. If you can hear this, the voice works.';
+      if (Voice.engine !== 'server' && browserCanSpeak() && Voice.voice) {
+        say(`Asking this browser to speak with ${Voice.voice.name}…`);
+        const spoke = await sayWithBrowser(line, Speech.generation);
+        renderVoiceEngineReport();
+        if (spoke) {
+          say(`✔ This browser spoke with ${Voice.voice.name} (${Voice.voice.lang}).\nThe words came out of the speakers of the computer this page is open on — if you heard nothing, check its volume.`);
+          return;
+        }
+        say(`△ This browser could not speak: ${Voice.synthProblem}\nNow trying the voice on the computer running JARVIS…`);
+      }
+      say(Voice.engine === 'server' || !browserCanSpeak() ? 'Asking this computer to speak…' : 'Asking the local voice to speak…');
       let data = null;
       try {
         const res = await _authFetch('/api/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: 'Speakers test. If you can hear this, the voice works.' }),
+          body: JSON.stringify({ text: line }),
         });
         data = await res.json();
       } catch (_) {
-        say('✖ The local voice is not answering. Its messages are in the server console, marked [local-voice].');
+        say('✖ This computer’s voice is not answering. Its messages are in the server console, marked [local-voice].\nSwitch "Voice engine" to Auto to speak with this browser instead.');
         return;
       }
       if (!data || !data.ok) {
-        say(`✖ The voice could not speak: ${(data && data.message) || 'no reason given'}`);
+        say(`✖ The voice on this computer could not speak: ${(data && data.message) || 'no reason given'}\nSwitch "Voice engine" to Auto to speak with this browser instead.`);
         return;
       }
-      say("✔ The local voice spoke through this computer's speakers. If you heard nothing, check the volume and output device.");
+      say('✔ This computer’s voice service spoke. Note: the sound came out of the speakers of the machine JARVIS runs on, so you only hear it when that machine is the one you are sitting at.');
     }
     window.testSpeakersNow = testSpeakersNow;
 
@@ -4663,7 +5195,9 @@
 
     document.addEventListener('pointerdown', earGesture, true);
     document.addEventListener('keydown', earGesture, true);
-    setTimeout(earStart, 900);
+    initVoices();               // list this browser's voices, ready before the first reply
+    refreshVoiceServerInfo();   // …and say whether this computer's own voice service is up
+    setTimeout(listenStart, 900);
     armVoiceOnGesture();
     renderEar();
 
@@ -4824,7 +5358,10 @@
         say('✖ This browser has no microphone API at all — voice commands cannot work here. Use Chrome, Edge or Safari.');
         return;
       }
-      say('Asking the browser for the microphone… allow it if it asks.');
+      const engineNote = hearEngine() === 'browser'
+        ? '\nEars: this browser’s own recogniser (no model, nothing to install).'
+        : `\nEars: the JARVIS server${Voice.recogProblem ? ` — ${Voice.recogProblem}` : ''}.`;
+      say(`Asking the browser for the microphone… allow it if it asks.${engineNote}`);
       let stream;
       try {
         stream = await micOpenStream();

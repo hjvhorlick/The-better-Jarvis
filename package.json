@@ -10,7 +10,7 @@
     "start": "tsx server.ts",
     "test:brain": "node --import tsx --test tests/brain.node.test.ts",
     "test:knowledge": "node --import tsx --test tests/knowledge.node.test.ts",
-    "test:node": "node --import tsx --test tests/*.node.test.ts"
+    "test:node": "node --import tsx --test tests/*.node.test.ts tests/*.node.test.mjs"
   },
   "dependencies": {
     "@google/genai": "latest",

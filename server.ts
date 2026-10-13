@@ -74,7 +74,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-two-keys-1';
+const SERVER_BUILD = '2026-10-13-browser-voice-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -2455,12 +2455,70 @@ function startLocalVoice(): void {
   process.on('exit', () => localVoiceProcess?.kill());
 }
 
-/** The voice in use, for the status panels. */
+/**
+ * What the local voice service says about itself, kept fresh in the background.
+ *
+ * Both server-side ways of using the voice (Kokoro speaking, faster-whisper
+ * hearing) fail for reasons the owner can act on — a missing package, a missing
+ * model file — and both used to fail invisibly: the service died at import and
+ * the panels still claimed a model. The state belongs in the panels.
+ */
+interface LocalVoiceInfo {
+  service: boolean;    // the Python service answered at all
+  ready: boolean;      // it can both speak and hear right now
+  message: string;     // why not, in plain words ('' when it is ready)
+  at: number;
+}
+
+let localVoiceInfoCache: LocalVoiceInfo = { service: false, ready: false, message: 'not checked yet', at: 0 };
+
+async function probeLocalVoice(): Promise<void> {
+  try {
+    const res = await fetch(`${LOCAL_VOICE_URL}/health`, { signal: AbortSignal.timeout(5_000) });
+    const data = (await res.json()) as Record<string, unknown>;
+    // Older services only report the voice files; read both shapes.
+    const speakReady = data.speakReady !== undefined ? !!data.speakReady : !!data.voiceFilesPresent;
+    const hearReady = data.hearReady !== undefined ? !!data.hearReady : true;
+    // Speaking and hearing usually fail for the SAME reason (a missing numpy
+    // says it twice); the panel should read it once.
+    const reasons = [...new Set([data.speakReason, data.hearReason]
+      .filter((r): r is string => typeof r === 'string' && r.trim().length > 0))].join(' ');
+    localVoiceInfoCache = {
+      service: true,
+      ready: speakReady && hearReady,
+      message: speakReady && hearReady ? '' : (reasons || 'the voice service is running but nothing is loaded'),
+      at: Date.now(),
+    };
+  } catch (err) {
+    const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    localVoiceInfoCache = {
+      service: false,
+      ready: false,
+      message: timedOut ? 'the voice service did not answer in time' : 'the voice service is not running on this computer',
+      at: Date.now(),
+    };
+  }
+}
+
+function voiceLocalInfo(): LocalVoiceInfo { return localVoiceInfoCache; }
+
+/**
+ * The voice in use, for the status panels.
+ *
+ * The mouth the dashboard actually uses is normally the BROWSER's own voice:
+ * free, offline, no models, and it comes out of the speakers of the machine the
+ * person is sitting at. This describes the SERVER side — what JARVIS can
+ * additionally offer on the computer he runs on — and whether it is really
+ * ready, instead of naming a model that may not even load.
+ */
 function resolveVoiceModel(): { model: string; source: string; note: string } {
+  const health = voiceLocalInfo();
   return {
     model: `Kokoro ${(process.env.SUPPER_TTS_VOICE || 'bm_george').trim()} on this computer`,
     source: 'local_voice/service.py',
-    note: '',
+    note: health.ready
+      ? ` · ready (used as the fallback; the browser's own voice speaks first)`
+      : ` · NOT available here — ${health.message}`,
   };
 }
 
@@ -2797,6 +2855,11 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       { name: `Local knowledge base (${knowledge.count()} answers, shared with the desktop app)`, status: 'ready', icon: '📚' },
       { name: `Local drafting desk (${drafts.list().length} draft(s) written here, no AI)`, status: 'ready', icon: '✍️' },
     ],
+    // What the SERVER side of the voice can do. The mouth the dashboard uses
+    // first is the browser's own voice, which no server can see — this says
+    // whether the local voice service is there as an alternative, and why not
+    // when it is not.
+    voiceLocal: voiceLocalInfo(),
     // The two budgets, both visible in Settings → Voice: the brain's and the
     // voice's own. Speaking can never starve the answers.
     brain: brain.status(),
@@ -2919,4 +2982,9 @@ app.get('*all', (req: Request, res: Response) => {
 server.listen(PORT, HOST, () => {
   console.log(`[JARVIS] Core system running on http://${HOST}:${PORT}`);
   startLocalVoice();
+  // Ask the voice service what it can really do: once shortly after it starts
+  // (models load in the background), then on a slow timer, so a model that is
+  // installed later shows up in Settings without restarting anything.
+  setTimeout(() => { void probeLocalVoice(); }, 2_000);
+  setInterval(() => { void probeLocalVoice(); }, 60_000);
 });

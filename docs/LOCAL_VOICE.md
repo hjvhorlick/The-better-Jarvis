@@ -1,12 +1,34 @@
-# JARVIS's voice on this computer
+# JARVIS's voice
 
-There is one voice path. It is the only voice generator the dashboard uses.
+## Read this first: there are two machines
 
-- **Speaking:** Kokoro (`local_voice/service.py`) makes every reply and plays it through this computer's speakers.
-- **Hearing:** the browser captures the microphone and sends the audio to the server, which passes it to faster-whisper on this computer.
-- **Gemini** is used only for answers (text). It never makes or hears the voice.
+The dashboard is a web page, and a web page runs in a browser on some machine.
+`local_voice/service.py` runs on the machine where `npm start` was typed. Two
+cases, and they are not the same thing:
 
-## Setup (once)
+- **Same machine** (you started JARVIS yourself and opened `http://localhost:3000`).
+  Both engines work. Use whichever voice you prefer.
+- **Different machines** (a preview, a remote box, JARVIS on a home server and you
+  on a laptop). The server's speakers are in the other room. A reply "spoken" by
+  `service.py` plays into an empty room and you hear silence — while the app
+  cheerfully reports success. This is why the browser's own voice leads.
+
+So the dashboard has two engines for each direction:
+
+| | This browser (default) | This computer (the server) |
+|---|---|---|
+| Speaking | Web Speech API — free, offline, no models, speaks on *your* machine | Kokoro in `local_voice/service.py` → the server's speakers |
+| Hearing | `SpeechRecognition` — no models, built into Chrome/Edge/Safari | raw audio → server → faster-whisper |
+
+**Auto** (Settings → Voice) means: prefer this browser, fall back to this
+computer, and if both fail say plainly what each one said. **Gemini** is used only
+for answers (text). It never makes or hears the voice.
+
+The rest of this file is about the *server* engine — what to install for it, and
+what it does. You do not need any of it for the browser engine, which is why the
+voice works out of the box.
+
+## Setup for the server engine (once)
 
 1. `pip install -r backend/requirements-local-voice.txt`
 2. Put the two Kokoro files in `models/kokoro/`:
@@ -18,12 +40,21 @@ There is one voice path. It is the only voice generator the dashboard uses.
 
 ## When the voice fails: one place to look
 
-Every voice message goes to the server console, marked `[local-voice]`. The green bar above the chat
-shows the same problem in one line. Common causes:
+Settings → Voice prints what is really in use, and every voice message goes to the
+server console, marked `[local-voice]`. The green bar above the chat shows the
+problem in one line. Common causes:
 
 - `The Kokoro voice files are missing` — the two files are not in `models/kokoro/`.
 - `sounddevice is not installed` / `speakers could not play` — install the requirements; check the output device.
-- `The local voice is not answering` — the service did not start; look at the `[local-voice]` lines at startup.
+- `numpy is not installed for this Python` — the service is up and answering, but the
+  Python it was started with does not have the requirements. **The service now starts
+  and says this** instead of dying at import, so the cause is never guessed at: the
+  dashboard shows the same sentence in Settings → Voice.
+- `The local voice is not answering` — the service did not start at all; look at the
+  `[local-voice]` lines at startup.
+- **You hear nothing, but the app says the server spoke.** The server spoke — into the
+  speakers of the machine it runs on. You are sitting at a different machine. Set
+  Voice engine to *Auto* so your own browser speaks.
 
 ---
 
@@ -37,9 +68,9 @@ Please run the check list at the end on your own computer.
 
 | Step | Local (this computer) | Gemini |
 |---|---|---|
-| Hearing you | yes: faster-whisper, after a one-time model download | never |
+| Hearing you | yes: the browser's own recogniser, or faster-whisper on the server | never |
 | Finding the answer | yes: commands, your stored facts, the local answers in `runtime/knowledge.json`, the time and status readings | only if nothing local can answer, and only after the daily budget takes a unit |
-| Speaking the reply | yes: the Kokoro voice if its files are present, otherwise this computer's own voice | never |
+| Speaking the reply | yes: this computer's own browser voice, or the Kokoro voice when its files are present | never |
 
 The old voice path (Gemini Live) is still in the code. It runs only if you set
 `SUPPER_VOICE_ENGINE=live`. The default is `local`.
@@ -164,16 +195,34 @@ in the voice status chip ("voice off · wake word is not listening: …") and in
 
 ## Check list for you (about 10 minutes)
 
-1. Install as above. Start the app. Check that the Voice status says the speech engine is ready.
-2. Press Voice. Say "what time is it". You should hear the time, with no Gemini call.
-3. Ask a question with a starter answer, for example "how do I undo my last git commit". It should
-   answer from the local store, with the note "please check".
-4. Say "learn: what is our office wifi = …", then ask "what is our office wifi". It should answer
-   from the store.
+**First, with nothing installed at all** — this is the part that works everywhere:
+
+1. Start the app and open the dashboard. Click once anywhere on the page (browsers
+   will not play sound until you do). You should hear "Voice online, sir." out of
+   your own computer's speakers. Settings → Voice reads *Speaking: this browser —
+   <a voice name>*.
+2. Allow the microphone when the browser asks, then say "what time is it". The
+   green bar shows the live words as you speak, and the answer is spoken back.
+   Nothing was installed and nothing was downloaded to get this far.
+3. Ask a question with a starter answer, for example "how do I undo my last git
+   commit". It should answer from the local store, with the note "please check".
+4. Say "learn: what is our office wifi = …", then ask "what is our office wifi".
+   It should answer from the store.
 5. Talk over a long reply. It should stop, and your next sentence should be heard.
-6. Say "Hey Jarvis" (after the model is downloaded). The status should show wake listening, and a conversation should start.
-7. Say "stop wake word". The microphone should close.
-8. Turn Voice off. The microphone light should go off.
+6. Press 🔇 Mute. The microphone light goes off — including the browser's own ear,
+   which is released rather than left holding the microphone. Unmute to continue.
+
+**Then, for the server engine (optional):**
+
+7. Install as above. Restart JARVIS. Settings → Voice should now read *This
+   computer's voice service: ready*. If it does not, that line says why — almost
+   always a missing package or a missing model file, named exactly.
+8. Switch Voice engine to *This computer* and press 🔊 Test Speakers. You hear it
+   **only if JARVIS runs on this same machine**; you sitting at a different machine
+   is the whole reason the browser engine leads. Either way the panel tells you
+   what happened instead of claiming success.
+9. Switch back to *Auto*. Say "what time is it" and confirm the answer is still
+   spoken — now by the fallback order you chose.
 
 If something does not work, tell me what you saw (the message in the chat, and which step failed).
 Nothing needs to be changed in the code for these checks.
