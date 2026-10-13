@@ -801,6 +801,23 @@ function standaloneSystemInstruction(contextBlock: string): string {
  * Used whenever a drawn picture is not available, so "make me a picture of the
  * reactor" still produces a picture of the reactor.
  */
+/**
+ * Clean up what was captured after "a picture of …" / "a book about …".
+ *
+ * The regexes deliberately leave the subject free-form, so the article that
+ * belongs to the NOUN ("a picture of A LION") is captured with it, and the reply
+ * then said 'I could not find a picture of "a lion"'. The article is English
+ * scaffolding, not part of what to search for — and a supplier given "a lion"
+ * ranks worse than one given "lion". Only a LEADING article goes: "a red lion
+ * cub" keeps every word after the first.
+ */
+function cleanSubject(raw: string): string {
+  const s = raw.trim().replace(/\s+/g, ' ');
+  const withoutArticle = s.replace(/^(?:a|an|the|some|any)\s+/i, '');
+  // Never let the cleanup empty the subject or leave a dangling preposition.
+  return withoutArticle.trim().length >= 2 ? withoutArticle.trim() : s;
+}
+
 async function pictureFromWeb(subject: string): Promise<string> {
   try {
     const hits = await searchImages(subject, { maxResults: 6 });
@@ -1029,7 +1046,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     /^(?:jarvis,?\s+)?(?:make|create|draw|generate|design)\s+(?:me\s+)?(?:a|an|the)?\s*(?:picture|image|photo|logo|poster|banner|icon)\s*(?:of|for|about|showing)?\s+(.{3,400})$/i
   );
   if (picMatch) {
-    const subject = picMatch[1].trim();
+    const subject = cleanSubject(picMatch[1]);
     // A drawn picture needs a Gemini model. A FOUND picture needs nothing but
     // the internet, so when there is no model available this finds a real
     // photograph of the same subject — Pexels or Pixabay if the owner has put a
@@ -1184,10 +1201,20 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   // nothing. They sit AHEAD of Internet Research on purpose: "search the web for
   // tea prices" is an ordinary search and gets real results for free, while
   // "research X" or "compare X" still asks for the written, grounded report.
+  // "search the web for X", and also the plain "look up X" / "google X". The
+  // bare forms used to fall through to the question path, which searched the web
+  // for the phrase INCLUDING the words "look up" — and then echoed them back in
+  // the reply, so the answer said it could not find anything on
+  // "look up photosynthesis". The README promises "look up ..." works.
+  //
+  // The lookahead keeps these from swallowing the file commands below: a bare
+  // "look up a picture of a lion" is a picture request, not a web search.
+  const BARE_LOOKUP = /^(?:jarvis,?\s+)?(?:look up|google|search for)\s+(?!$)(?!\s*(?:a|an|the|some)?\s*(?:picture|image|photo|video|clip|footage|sound|music|song|audio|track|book|ebook|novel|title|3d|3-d|model|stl|print|thing|address|location|place|coordinates)\b)(.{2,300})$/i;
   const webSearch = trimmed.match(/^(?:jarvis,?\s+)?(?:search|look up|google)\s+(?:the\s+)?(?:web|internet|online)\s+(?:for\s+)?(.{2,300})$/i)
-    || trimmed.match(/^(?:jarvis,?\s+)?(?:web|internet)\s+search\s+(?:for\s+)?(.{2,300})$/i);
+    || trimmed.match(/^(?:jarvis,?\s+)?(?:web|internet)\s+search\s+(?:for\s+)?(.{2,300})$/i)
+    || trimmed.match(BARE_LOOKUP);
   if (webSearch) {
-    const subject = webSearch[1].trim();
+    const subject = cleanSubject(webSearch[1]);
     try {
       const hits = await searchWeb(subject, { maxResults: 6 });
       const fact = hits.length ? null : null;
@@ -1435,18 +1462,18 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       : `I am online, sir. ${state.summary} Today: ${quotaSnapshot().summary}`;
   }
 
-  const findPic = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:picture|image|photo|photos|pictures|images)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
-  if (findPic) return pictureFromWeb(findPic[1].trim());
-  const findVid = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:video|videos|clip|footage)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
-  if (findVid) return mediaFromWeb(findVid[1].trim(), 'video');
-  const findAudio = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:sound|sounds|music|song|audio|track)\s*(?:of|for|about)?\s+(.{2,300})$/i);
-  if (findAudio) return mediaFromWeb(findAudio[1].trim(), 'audio');
-  const findBook = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:book|books|ebook|ebooks|novel|title)\s*(?:of|for|about|on|by)?\s+(.{2,300})$/i);
-  if (findBook) return bookFromWeb(findBook[1].trim());
-  const findModel = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download|print)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:3d|3-d)?\s*(?:model|models|stl|print|prints|thing)\s*(?:of|for|to\s+print|about)?\s+(.{2,300})$/i);
-  if (findModel) return modelFromWeb(findModel[1].trim());
+  const findPic = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:picture|image|photo|photos|pictures|images)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
+  if (findPic) return pictureFromWeb(cleanSubject(findPic[1]));
+  const findVid = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:video|videos|clip|footage)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
+  if (findVid) return mediaFromWeb(cleanSubject(findVid[1]), 'video');
+  const findAudio = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:sound|sounds|music|song|audio|track)\s*(?:of|for|about)?\s+(.{2,300})$/i);
+  if (findAudio) return mediaFromWeb(cleanSubject(findAudio[1]), 'audio');
+  const findBook = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:book|books|ebook|ebooks|novel|title)\s*(?:of|for|about|on|by)?\s+(.{2,300})$/i);
+  if (findBook) return bookFromWeb(cleanSubject(findBook[1]));
+  const findModel = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download|print|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:3d|3-d)?\s*(?:model|models|stl|print|prints|thing)\s*(?:of|for|to\s+print|about)?\s+(.{2,300})$/i);
+  if (findModel) return modelFromWeb(cleanSubject(findModel[1]));
   const findPlace = trimmed.match(/^(?:jarvis,?\s+)?(?:where|wheres|where's|find|locate)\s+(?:is|are)?\s*(?:the|a|an)?\s*(?:address|location|place|coordinates|lat|latitude)?\s*(?:of|for|to)?\s+(.{2,300})$/i);
-  if (findPlace && !/^(?:is|are|was|were|am|the)\b/i.test(findPlace[1].trim())) return placeFromWeb(findPlace[1].trim());
+  if (findPlace && !/^(?:is|are|was|were|am|the)\b/i.test(findPlace[1].trim())) return placeFromWeb(cleanSubject(findPlace[1]));
 
   // ── No Gemini? Then the open web answers ──────────────────────────────────
   // A quota running out means "no Gemini". It does not mean "no internet", and

@@ -1401,6 +1401,53 @@ function freePort() {
   } finally { await srv.stop(); }
 }
 
+/* ── 16. WHAT THE FILE COMMANDS AND "LOOK UP" ACTUALLY SEARCH FOR ─────────────
+ * Three things the owner would say out loud, checked by what the reply says it
+ * searched for:
+ *   1. "find me a picture of A LION" searched for "a lion" — the article that
+ *      belongs to the noun was captured with the subject and quoted back, and a
+ *      supplier given "a lion" ranks worse than one given "lion".
+ *   2. "look up photosynthesis" never reached the web search at all: it fell
+ *      through to the question path, which searched for the phrase INCLUDING the
+ *      words "look up" and then echoed them back. The README promises
+ *      "look up ..." works.
+ *   3. "look up a picture of a lion" fell through too, and echoed the whole
+ *      sentence — it is a picture request, not a web search. */
+{
+  const srv = await startDashboard({ models: { 'harness-text-model': { } }, name: 'command-words' });
+  try {
+    // What did the reply say it looked for?
+    const subjectOf = async (text) => {
+      const r = await post(srv, '/api/command', { text });
+      const m = String(r.body.reply).match(/\u201c([^\u201d]*)\u201d/);
+      return m ? m[1] : null;
+    };
+
+    // 1. the article is scaffolding, not part of the subject — but only a LEADING
+    // one, so "a red lion cub" keeps every word that belongs to it.
+    ok('commands: "a picture of a lion" searches for lion, not "a lion"', (await subjectOf('find me a picture of a lion')) === 'lion', String(await subjectOf('find me a picture of a lion')));
+    ok('commands: "a picture of the reactor" searches for reactor', (await subjectOf('find me a picture of the reactor')) === 'reactor', String(await subjectOf('find me a picture of the reactor')));
+    ok('commands: …but "a red lion cub" keeps all its words', (await subjectOf('find me a picture of a red lion cub')) === 'red lion cub', String(await subjectOf('find me a picture of a red lion cub')));
+    ok('commands: …and a plain plural is untouched', (await subjectOf('find me a picture of lions')) === 'lions', String(await subjectOf('find me a picture of lions')));
+    for (const [text, want] of [['find me a video of a lion', 'lion'], ['find me a book about a lion', 'lion'], ['find me a 3d model of a lion', 'lion']]) {
+      ok(`commands: the article goes in "${text.split(' ').slice(-3).join(' ')}" too`, (await subjectOf(text)) === want, String(await subjectOf(text)));
+    }
+
+    // 2. the bare forms reach the web search, and search for the subject only.
+    for (const [text, want] of [['look up photosynthesis', 'photosynthesis'], ['google photosynthesis', 'photosynthesis'], ['search for photosynthesis', 'photosynthesis']]) {
+      ok(`commands: "${text}" reaches the web and searches "${want}"`, (await subjectOf(text)) === want, String(await subjectOf(text)));
+    }
+    ok('commands: "look up the capital of France" drops the article', (await subjectOf('look up the capital of France')) === 'capital of France', String(await subjectOf('look up the capital of France')));
+    ok('commands: "search the web for X" still works as before', (await subjectOf('search the web for benoni')) === 'benoni', String(await subjectOf('search the web for benoni')));
+
+    // 3. "look up" and "google" are verbs the file commands accept, so a file
+    // request phrased that way finds a file rather than echoing the sentence.
+    for (const [text, want] of [['look up a picture of a lion', 'lion'], ['google a video of waves', 'waves'], ['look up a book about dune', 'dune'], ['google a 3d model of a gear', 'gear']]) {
+      ok(`commands: "${text}" is a file request, not a web search`, (await subjectOf(text)) === want, String(await subjectOf(text)));
+    }
+  } finally { await srv.stop(); }
+}
+
 /* ── summary ─────────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
