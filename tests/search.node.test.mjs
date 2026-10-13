@@ -12,8 +12,9 @@ import assert from 'node:assert/strict';
 import {
   parseDuckResults, unwrapDuckLink, toPlainText, decodeEntities,
   parseWikiFact, parsePexels, parsePixabay, parseCommons, parseOpenverse, parseArchive,
-  searchImages, searchVideos, searchAudio, searchWeb, wikiFact, answerFromWeb, imageKeyStatus,
-  explainFetchError, parseJamendo,
+  searchImages, searchVideos, searchAudio, searchBooks, searchMedia, searchWeb,
+  wikiFact, answerFromWeb, imageKeyStatus, explainFetchError, parseJamendo,
+  parseGutendex, describeSources, MEDIA_KINDS,
 } from '../search/engine.ts';
 
 /* ── DuckDuckGo: the exact shape its HTML endpoint returns ───────────────── */
@@ -368,4 +369,65 @@ test('Pixabay video takes its thumbnail from the API, not from a guessed CDN', (
   }, 'video');
   assert.equal(vid.thumb, 'https://pix/thumb.jpg', 'the documented per-rendition thumbnail');
   assert.ok(!String(vid.thumb).includes('vimeocdn'), 'no invented Vimeo URL');
+});
+
+/* ── the supplier registry ──────────────────────────────────────────────────
+ * The point of the registry is that a supplier is a row of data. These tests
+ * hold that property: coverage is described from the same table the search
+ * walks, and no kind is left without a supplier that needs nothing.
+ */
+test('the registry describes every supplier, and never calls a key "required"', () => {
+  const sources = describeSources();
+  assert.ok(sources.length >= 7, `expected at least 7 suppliers, saw ${sources.length}`);
+  for (const source of sources) {
+    assert.ok(source.id && source.label && source.blurb, 'every supplier is described');
+    assert.ok(Array.isArray(source.kinds) && source.kinds.length, 'and says what it supplies');
+    for (const kind of source.kinds) assert.ok(MEDIA_KINDS.includes(kind), `unknown kind ${kind}`);
+    // A key narrows the choice of supplier; it must never be presented as a gate.
+    assert.equal(typeof source.needsKey, 'boolean');
+    if (!source.needsKey) assert.equal(source.keyPresent, true, 'a key-free supplier is always available');
+  }
+});
+
+test('every kind of file has at least one supplier that needs no key', () => {
+  const sources = describeSources();
+  for (const kind of MEDIA_KINDS) {
+    const keyFree = sources.filter((s) => s.kinds.includes(kind) && !s.needsKey);
+    assert.ok(keyFree.length, `${kind} would depend entirely on a key — that is a gate`);
+  }
+});
+
+test('books: Gutendex needs no key, and the download link is read, not invented', async () => {
+  const payload = {
+    count: 1,
+    results: [{
+      id: 1661, title: 'The Adventures of Sherlock Holmes',
+      authors: [{ name: 'Doyle, Arthur Conan', birth_year: 1859, death_year: 1930 }],
+      languages: ['en'], download_count: 50000,
+      formats: {
+        'text/plain; charset=utf-8': 'https://www.gutenberg.org/files/1661/1661-0.txt',
+        'application/epub+zip': 'https://www.gutenberg.org/ebooks/1661.epub3.images',
+        'application/octet-stream': 'https://www.gutenberg.org/files/1661/1661-h.zip',
+      },
+    }],
+  };
+  const [book] = parseGutendex(payload);
+  assert.equal(book.kind, 'book');
+  assert.equal(book.url, 'https://www.gutenberg.org/files/1661/1661-0.txt',
+    'plain text is preferred: it is what a book-building app can re-flow');
+  assert.equal(book.author, 'Doyle, Arthur Conan');
+  assert.equal(book.page, 'https://www.gutenberg.org/ebooks/1661');
+  assert.match(book.license, /Public domain/);
+
+  const stub = stubFetch([['gutendex.com', payload]]);
+  const hits = await searchBooks('sherlock holmes', stub);
+  assert.equal(hits[0].source, 'Project Gutenberg');
+  assert.ok(!delete process.env.PEXELS_API_KEY === false); // keys are irrelevant here
+});
+
+test('searchMedia walks only the suppliers that cover that kind', async () => {
+  const stub = stubFetch([['gutendex.com', { count: 0, results: [] }], ['commons.wikimedia.org', COMMONS]]);
+  const pics = await searchMedia('image', 'ocean', stub);
+  assert.equal(pics[0].source, 'Wikimedia Commons');
+  assert.ok(!stub.seen.some((u) => u.includes('gutendex.com')), 'a book supplier is not asked for a picture');
 });

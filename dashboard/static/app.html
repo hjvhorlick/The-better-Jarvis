@@ -1509,33 +1509,14 @@
             </div>
             <span class="settings-desc" id="gemini-key2-status">Checking…</span>
 
-            <!-- PICTURES, VIDEO AND SOUND: two optional FREE keys. Neither is
-                 required — with neither set, pictures come from Wikimedia
-                 Commons and Openverse, and sound from those plus the Internet
-                 Archive. These cost no quota and never touch Gemini. -->
-            <span class="settings-desc" style="margin-top: 14px;"><b>Pictures, video &amp; music — free keys</b> (optional, nothing to do with Gemini). <b>Pexels</b> and <b>Pixabay</b> both give a free API key and both serve photographs and video. Paste either one and “find me a picture of …” gets far better results. With neither set, JARVIS still finds pictures from Wikimedia Commons and Openverse, and sound from those plus the Internet Archive — so nothing here ever blocks a search.</span>
-            <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
-              <span class="settings-desc" style="min-width: 58px;">Pexels</span>
-              <input type="password" id="pexels-key-input" autocomplete="off" spellcheck="false" placeholder="free key from pexels.com/api"
-                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('pexels')">Save</button>
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('pexels')" title="Remove the Pexels key">Remove</button>
-            </div>
-            <div style="display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;">
-              <span class="settings-desc" style="min-width: 58px;">Pixabay</span>
-              <input type="password" id="pixabay-key-input" autocomplete="off" spellcheck="false" placeholder="free key from pixabay.com/api/docs"
-                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('pixabay')">Save</button>
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('pixabay')" title="Remove the Pixabay key">Remove</button>
-            </div>
-            <div style="display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;">
-              <span class="settings-desc" style="min-width: 58px;">Jamendo</span>
-              <input type="password" id="jamendo-key-input" autocomplete="off" spellcheck="false" placeholder="free client ID from developer.jamendo.com"
-                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('jamendo')">Save</button>
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('jamendo')" title="Remove the Jamendo client ID">Remove</button>
-            </div>
-            <span class="settings-desc" style="margin-top: 6px;"><b>Why Jamendo for music:</b> Pexels and Pixabay have no audio endpoint in their public APIs — that is in both sets of documentation. Jamendo v3 does, it is free, and every track is Creative Commons with its own licence named in the response, so the terms are known per track rather than assumed. Without a client ID, sound still comes from Wikimedia Commons, Openverse and the Internet Archive, which need nothing at all.</span>
+            <!-- THE SUPPLIER REGISTRY. Every row here is drawn from the
+                 registry on the server (GET /api/web/sources), so adding a
+                 supplier to the app adds a row here with no change to this
+                 page. None of it is a gate: a supplier with no key is simply
+                 tried later, and the key-free ones always answer. -->
+            <span class="settings-desc" style="margin-top: 14px;"><b>Suppliers — what JARVIS can go and fetch</b> (optional keys, nothing to do with Gemini). Each supplier hands over a different kind of file, and together they cover pictures, video, sound and books. Paste a key and that supplier moves to the front of the queue for the kinds it covers. Leave them all empty and JARVIS still fetches every kind from the suppliers that need nothing at all.</span>
+            <div id="supplier-registry"><span class="settings-desc">Reading the supplier list…</span></div>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Why the keys are optional:</b> Pexels and Pixabay have no audio endpoint in their public APIs — that is in both sets of documentation — so music comes from Jamendo, or from Wikimedia Commons, Openverse and the Internet Archive when there is no client ID. Books come from Project Gutenberg, which needs no key because the whole catalogue is public domain. A missing key narrows the choice of supplier; it never stops a search.</span>
             <span class="settings-desc" id="image-keys-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
@@ -2055,7 +2036,7 @@
 
     async function toggleOfflineMode() {
       const state = _offlineState || {};
-      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); return; }
+      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); return; }
       try {
         const res = await _authFetch('/api/offline', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: null }),
@@ -2248,13 +2229,13 @@
         const res = await _authFetch('/api/settings/image-keys');
         const info = await res.json().catch(() => ({}));
         if (!res.ok || !Array.isArray(info.keys)) {
-          if (el) { el.textContent = `Could not read the picture keys: ${info.error || `HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
+          if (el) { el.textContent = `Could not read the supplier keys: ${info.error || `HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
           return;
         }
         if (el) {
           el.style.color = '';
           el.textContent = info.keys.map((k) =>
-            `${k.label}: ${k.present ? `set (…${k.tail})` : 'not set — pictures still work via Wikimedia Commons / Openverse'}`).join('  ·  ');
+            `${k.label}: ${k.present ? `set (…${k.tail})` : 'not set — the key-free suppliers still answer'}`).join('  ·  ');
         }
       } catch (err) {
         if (el) { el.textContent = `Could not read the picture keys: ${err.message}`; el.style.color = '#ff6b6b'; }
@@ -2262,11 +2243,86 @@
     }
     window.refreshImageKeyStatus = refreshImageKeyStatus;
 
+    // ── the supplier registry, drawn from the server ─────────────────────────
+    // The rows come from GET /api/web/sources, which reads the same registry the
+    // search engine uses. So adding a supplier on the server adds its row here,
+    // and this page never has to be edited again to take a new key.
+    const KIND_WORDS = { image: 'pictures', video: 'video', audio: 'sound', book: 'books' };
+
+    function supplierRow(source) {
+      const covers = source.kinds.map((k) => KIND_WORDS[k] || k).join(', ');
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'margin-top: 8px; padding: 8px 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(0,0,0,0.22);';
+      const head = document.createElement('div');
+      head.style.cssText = 'display: flex; gap: 8px; align-items: center; flex-wrap: wrap;';
+      const name = document.createElement('b');
+      name.textContent = source.label;
+      const state = document.createElement('span');
+      state.className = 'settings-desc';
+      state.style.cssText = 'margin-left: auto;';
+      head.append(name, state);
+      const blurb = document.createElement('span');
+      blurb.className = 'settings-desc';
+      blurb.style.cssText = 'display: block; margin-top: 2px;';
+      blurb.textContent = `Supplies ${covers}. ${source.blurb}`;
+      wrap.append(head, blurb);
+      if (source.needsKey) {
+        const row = document.createElement('div');
+        row.style.cssText = 'display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;';
+        const input = document.createElement('input');
+        input.type = 'password';
+        input.id = `${source.id}-key-input`;
+        input.autocomplete = 'off';
+        input.spellcheck = false;
+        input.placeholder = source.signup ? `free key from ${String(source.signup).replace(/^https?:\\/\\//, '')}` : 'paste the key';
+        input.style.cssText = 'flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;';
+        const save = document.createElement('button');
+        save.className = 'preset-btn';
+        save.style.cssText = 'padding: 6px 14px; margin: 0;';
+        save.textContent = 'Save';
+        save.onclick = () => saveImageKey(source.id);
+        const remove = document.createElement('button');
+        remove.className = 'preset-btn';
+        remove.style.cssText = 'padding: 6px 14px; margin: 0;';
+        remove.textContent = 'Remove';
+        remove.title = `Remove the ${source.label} key`;
+        remove.onclick = () => clearImageKey(source.id);
+        row.append(input, save, remove);
+        wrap.append(row);
+      }
+      return { wrap, state };
+    }
+
+    async function refreshSupplierRegistry() {
+      const box = document.getElementById('supplier-registry');
+      if (!box) return;
+      try {
+        const res = await _authFetch('/api/web/sources');
+        const info = await res.json().catch(() => ({}));
+        if (!res.ok || !Array.isArray(info.sources)) {
+          box.textContent = `Could not read the supplier list: ${info.error || `HTTP ${res.status}`}`;
+          return;
+        }
+        box.textContent = '';
+        for (const source of info.sources) {
+          const { wrap, state } = supplierRow(source);
+          state.textContent = source.needsKey
+            ? (source.keyPresent ? 'key loaded' : 'no key — the suppliers behind it answer')
+            : 'no key needed';
+          state.style.color = source.needsKey && !source.keyPresent ? '' : 'var(--jg-gold-pale)';
+          box.append(wrap);
+        }
+      } catch (err) {
+        box.textContent = `Could not read the supplier list: ${err.message}`;
+      }
+    }
+    window.refreshSupplierRegistry = refreshSupplierRegistry;
+
     async function saveImageKey(service) {
       const input = document.getElementById(`${service}-key-input`);
       const el = document.getElementById('image-keys-status');
       const key = (input?.value || '').trim();
-      if (!key) { if (el) { el.textContent = `Paste the ${service} key first.`; el.style.color = '#ff6b6b'; } return; }
+      if (!key) { if (el) { el.textContent = `Paste the ${IMAGE_KEY_LABELS[service] || service} key first.`; el.style.color = '#ff6b6b'; } return; }
       if (el) { el.textContent = 'Saving…'; el.style.color = ''; }
       try {
         const res = await _authFetch('/api/settings/image-keys', {
@@ -2286,6 +2342,7 @@
         return;
       }
       refreshImageKeyStatus();
+      refreshSupplierRegistry();
     }
     window.saveImageKey = saveImageKey;
 
@@ -2303,12 +2360,13 @@
           if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
           return;
         }
-        toast(`${IMAGE_KEY_LABELS[service] || service} key removed — the key-free sources carry on as before`);
+        toast(`${IMAGE_KEY_LABELS[service] || service} key removed — the key-free suppliers carry on as before`);
       } catch (err) {
         if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
         return;
       }
       refreshImageKeyStatus();
+      refreshSupplierRegistry();
     }
     window.clearImageKey = clearImageKey;
 
@@ -3220,7 +3278,7 @@
         FoleyAudio.grab();
         // Settings must show the truth about the brain key and the build every
         // time it opens.
-        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); }
+        if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); }
       } else {
         win.style.display = 'none';
         FoleyAudio.place();

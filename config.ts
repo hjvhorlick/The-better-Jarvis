@@ -227,7 +227,12 @@ export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
  * Neither is required. With no key at all, image search falls back to Wikimedia
  * Commons and Openverse, which need nothing — so a picture is always findable.
  */
-export type ImageService = 'pexels' | 'pixabay' | 'jamendo';
+/**
+ * A supplier that can be given a key. The name is historical — it started as
+ * picture keys and now covers music and places too. Every one of these is
+ * OPTIONAL: behind each keyed supplier sits at least one that needs nothing.
+ */
+export type ImageService = 'pexels' | 'pixabay' | 'jamendo' | 'geoapify' | 'locationiq';
 
 const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
   pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
@@ -236,6 +241,11 @@ const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: 
   // this is the one that does: Jamendo v3 is documented, free, and every track
   // is Creative Commons with its own licence named in the response.
   jamendo: { env: 'JAMENDO_CLIENT_ID', field: 'jamendo_client_id', label: 'Jamendo', signup: 'https://developer.jamendo.com/v3.0/docs' },
+  // PLACES AND ADDRESSES. Both are optional: Nominatim, Photon and Open-Meteo
+  // answer with no key at all. A key only buys a higher rate limit and
+  // structured address fields.
+  geoapify: { env: 'GEOAPIFY_API_KEY', field: 'geoapify_api_key', label: 'Geoapify', signup: 'https://www.geoapify.com/get-started/' },
+  locationiq: { env: 'LOCATIONIQ_API_KEY', field: 'locationiq_api_key', label: 'LocationIQ', signup: 'https://locationiq.com/docs' },
 };
 
 export interface ServiceKeyInfo {
@@ -290,6 +300,8 @@ export function resolveImageServiceKeys(): Record<ImageService, ServiceKeyInfo> 
     pexels: resolveImageServiceKey('pexels'),
     pixabay: resolveImageServiceKey('pixabay'),
     jamendo: resolveImageServiceKey('jamendo'),
+    geoapify: resolveImageServiceKey('geoapify'),
+    locationiq: resolveImageServiceKey('locationiq'),
   };
 }
 /** The optional second key, the fallback. */

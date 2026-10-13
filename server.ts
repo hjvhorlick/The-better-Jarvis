@@ -53,14 +53,19 @@ import {
 import { KnowledgeStore } from './knowledge.js';
 import {
   answerFromWeb,
+  describeSources,
   explainFetchError,
   imageKeyStatus,
   readUrl,
+  MEDIA_KINDS,
   searchAudio,
+  searchBooks,
   searchImages,
+  searchMedia,
   searchVideos,
   searchWeb,
   type MediaHit,
+  type MediaKind,
 } from './search/engine.js';
 import { BrainStore, BrainStoreError, containsSensitiveContent, looksLikeCredentialInput, type BrainTurn } from './brain.js';
 import {
@@ -836,6 +841,26 @@ async function mediaFromWeb(subject: string, kind: 'video' | 'audio'): Promise<s
   }
   return `I could not find a ${noun} of “${subject.slice(0, 60)}” on the open web.`;
 }
+/**
+ * A book, from Project Gutenberg through Gutendex. No key and no terms to read
+ * per title, because the whole catalogue is public domain — which is what makes
+ * it usable as raw material for something being built, rather than something
+ * that can only be looked at.
+ */
+async function bookFromWeb(subject: string): Promise<string> {
+  try {
+    const hits: MediaHit[] = await searchBooks(subject, { maxResults: 6 });
+    if (hits.length) {
+      return `Here is what I found for ${subject}:\n`
+        + hits.map((hit, i) => `${i + 1}. ${hit.title}${hit.author ? ` — ${hit.author}` : ''}\n   read or download: ${hit.page}\n   file: ${hit.url}`).join('\n')
+        + `\n\n(From Project Gutenberg — public domain, no model called, no quota used.)`;
+    }
+  } catch (err) {
+    console.warn('[JARVIS] the book search failed:', err instanceof Error ? err.message : err);
+  }
+  return `I could not find a book on \u201c${subject.slice(0, 60)}\u201d in the Project Gutenberg catalogue.`;
+}
+
 async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>): Promise<string> {
   try {
     const answer = await answerFromWeb(trimmed, { maxResults: 5 });
@@ -1369,6 +1394,8 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (findVid) return mediaFromWeb(findVid[1].trim(), 'video');
   const findAudio = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|play)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:sound|sounds|music|song|audio|track)\s*(?:of|for|about)?\s+(.{2,300})$/i);
   if (findAudio) return mediaFromWeb(findAudio[1].trim(), 'audio');
+  const findBook = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:book|books|ebook|ebooks|novel|title)\s*(?:of|for|about|on|by)?\s+(.{2,300})$/i);
+  if (findBook) return bookFromWeb(findBook[1].trim());
 
   // ── No Gemini? Then the open web answers ──────────────────────────────────
   // A quota running out means "no Gemini". It does not mean "no internet", and
@@ -3218,20 +3245,33 @@ app.get('/api/web/media', requireAuth, async (req: Request, res: Response) => {
   const q = boundedQuery(req, 'q', 300);
   const kind = String(req.query.kind || 'image');
   if (!q) { res.status(400).json({ ok: false, error: 'Say what to look for.' }); return; }
-  if (!['image', 'video', 'audio'].includes(kind)) {
-    res.status(400).json({ ok: false, error: 'kind must be "image", "video" or "audio".' });
+  // The kinds are whatever the supplier registry knows about, so adding a
+  // supplier or a new type of file needs no change to this route.
+  if (!(MEDIA_KINDS as string[]).includes(kind)) {
+    res.status(400).json({ ok: false, error: `kind must be one of: ${MEDIA_KINDS.join(', ')}.` });
     return;
   }
   try {
-    const hits = kind === 'image'
-      ? await searchImages(q, { maxResults: 8 })
-      : kind === 'video'
-        ? await searchVideos(q, { maxResults: 8 })
-        : await searchAudio(q, { maxResults: 8 });
+    const hits = await searchMedia(kind as MediaKind, q, { maxResults: 8 });
     res.json({ ok: true, query: q, kind, hits, quotaUsed: false });
   } catch (err) {
     res.status(502).json({ ok: false, error: `The open web did not answer: ${explainFetchError(err)}` });
   }
+});
+
+/**
+ * The registration area: every supplier, what kind of file it hands over, and
+ * whether the key it wants is loaded. No key ever turns a supplier off — the
+ * key-free ones behind it carry on regardless — so this is a description of
+ * coverage, not a list of what is blocked.
+ */
+app.get('/api/web/sources', requireAuth, (_req: Request, res: Response) => {
+  const sources = describeSources();
+  const coverage: Record<string, string[]> = {};
+  for (const kind of MEDIA_KINDS) {
+    coverage[kind] = sources.filter((s) => s.kinds.includes(kind)).map((s) => s.label);
+  }
+  res.json({ ok: true, kinds: MEDIA_KINDS, coverage, sources, quotaUsed: false });
 });
 
 app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {

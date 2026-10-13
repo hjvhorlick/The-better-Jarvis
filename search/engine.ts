@@ -34,8 +34,10 @@ export interface WebHit {
   source: string;
 }
 
+export type MediaKind = 'image' | 'video' | 'audio' | 'book';
+
 export interface MediaHit {
-  kind: 'image' | 'video' | 'audio';
+  kind: MediaKind;
   title: string;
   /** The file itself — what an <img>/<video>/<audio> tag points at. */
   url: string;
@@ -455,6 +457,54 @@ async function jamendoSearch(query: string, options: EngineOptions): Promise<Med
   return parseJamendo(jsonString(page.body));
 }
 
+/**
+ * Gutendex — Project Gutenberg's public JSON API. No key at all, and the whole
+ * catalogue is public domain, which matters for a book that will be re-used in
+ * something else: there is no per-title licence to hunt down.
+ *
+ * The response is `{ count, next, previous, results: [...] }` and each result
+ * carries a `formats` map of MIME type to the actual file, so the download link
+ * is read rather than built out of the book id.
+ */
+export function parseGutendex(payload: unknown): MediaHit[] {
+  const results = (payload as { results?: unknown[] })?.results || [];
+  const out: MediaHit[] = [];
+  for (const raw of results) {
+    const item = raw as {
+      id?: number; title?: string; download_count?: number;
+      authors?: Array<{ name?: string; birth_year?: number; death_year?: number }>;
+      formats?: Record<string, string>;
+    };
+    if (!item.title || !item.id) continue;
+    const formats = item.formats || {};
+    // Prefer a plain-text file: it is the one a book-building app can actually
+    // parse, re-flow and re-typeset. EPUB and Kindle are kept as the fallback.
+    const file = formats['text/plain; charset=utf-8'] || formats['text/plain']
+      || formats['application/epub+zip'] || formats['application/x-mobipocket-ebook']
+      || formats['text/html; charset=utf-8'] || formats['text/html'];
+    const author = item.authors?.[0]?.name;
+    out.push({
+      kind: 'book',
+      title: toPlainText(item.title, 160),
+      // A book is still worth offering by its page when a file link is absent —
+      // the page lists every format.
+      url: file || `https://www.gutenberg.org/ebooks/${item.id}`,
+      thumb: null,
+      page: `https://www.gutenberg.org/ebooks/${item.id}`,
+      source: 'Project Gutenberg',
+      author: author ? toPlainText(author, 120) : null,
+      license: 'Public domain (Project Gutenberg) — see the licence note in the file',
+    });
+  }
+  return out;
+}
+
+async function gutenbergSearch(query: string, options: EngineOptions): Promise<MediaHit[]> {
+  const url = `https://gutendex.com/books?search=${encodeURIComponent(query.trim())}`;
+  const page = await getBody(url, options);
+  return parseGutendex(jsonString(page.body));
+}
+
 async function archiveSearch(query: string, kind: 'video' | 'audio', options: EngineOptions): Promise<MediaHit[]> {
   const mediatype = kind === 'video' ? 'movies' : 'audio';
   const url = 'https://archive.org/advancedsearch.php?q='
@@ -483,38 +533,140 @@ async function firstWorking(engines: Engine[], skip: string[] = []): Promise<Med
   return [];
 }
 
+/* ── the supplier registry ───────────────────────────────────────────────────
+ * A supplier is a row of data, not a chain of code. Each one declares which
+ * kinds of file it can hand over and, if it wants a key, which key. Order in
+ * this array is the order sources are tried for a given kind.
+ *
+ * That is what makes "eventually there will be a source for every type of file"
+ * cheap rather than a rewrite: a new supplier is one entry here, and a whole new
+ * type of file is one word added to MediaKind plus one search function. Nothing
+ * else in the app has to know which suppliers exist.
+ */
+export interface MediaSource {
+  /** Stable id: what `skip` refers to and what Settings stores a key under. */
+  id: string;
+  label: string;
+  /** Which kinds of file this supplier can actually deliver. */
+  kinds: MediaKind[];
+  /** The key it needs, if it needs one at all. */
+  key?: ImageService;
+  /** One line for the registration area — what it is good for. */
+  blurb: string;
+  signup?: string;
+  search: (query: string, kind: MediaKind, options: EngineOptions) => Promise<MediaHit[]>;
+}
+
+const KINDS = {
+  pics: ['image'] as MediaKind[],
+  film: ['video'] as MediaKind[],
+  picsFilm: ['image', 'video'] as MediaKind[],
+  sound: ['audio'] as MediaKind[],
+  reads: ['book'] as MediaKind[],
+};
+
+const MEDIA_SOURCES: MediaSource[] = [
+  {
+    id: 'pexels', label: 'Pexels', kinds: KINDS.picsFilm, key: 'pexels',
+    blurb: 'Stock photographs and video clips. Free key; 200 requests an hour. Pexels has paused new key issuance, so an existing key is worth keeping.',
+    signup: 'https://www.pexels.com/api/',
+    search: (q, kind, o) => (kind === 'image' || kind === 'video' ? pexelsSearch(q, kind, o) : Promise.resolve([])),
+  },
+  {
+    id: 'pixabay', label: 'Pixabay', kinds: KINDS.picsFilm, key: 'pixabay',
+    blurb: 'Stock photographs, illustrations and video clips. Free key, 100 requests a minute. No audio endpoint in its public API.',
+    signup: 'https://pixabay.com/api/docs/',
+    search: (q, kind, o) => (kind === 'image' || kind === 'video' ? pixabaySearch(q, kind, o) : Promise.resolve([])),
+  },
+  {
+    id: 'jamendo', label: 'Jamendo', kinds: KINDS.sound, key: 'jamendo',
+    blurb: 'Music. A free client ID, 35,000 requests a month, every track Creative Commons with its own licence named in the response.',
+    signup: 'https://developer.jamendo.com/v3.0/docs',
+    search: (q, _kind, o) => jamendoSearch(q, o),
+  },
+  {
+    // Key-free, and first for books: the whole catalogue is public domain, so
+    // a downloaded book can be re-used in anything without reading a licence.
+    id: 'gutenberg', label: 'Project Gutenberg', kinds: KINDS.reads,
+    blurb: 'Over 75,000 public-domain books, each offered as plain text, HTML, EPUB and Kindle. No key, and no terms to read per title.',
+    signup: 'https://gutendex.com/',
+    search: (q, _kind, o) => gutenbergSearch(q, o),
+  },
+  {
+    id: 'commons', label: 'Wikimedia Commons', kinds: [...KINDS.picsFilm, 'audio'] as MediaKind[],
+    blurb: 'Pictures, video and sound with no key at all. Every file carries its own licence, which is read and kept.',
+    signup: 'https://commons.wikimedia.org/',
+    search: (q, kind, o) => (kind === 'book' ? Promise.resolve([]) : commonsSearch(q, kind, o)),
+  },
+  {
+    id: 'openverse', label: 'Openverse', kinds: [...KINDS.pics, ...KINDS.sound] as MediaKind[],
+    blurb: 'Hundreds of millions of openly licensed pictures and audio recordings, gathered from museums and collections. No key.',
+    signup: 'https://api.openverse.org/',
+    search: (q, kind, o) => (kind === 'image' || kind === 'audio' ? openverseSearch(q, kind, o) : Promise.resolve([])),
+  },
+  {
+    id: 'archive', label: 'Internet Archive', kinds: [...KINDS.film, ...KINDS.sound] as MediaKind[],
+    blurb: 'Video and sound, plus books and scanned documents. No key. Answers with the item\u2019s own page, so the file is never guessed at.',
+    signup: 'https://archive.org/',
+    search: (q, kind, o) => (kind === 'video' || kind === 'audio' ? archiveSearch(q, kind, o) : Promise.resolve([])),
+  },
+];
+
+/**
+ * The registry as the owner sees it: every supplier, what it covers, and whether
+ * the key it wants is present. Nothing here is a gate — a supplier with no key
+ * is simply further down the order, and the key-free ones always answer.
+ */
+export function describeSources(): Array<{ id: string; label: string; kinds: MediaKind[]; needsKey: boolean; keyPresent: boolean; blurb: string; signup: string | null }> {
+  const keys = resolveImageServiceKeys();
+  return MEDIA_SOURCES.map((source) => ({
+    id: source.id,
+    label: source.label,
+    kinds: [...source.kinds],
+    needsKey: Boolean(source.key),
+    keyPresent: source.key ? Boolean(keys[source.key].key) : true,
+    blurb: source.blurb,
+    signup: source.signup ?? null,
+  }));
+}
+
+/** The kinds of file this build knows how to go and fetch. */
+export const MEDIA_KINDS: MediaKind[] = ['image', 'video', 'audio', 'book'];
+
+/**
+ * Find any kind of file. Walks the registry in order for that kind and returns
+ * the first supplier that produced anything — so a supplier that is down, has no
+ * key, or changed its markup is simply passed over, never reported.
+ */
+export async function searchMedia(kind: MediaKind, query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
+  const chain = MEDIA_SOURCES
+    .filter((source) => source.kinds.includes(kind))
+    .map((source) => ({ name: source.id, run: () => source.search(query, kind, options) }));
+  return firstWorking(chain, options.skip);
+}
+
 /** Pictures: the owner's Pexels/Pixabay keys first, Commons and Openverse after. */
 export async function searchImages(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
-  return firstWorking([
-    { name: 'pexels', run: () => pexelsSearch(query, 'image', options) },
-    { name: 'pixabay', run: () => pixabaySearch(query, 'image', options) },
-    { name: 'commons', run: () => commonsSearch(query, 'image', options) },
-    { name: 'openverse', run: () => openverseSearch(query, 'image', options) },
-  ], options.skip);
+  return searchMedia('image', query, options);
 }
 
 /** Video: Pexels and Pixabay first, then the Internet Archive. */
 export async function searchVideos(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
-  return firstWorking([
-    { name: 'pexels', run: () => pexelsSearch(query, 'video', options) },
-    { name: 'pixabay', run: () => pixabaySearch(query, 'video', options) },
-    { name: 'archive', run: () => archiveSearch(query, 'video', options) },
-  ], options.skip);
+  return searchMedia('video', query, options);
 }
 
 /**
  * Sound. Neither Pexels nor Pixabay serves audio through its public API — that
- * is in both sets of documentation — so the sources that actually work are
- * Jamendo (a free client ID, every track Creative Commons with its own licence
- * named), then the key-free Commons, Openverse and the Internet Archive.
+ * is in both sets of documentation — so Jamendo leads and the key-free Commons,
+ * Openverse and Internet Archive cover it when there is no client ID.
  */
 export async function searchAudio(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
-  return firstWorking([
-    { name: 'jamendo', run: () => jamendoSearch(query, options) },
-    { name: 'commons', run: () => commonsSearch(query, 'audio', options) },
-    { name: 'openverse', run: () => openverseSearch(query, 'audio', options) },
-    { name: 'archive', run: () => archiveSearch(query, 'audio', options) },
-  ], options.skip);
+  return searchMedia('audio', query, options);
+}
+
+/** Books: Project Gutenberg through Gutendex. No key, and public domain. */
+export async function searchBooks(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
+  return searchMedia('book', query, options);
 }
 
 /** Which of the optional keys are set — for Settings, never the key itself. */
