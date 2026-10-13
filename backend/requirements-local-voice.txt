@@ -1,18 +1,13 @@
-# Local voice: speech in and out on this computer, with no Gemini call and no other service.
-# Optional. Without these the app runs; the Voice button says what is missing.
+# JARVIS's voice, all on this computer (local_voice/service.py). No Gemini is used for voice.
 # Install with:  pip install -r backend/requirements-local-voice.txt
-# Then see docs/LOCAL_VOICE.md (the first run downloads the speech model, once).
+# Then see docs/LOCAL_VOICE.md (the Kokoro voice files go in models/kokoro/).
 #
-# Licences (checked against the GitHub licence API and the package metadata; see THIRD_PARTY_NOTICES.md):
-#   faster-whisper   MIT      speech to text. Its Whisper model weights are fetched once from Hugging Face.
-#   pyttsx3          MPL-2.0  this computer's own voices (SAPI5 on Windows, built-in on macOS, espeak-ng on Linux).
-#                             Linux also needs the system package: sudo apt install espeak-ng
-#   kokoro-onnx      MIT      the code for the better Kokoro voice. Its model files are separate (docs/LOCAL_VOICE.md).
-faster-whisper==1.2.1
-pyttsx3==2.99
+# kokoro-onnx   MIT      the voice: Kokoro-82M makes the speech on this computer.
+# sounddevice   MIT      plays the voice through this computer's speakers.
+# faster-whisper MIT     turns the microphone's audio into words. Its model downloads once.
+# numpy         BSD      audio arrays.
 kokoro-onnx==0.6.1
-#   openwakeword     Apache-2.0  the "Hey Jarvis" listener. Its code only. The model files ship with the project
-#                                in backend/voice/wake_models/ (CC BY-NC-SA 4.0; see that folder's NOTICE.md).
-#   Its own dependencies (checked from the package metadata): onnxruntime (MIT), scipy (BSD),
-#   scikit-learn (BSD), requests (Apache-2.0), tqdm (MPL-2.0 and MIT), tflite-runtime (Apache-2.0, Linux).
-openwakeword==0.6.0
+sounddevice
+faster-whisper==1.2.1
+numpy
+soundfile

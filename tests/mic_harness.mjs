@@ -675,38 +675,6 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
      broke.state.speakCalls.length === 0, JSON.stringify(broke.state.speakCalls));
 }
 
-/* ── 10. Browser speech-service failures must switch to raw audio ──────── */
-{
-  const { window, state } = makeDom({ withSR: true, micAlwaysOn: true });
-  await settle(1200);
-  if (state.sr && state.sr.onerror) state.sr.onerror({ error: 'network' });
-  await settle(550);
-  const status = window.jarvisMicStatus();
-  ok('recognition service failure: raw audio fallback starts automatically',
-     status.usingRawAudioFallback === true && status.rawCapture === true && status.state === 'listening',
-     JSON.stringify({ fallback: status.usingRawAudioFallback, capture: status.rawCapture, state: status.state, error: status.recognizerError }));
-  await speak(state, { loudTicks: 6, quietTicks: 8 });
-  await settle(500);
-  const cmd = state.fetches.find((f) => f.url.includes('/api/command'));
-  ok('recognition service failure: recorded words reach the chat command route',
-     !!cmd && cmd.body.text === 'open the files',
-     JSON.stringify(cmd && cmd.body));
-}
-
-/* ── 11. Interim-only browser transcripts must still reach chat ──────────── */
-{
-  const { window, state } = makeDom({ withSR: true, micAlwaysOn: true });
-  await settle(1200);
-  if (state.sr && state.sr.onresult) {
-    state.sr.onresult({ resultIndex: 0, results: [Object.assign([{ transcript: 'open the files' }], { isFinal: false })] });
-  }
-  await settle(1500);
-  const cmd = state.fetches.find((f) => f.url.includes('/api/command'));
-  ok('interim-only transcript: words are submitted when speech pauses',
-     !!cmd && cmd.body.text === 'open the files',
-     JSON.stringify({ command: cmd && cmd.body.text, mic: window.jarvisMicStatus() }));
-}
-
 /* ── summary ─────────────────────────────────────────────────────────────── */
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
