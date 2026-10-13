@@ -83,6 +83,7 @@ import { ResearchWorkflowError, runResearchWorkflow, MAX_RESEARCH_QUESTION_CHARS
 import { buildFollowupPrompt, groundingToInputs } from './research/report.js';
 import { parseResearchIntent } from './research/intent.js';
 import { isSafePublicHttpUrl } from './research/fetch.js';
+import { searchPlaces, describePlaceSources, type PlaceHit } from './search/places.js';
 import type { ResearchDocument, ResearchTaskStatus } from './research/types.js';
 
 // The port is fixed at 3000 in normal use; the harness sets
@@ -861,6 +862,25 @@ async function bookFromWeb(subject: string): Promise<string> {
   return `I could not find a book on \u201c${subject.slice(0, 60)}\u201d in the Project Gutenberg catalogue.`;
 }
 
+/**
+ * Where something is. Answers from the map suppliers with coordinates, an
+ * address and a link — no model, no quota, and no key needed, because three of
+ * the five suppliers want nothing.
+ */
+async function placeFromWeb(subject: string): Promise<string> {
+  try {
+    const hits: PlaceHit[] = await searchPlaces(subject, { maxResults: 5 });
+    if (hits.length) {
+      return `Here is what I found for ${subject}:\n`
+        + hits.map((hit, i) => `${i + 1}. ${hit.address || hit.name}\n   ${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)}${hit.placeType ? ` · ${hit.placeType}` : ''}${hit.page ? `\n   ${hit.page}` : ''}`).join('\n')
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used.)`;
+    }
+  } catch (err) {
+    console.warn('[JARVIS] the place search failed:', err instanceof Error ? err.message : err);
+  }
+  return `I could not find \u201c${subject.slice(0, 60)}\u201d on the map — try a fuller address, or add the town and country.`;
+}
+
 async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>): Promise<string> {
   try {
     const answer = await answerFromWeb(trimmed, { maxResults: 5 });
@@ -1396,6 +1416,8 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (findAudio) return mediaFromWeb(findAudio[1].trim(), 'audio');
   const findBook = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|download)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:book|books|ebook|ebooks|novel|title)\s*(?:of|for|about|on|by)?\s+(.{2,300})$/i);
   if (findBook) return bookFromWeb(findBook[1].trim());
+  const findPlace = trimmed.match(/^(?:jarvis,?\s+)?(?:where|wheres|where's|find|locate)\s+(?:is|are)?\s*(?:the|a|an)?\s*(?:address|location|place|coordinates|lat|latitude)?\s*(?:of|for|to)?\s+(.{2,300})$/i);
+  if (findPlace && !/^(?:is|are|was|were|am|the)\b/i.test(findPlace[1].trim())) return placeFromWeb(findPlace[1].trim());
 
   // ── No Gemini? Then the open web answers ──────────────────────────────────
   // A quota running out means "no Gemini". It does not mean "no internet", and
@@ -3271,7 +3293,10 @@ app.get('/api/web/sources', requireAuth, (_req: Request, res: Response) => {
   for (const kind of MEDIA_KINDS) {
     coverage[kind] = sources.filter((s) => s.kinds.includes(kind)).map((s) => s.label);
   }
-  res.json({ ok: true, kinds: MEDIA_KINDS, coverage, sources, quotaUsed: false });
+  // Places are a separate registry because they answer with coordinates and
+  // addresses rather than a file, but they belong in the same list: they are
+  // suppliers, and the owner loads their keys in the same place.
+  res.json({ ok: true, kinds: MEDIA_KINDS, coverage, sources, placeSources: describePlaceSources(), quotaUsed: false });
 });
 
 app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {
@@ -3340,6 +3365,23 @@ app.get('/api/web/file', requireAuth, async (req: Request, res: Response) => {
   } catch (err) {
     if (!res.headersSent) res.status(502).json({ error: `That file could not be fetched: ${explainFetchError(err)}` });
     else res.destroy();
+  }
+});
+
+/**
+ * An address or a place. No key is needed — Nominatim, Photon and Open-Meteo all
+ * answer without one — so this never depends on anything being configured.
+ * Answers are cached for a day, which Nominatim asks for and which makes asking
+ * about the same place twice instant.
+ */
+app.get('/api/web/place', requireAuth, async (req: Request, res: Response) => {
+  const q = boundedQuery(req, 'q', 300);
+  if (!q) { res.status(400).json({ ok: false, error: 'Say what place or address to look for.' }); return; }
+  try {
+    const hits: PlaceHit[] = await searchPlaces(q, { maxResults: 6 });
+    res.json({ ok: true, query: q, hits, quotaUsed: false });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: `The map sources did not answer: ${explainFetchError(err)}` });
   }
 });
 
