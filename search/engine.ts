@@ -226,7 +226,7 @@ export function parsePexels(payload: unknown, kind: 'image' | 'video'): MediaHit
   for (const raw of items) {
     const item = raw as {
       url?: string; photographer?: string; user?: { name?: string }; alt?: string; width?: number; height?: number;
-      src?: Record<string, string>; image?: string; video_files?: Array<{ link?: string; width?: number; quality?: string }>;
+      src?: Record<string, string>; image?: string; video_files?: Array<{ link?: string; width?: number; height?: number; quality?: string | null }>;
     };
     const author = item.photographer || item.user?.name || null;
     if (kind === 'image') {
@@ -238,8 +238,14 @@ export function parsePexels(payload: unknown, kind: 'image' | 'video'): MediaHit
         source: 'Pexels', author, license: 'Pexels licence (free to use)',
       });
     } else {
+      // The docs warn that `quality` may be null on newer video files, so the
+      // rendition is chosen by resolution, with `quality` only as a tie-breaker.
       const files = (item.video_files || []).filter((f) => f.link);
-      const best = files.find((f) => f.quality === 'hd') || files[0];
+      const best = [...files].sort((a, b) => {
+        const res = (b.width || 0) - (a.width || 0);
+        if (res !== 0) return res;
+        return (b.quality === 'hd' ? 1 : 0) - (a.quality === 'hd' ? 1 : 0);
+      })[0];
       if (!best?.link) continue;
       hits.push({
         kind: 'video', title: toPlainText(item.alt || 'Pexels video', 120), url: best.link,
@@ -257,7 +263,7 @@ export function parsePixabay(payload: unknown, kind: 'image' | 'video'): MediaHi
   for (const raw of hits) {
     const item = raw as {
       pageURL?: string; tags?: string; user?: string; previewURL?: string; webformatURL?: string;
-      largeImageURL?: string; videos?: Record<string, { url?: string; size?: number }>; picture_id?: string;
+      largeImageURL?: string; videos?: Record<string, { url?: string; size?: number; thumbnail?: string }>; picture_id?: string;
     };
     const title = toPlainText(item.tags || 'Pixabay picture', 120);
     if (kind === 'image') {
@@ -273,7 +279,8 @@ export function parsePixabay(payload: unknown, kind: 'image' | 'video'): MediaHi
       if (!video) continue;
       out.push({
         kind: 'video', title, url: video,
-        thumb: item.picture_id ? `https://i.vimeocdn.com/video/${item.picture_id}_295x166.jpg` : null,
+        thumb: item.videos?.medium?.thumbnail || item.videos?.small?.thumbnail
+          || item.videos?.tiny?.thumbnail || null,
         page: item.pageURL || video, source: 'Pixabay', author: item.user || null,
         license: 'Pixabay content licence (free to use)',
       });
@@ -359,11 +366,25 @@ export function parseArchive(payload: unknown, kind: 'video' | 'audio'): MediaHi
 async function pexelsSearch(query: string, kind: 'image' | 'video', options: EngineOptions): Promise<MediaHit[]> {
   const key = resolveImageServiceKeys().pexels.key;
   if (!key) return [];
-  const url = kind === 'image'
-    ? `https://api.pexels.com/v1/search?query=${encodeURIComponent(query)}&per_page=${Math.min(options.maxResults ?? 6, 15)}`
-    : `https://api.pexels.com/videos/search?query=${encodeURIComponent(query)}&per_page=${Math.min(options.maxResults ?? 6, 15)}`;
-  const page = await getBody(url, options, { headers: pexelsHeaders(key) });
-  return parsePexels(jsonString(page.body), kind);
+  const perPage = Math.min(options.maxResults ?? 6, 15);
+  const q = encodeURIComponent(query);
+  // Pexels documents video search at /v1/videos/search, while several guides and
+  // SDKs use /videos/search. Rather than guess, the documented path is tried
+  // first and the other is a fallback — a 404 on one is not an error to report.
+  const candidates = kind === 'image'
+    ? [`https://api.pexels.com/v1/search?query=${q}&per_page=${perPage}`]
+    : [`https://api.pexels.com/v1/videos/search?query=${q}&per_page=${perPage}`,
+       `https://api.pexels.com/videos/search?query=${q}&per_page=${perPage}`];
+  let lastError: unknown = null;
+  for (const url of candidates) {
+    try {
+      const page = await getBody(url, options, { headers: pexelsHeaders(key) });
+      const hits = parsePexels(jsonString(page.body), kind);
+      if (hits.length) return hits;
+    } catch (err) { lastError = err; }
+  }
+  if (lastError) throw lastError;
+  return [];
 }
 
 async function pixabaySearch(query: string, kind: 'image' | 'video', options: EngineOptions): Promise<MediaHit[]> {
@@ -371,7 +392,7 @@ async function pixabaySearch(query: string, kind: 'image' | 'video', options: En
   if (!key) return [];
   const base = kind === 'image' ? 'https://pixabay.com/api/' : 'https://pixabay.com/api/videos/';
   const url = `${base}?key=${encodeURIComponent(key)}&q=${encodeURIComponent(query)}`
-    + `&per_page=${Math.max(3, Math.min(options.maxResults ?? 6, 20))}&safesearch=true`;
+    + `&per_page=${Math.max(3, Math.min(options.maxResults ?? 6, 200))}&safesearch=true`;
   const page = await getBody(url, options);
   return parsePixabay(jsonString(page.body), kind);
 }
@@ -391,6 +412,47 @@ async function openverseSearch(query: string, kind: 'image' | 'audio', options: 
     + `?q=${encodeURIComponent(query.trim())}&page_size=${Math.min(options.maxResults ?? 6, 20)}`;
   const page = await getBody(url, options);
   return parseOpenverse(jsonString(page.body), kind);
+}
+
+export function parseJamendo(payload: unknown): MediaHit[] {
+  const headers = (payload as { headers?: { status?: string; error_message?: string } })?.headers;
+  if (headers && headers.status !== 'success') return [];
+  const results = (payload as { results?: unknown[] })?.results || [];
+  const out: MediaHit[] = [];
+  for (const raw of results) {
+    const item = raw as {
+      id?: string; name?: string; artist_name?: string; album_name?: string;
+      audio?: string; audiodownload?: string; image?: string; shareurl?: string;
+      license_ccurl?: string; duration?: number;
+    };
+    // `audio` is a streamable URL and the docs promise it; without it there is
+    // nothing to play, so the track is not offered as a result.
+    if (!item.audio) continue;
+    const licence = item.license_ccurl ? toPlainText(item.license_ccurl, 90) : null;
+    out.push({
+      kind: 'audio',
+      title: toPlainText([item.name, item.album_name].filter(Boolean).join(' — ') || String(item.name || item.id || 'Track'), 120),
+      url: item.audio,
+      thumb: item.image || null,
+      page: item.shareurl || `https://www.jamendo.com/track/${encodeURIComponent(String(item.id || ''))}`,
+      source: 'Jamendo',
+      author: item.artist_name ? toPlainText(item.artist_name, 90) : null,
+      // Read per track: Jamendo's catalogue is Creative Commons but the terms
+      // differ between tracks, and the API says which applies.
+      license: licence ? `Creative Commons — ${licence}` : 'Creative Commons (see the track page)',
+    });
+  }
+  return out;
+}
+
+async function jamendoSearch(query: string, options: EngineOptions): Promise<MediaHit[]> {
+  const clientId = resolveImageServiceKeys().jamendo.key;
+  if (!clientId) return [];
+  const url = `https://api.jamendo.com/v3.0/tracks/?client_id=${encodeURIComponent(clientId)}&format=json`
+    + `&limit=${Math.min(options.maxResults ?? 6, 50)}&audioformat=mp32`
+    + `&search=${encodeURIComponent(query.trim())}`;
+  const page = await getBody(url, options);
+  return parseJamendo(jsonString(page.body));
 }
 
 async function archiveSearch(query: string, kind: 'video' | 'audio', options: EngineOptions): Promise<MediaHit[]> {
@@ -441,11 +503,14 @@ export async function searchVideos(query: string, options: EngineOptions = {}): 
 }
 
 /**
- * Sound. Neither Pexels nor Pixabay serves audio through its public API, so the
- * key-free sources are the ones that actually work: Commons, Openverse, Archive.
+ * Sound. Neither Pexels nor Pixabay serves audio through its public API — that
+ * is in both sets of documentation — so the sources that actually work are
+ * Jamendo (a free client ID, every track Creative Commons with its own licence
+ * named), then the key-free Commons, Openverse and the Internet Archive.
  */
 export async function searchAudio(query: string, options: EngineOptions = {}): Promise<MediaHit[]> {
   return firstWorking([
+    { name: 'jamendo', run: () => jamendoSearch(query, options) },
     { name: 'commons', run: () => commonsSearch(query, 'audio', options) },
     { name: 'openverse', run: () => openverseSearch(query, 'audio', options) },
     { name: 'archive', run: () => archiveSearch(query, 'audio', options) },

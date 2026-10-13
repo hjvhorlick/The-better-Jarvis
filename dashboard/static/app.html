@@ -1513,7 +1513,7 @@
                  required — with neither set, pictures come from Wikimedia
                  Commons and Openverse, and sound from those plus the Internet
                  Archive. These cost no quota and never touch Gemini. -->
-            <span class="settings-desc" style="margin-top: 14px;"><b>Pictures &amp; video — free keys</b> (optional, nothing to do with Gemini). <b>Pexels</b> and <b>Pixabay</b> both give a free API key and both serve photographs and video. Paste either one and “find me a picture of …” gets far better results. With neither set, JARVIS still finds pictures from Wikimedia Commons and Openverse, and sound from those plus the Internet Archive — so nothing here ever blocks a search.</span>
+            <span class="settings-desc" style="margin-top: 14px;"><b>Pictures, video &amp; music — free keys</b> (optional, nothing to do with Gemini). <b>Pexels</b> and <b>Pixabay</b> both give a free API key and both serve photographs and video. Paste either one and “find me a picture of …” gets far better results. With neither set, JARVIS still finds pictures from Wikimedia Commons and Openverse, and sound from those plus the Internet Archive — so nothing here ever blocks a search.</span>
             <div style="display: flex; gap: 8px; width: 100%; align-items: center;">
               <span class="settings-desc" style="min-width: 58px;">Pexels</span>
               <input type="password" id="pexels-key-input" autocomplete="off" spellcheck="false" placeholder="free key from pexels.com/api"
@@ -1528,6 +1528,14 @@
               <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('pixabay')">Save</button>
               <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('pixabay')" title="Remove the Pixabay key">Remove</button>
             </div>
+            <div style="display: flex; gap: 8px; width: 100%; align-items: center; margin-top: 6px;">
+              <span class="settings-desc" style="min-width: 58px;">Jamendo</span>
+              <input type="password" id="jamendo-key-input" autocomplete="off" spellcheck="false" placeholder="free client ID from developer.jamendo.com"
+                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveImageKey('jamendo')">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearImageKey('jamendo')" title="Remove the Jamendo client ID">Remove</button>
+            </div>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Why Jamendo for music:</b> Pexels and Pixabay have no audio endpoint in their public APIs — that is in both sets of documentation. Jamendo v3 does, it is free, and every track is Creative Commons with its own licence named in the response, so the terms are known per track rather than assumed. Without a client ID, sound still comes from Wikimedia Commons, Openverse and the Internet Archive, which need nothing at all.</span>
             <span class="settings-desc" id="image-keys-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
@@ -2232,6 +2240,8 @@
     // These have nothing to do with Gemini and spend no quota. Neither is
     // required: with neither set, pictures still come from Wikimedia Commons
     // and Openverse, so saving one only ever improves a search.
+    const IMAGE_KEY_LABELS = { pexels: 'Pexels', pixabay: 'Pixabay', jamendo: 'Jamendo' };
+
     async function refreshImageKeyStatus() {
       const el = document.getElementById('image-keys-status');
       try {
@@ -2270,7 +2280,7 @@
           return;
         }
         if (input) input.value = '';
-        toast(`${service === 'pexels' ? 'Pexels' : 'Pixabay'} key saved — pictures and video will use it at once`);
+        toast(`${IMAGE_KEY_LABELS[service] || service} key saved — it is used at once, no restart`);
       } catch (err) {
         if (el) { el.textContent = `Save failed: ${err.message}`; el.style.color = '#ff6b6b'; }
         return;
@@ -2293,7 +2303,7 @@
           if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
           return;
         }
-        toast(`${service === 'pexels' ? 'Pexels' : 'Pixabay'} key removed — pictures now come from Wikimedia Commons`);
+        toast(`${IMAGE_KEY_LABELS[service] || service} key removed — the key-free sources carry on as before`);
       } catch (err) {
         if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
         return;

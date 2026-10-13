@@ -13,7 +13,7 @@ import {
   parseDuckResults, unwrapDuckLink, toPlainText, decodeEntities,
   parseWikiFact, parsePexels, parsePixabay, parseCommons, parseOpenverse, parseArchive,
   searchImages, searchVideos, searchAudio, searchWeb, wikiFact, answerFromWeb, imageKeyStatus,
-  explainFetchError,
+  explainFetchError, parseJamendo,
 } from '../search/engine.ts';
 
 /* ── DuckDuckGo: the exact shape its HTML endpoint returns ───────────────── */
@@ -282,4 +282,90 @@ test('a dead connection is described in one plain sentence, with no quota talk',
   for (const message of [dns, explainFetchError(new Error('ECONNRESET'))]) {
     assert.doesNotMatch(message, /quota|429|budget/i, 'a network error is never blamed on a quota');
   }
+});
+
+/* ── Jamendo: the music source, because Pexels and Pixabay have no audio ──── */
+const JAMENDO = {
+  headers: { status: 'success', code: 0, results_count: 1 },
+  results: [{
+    id: '1630628', name: 'Rock_guard', album_name: 'Rock Vision', artist_name: 'Christian Petermann',
+    duration: 202,
+    license_ccurl: 'http://creativecommons.org/licenses/by-nc-nd/3.0/',
+    audio: 'https://mp3l.jamendo.com/?trackid=1630628&format=mp31',
+    audiodownload: 'https://mp3d.jamendo.com/download/track/1630628/mp32/',
+    shareurl: 'https://www.jamendo.com/track/1630628',
+    image: 'https://imgjam2.jamendo.com/albums/s183/183496/covers/1.200.jpg',
+  }],
+};
+
+test('Jamendo returns playable audio, with that track\'s own licence', () => {
+  const [track] = parseJamendo(JAMENDO);
+  assert.equal(track.kind, 'audio');
+  assert.equal(track.url, 'https://mp3l.jamendo.com/?trackid=1630628&format=mp31');
+  assert.equal(track.author, 'Christian Petermann');
+  assert.match(track.license, /by-nc-nd/, 'the per-track CC licence is kept, not assumed');
+  assert.equal(track.source, 'Jamendo');
+  // A track with nothing to play is not offered as a result.
+  assert.deepEqual(parseJamendo({ headers: { status: 'success' }, results: [{ id: '1', name: 'silent' }] }), []);
+  assert.deepEqual(parseJamendo({ headers: { status: 'error', error_message: 'bad client id' } }), []);
+});
+
+test('music: Jamendo first when a client ID is set, key-free sources otherwise', async (t) => {
+  t.after(() => { delete process.env.JAMENDO_CLIENT_ID; });
+  const noKey = stubFetch([['commons.wikimedia.org', COMMONS]]);
+  delete process.env.JAMENDO_CLIENT_ID;
+  const free = await searchAudio('ocean waves', noKey);
+  assert.equal(free[0].source, 'Wikimedia Commons');
+  assert.ok(!noKey.seen.some((u) => u.includes('jamendo.com')), 'Jamendo is not called without a client ID');
+
+  process.env.JAMENDO_CLIENT_ID = 'jamendo-client-id';
+  const withKey = stubFetch([['api.jamendo.com', JAMENDO], ['commons.wikimedia.org', COMMONS]]);
+  const keyed = await searchAudio('rock', withKey);
+  assert.equal(keyed[0].source, 'Jamendo');
+  assert.ok(!withKey.seen.some((u) => u.includes('commons.wikimedia.org')), 'Commons is not needed');
+});
+
+/* ── the Pexels video path documented two ways ───────────────────────────── */
+const PEXELS_VID_WIDE = {
+  videos: [{
+    url: 'https://www.pexels.com/video/9/', user: { name: 'Grace Hopper' },
+    video_files: [
+      { link: 'https://vid/sd.mp4', width: 960, quality: 'hd' },
+      { link: 'https://vid/uhd.mp4', width: 3840, quality: null },
+    ],
+  }],
+};
+
+test('Pexels video: the documented /v1 path is tried, and resolution wins over "quality"', async (t) => {
+  t.after(() => { delete process.env.PEXELS_API_KEY; });
+  process.env.PEXELS_API_KEY = 'pexels-test-key';
+  const stub = stubFetch([['api.pexels.com/v1/videos/search', PEXELS_VID_WIDE]]);
+  const hits = await searchVideos('ocean', stub);
+  assert.equal(hits[0].url, 'https://vid/uhd.mp4',
+    'the widest file wins even when its "quality" is null, as the docs warn it can be');
+  assert.equal(hits[0].source, 'Pexels');
+});
+
+test('Pexels video: when /v1 returns nothing, the other documented path is tried', async (t) => {
+  t.after(() => { delete process.env.PEXELS_API_KEY; });
+  process.env.PEXELS_API_KEY = 'pexels-test-key';
+  const stub = stubFetch([
+    ['api.pexels.com/v1/videos/search', { videos: [] }],
+    ['api.pexels.com/videos/search', PEXELS_VID_WIDE],
+  ]);
+  const hits = await searchVideos('ocean', stub);
+  assert.equal(hits[0].source, 'Pexels');
+  assert.ok(stub.seen.some((u) => u.includes('api.pexels.com/videos/search')), 'the fallback path was reached');
+});
+
+test('Pixabay video takes its thumbnail from the API, not from a guessed CDN', () => {
+  const [vid] = parsePixabay({
+    hits: [{
+      pageURL: 'https://pixabay.com/videos/2/', tags: 'forest', user: 'Bo',
+      picture_id: '123',
+      videos: { medium: { url: 'https://pix/vid.mp4', thumbnail: 'https://pix/thumb.jpg' } },
+    }],
+  }, 'video');
+  assert.equal(vid.thumb, 'https://pix/thumb.jpg', 'the documented per-rendition thumbnail');
+  assert.ok(!String(vid.thumb).includes('vimeocdn'), 'no invented Vimeo URL');
 });

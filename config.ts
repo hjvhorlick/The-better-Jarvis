@@ -227,11 +227,15 @@ export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
  * Neither is required. With no key at all, image search falls back to Wikimedia
  * Commons and Openverse, which need nothing — so a picture is always findable.
  */
-export type ImageService = 'pexels' | 'pixabay';
+export type ImageService = 'pexels' | 'pixabay' | 'jamendo';
 
 const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
   pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
   pixabay: { env: 'PIXABAY_API_KEY', field: 'pixabay_api_key', label: 'Pixabay', signup: 'https://pixabay.com/api/docs/' },
+  // MUSIC. Neither Pexels nor Pixabay serves audio through its public API, so
+  // this is the one that does: Jamendo v3 is documented, free, and every track
+  // is Creative Commons with its own licence named in the response.
+  jamendo: { env: 'JAMENDO_CLIENT_ID', field: 'jamendo_client_id', label: 'Jamendo', signup: 'https://developer.jamendo.com/v3.0/docs' },
 };
 
 export interface ServiceKeyInfo {
@@ -282,7 +286,11 @@ export function resolveImageServiceKey(service: ImageService): ServiceKeyInfo {
 
 /** Both image-service keys, for Settings and for the search engine's order. */
 export function resolveImageServiceKeys(): Record<ImageService, ServiceKeyInfo> {
-  return { pexels: resolveImageServiceKey('pexels'), pixabay: resolveImageServiceKey('pixabay') };
+  return {
+    pexels: resolveImageServiceKey('pexels'),
+    pixabay: resolveImageServiceKey('pixabay'),
+    jamendo: resolveImageServiceKey('jamendo'),
+  };
 }
 /** The optional second key, the fallback. */
 export function resolveGeminiKey2(): KeyInfo { return resolveKeySlot(2); }

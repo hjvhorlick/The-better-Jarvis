@@ -77,6 +77,7 @@ import { ResearchTaskManager, ResearchTasksError } from './research/tasks.js';
 import { ResearchWorkflowError, runResearchWorkflow, MAX_RESEARCH_QUESTION_CHARS } from './research/workflow.js';
 import { buildFollowupPrompt, groundingToInputs } from './research/report.js';
 import { parseResearchIntent } from './research/intent.js';
+import { isSafePublicHttpUrl } from './research/fetch.js';
 import type { ResearchDocument, ResearchTaskStatus } from './research/types.js';
 
 // The port is fixed at 3000 in normal use; the harness sets
@@ -3241,6 +3242,64 @@ app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {
     res.json({ ok: true, ...page, quotaUsed: false });
   } catch (err) {
     res.status(502).json({ ok: false, error: `That page could not be read: ${explainFetchError(err)}` });
+  }
+});
+
+/**
+ * Media proxy. Pixabay's API terms forbid hot-linking its image URLs and ask for
+ * results to be cached for 24 hours; Pexels asks for a prominent link back. So
+ * the page loads media from HERE, not from the stock host directly — which also
+ * keeps a source's own rate limits and referrer rules out of the browser.
+ *
+ * The destination is checked with the same public-address rule as the rest of
+ * the fetcher, so this cannot be pointed at a private network, and the response
+ * is size-capped rather than streamed without limit.
+ */
+const MEDIA_PROXY_MAX_BYTES = 25 * 1024 * 1024;
+app.get('/api/web/file', requireAuth, async (req: Request, res: Response) => {
+  const url = boundedQuery(req, 'url', 2000);
+  if (!url) { res.status(400).json({ error: 'Give me the address of the file.' }); return; }
+  if (!/^https?:\/\//i.test(url)) { res.status(400).json({ error: 'Only http and https files can be fetched.' }); return; }
+  try {
+    if (!await isSafePublicHttpUrl(url)) {
+      res.status(403).json({ error: 'That address is on a private network, so it was not fetched.' });
+      return;
+    }
+  } catch (err) {
+    res.status(502).json({ error: `That address could not be checked: ${explainFetchError(err)}` });
+    return;
+  }
+  try {
+    const upstream = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(20_000) });
+    if (!upstream.ok || !upstream.body) {
+      res.status(502).json({ error: `The source answered HTTP ${upstream.status} for that file.` });
+      return;
+    }
+    res.setHeader('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+    // Pixabay asks for 24-hour caching; the same is simply good manners here.
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    const length = upstream.headers.get('content-length');
+    if (length) res.setHeader('Content-Length', length);
+    let seen = 0;
+    const reader = upstream.body.getReader();
+    const pump = async (): Promise<void> => {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        seen += value.byteLength;
+        if (seen > MEDIA_PROXY_MAX_BYTES) {
+          await reader.cancel();
+          res.destroy(new Error('that file is larger than the 25 MB proxy limit'));
+          return;
+        }
+        res.write(Buffer.from(value));
+      }
+      res.end();
+    };
+    await pump();
+  } catch (err) {
+    if (!res.headersSent) res.status(502).json({ error: `That file could not be fetched: ${explainFetchError(err)}` });
+    else res.destroy();
   }
 });
 
