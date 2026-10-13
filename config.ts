@@ -857,8 +857,11 @@ function readOfflineOverride(): { override: boolean | null; at: string | null } 
   }
 }
 
+/** The owner's own switch, with the honest sentence that goes with the result. */
+export type OfflineSwitchResult = OfflineSnapshot & { message: string };
+
 /** Switch the app offline (or back online) by hand. `null` returns to automatic. */
-export function setOfflineMode(on: boolean | null): OfflineSnapshot {
+export function setOfflineMode(on: boolean | null): OfflineSwitchResult {
   try {
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
     if (on === null) {
@@ -870,14 +873,19 @@ export function setOfflineMode(on: boolean | null): OfflineSnapshot {
     console.warn('[config] the offline switch could not be saved:', err instanceof Error ? err.message : err);
   }
   const snapshot = offlineSnapshot();
-  const said = on === null
-    ? 'The offline switch is back to automatic: Google\'s own state decides.'
-    : on
-      ? 'OFFLINE by your own switch — local only, nothing will be fetched from the internet until you switch it back.'
-      : 'Online again: the keys will be used as soon as Google accepts them.';
+  // The switch is only ever the owner's half of the decision: it can force
+  // offline, but it cannot conjure a key or lift Google's 429. So the words
+  // follow the state that was actually measured, never a promise.
+  const said = on === true
+    ? 'OFFLINE by your own switch — local only, nothing will be fetched from the internet until you switch it back.'
+    : on === false && snapshot.offline
+      ? `The switch is back to automatic, but I am still offline — ${snapshot.why}${snapshot.reason === 'google-stopped' ? ' until local midnight' : ''}. The keys are used again the moment that lifts.`
+      : on === false
+        ? 'Online again: the keys will be used as soon as Google accepts them.'
+        : 'The offline switch is back to automatic: Google\'s own state decides.';
   console.warn(`[JARVIS] ${said}`);
   emit({ kind: 'offline', offline: snapshot.offline, reason: snapshot.reason, message: `${said} ${snapshot.summary}` });
-  return snapshot;
+  return { ...snapshot, message: said };
 }
 
 /** The app's connectivity state right now, and what it means for each feature. */
@@ -891,15 +899,16 @@ export function offlineSnapshot(): OfflineSnapshot {
   if (override === true) {
     reason = 'manual';
     why = 'you switched the app offline yourself';
-  } else if (override !== false && quota.stoppedByGoogle) {
+  } else if (quota.stoppedByGoogle) {
     reason = 'google-stopped';
     const stops = [quota.googleStopped[1], quota.googleStopped[2]].filter(Boolean) as StopRecord[];
     since = stops.map((s) => s.at).sort().pop() || null;
     const which = [1, 2].filter((slot) => quota.googleStopped[slot as KeySlot]);
     why = `Google answered 429 for ${which.length === 2 ? 'both keys' : `key ${which[0]}`} — its own quota, not this app's count`;
-  } else if (override !== false && !hasKey) {
+  } else if (!hasKey) {
     reason = 'no-key';
     why = 'no Gemini key is set on this computer';
+    since = null;                                  // not a moment — a key that is missing
   }
   const offline = reason !== null;
   const summary = offline

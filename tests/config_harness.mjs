@@ -770,6 +770,13 @@ function freePort() {
     ok('offline: the terminal announced it once, as a warning not a block', /OFFLINE — local only/.test(spent.log()) && /This is a warning, not a block/.test(spent.log()), (spent.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 130));
     const who = await post(spent, '/api/command', { text: 'are you offline' });
     ok('offline: asking says so plainly, with what still works', /OFFLINE/.test(String(who.body.reply)) && /Still working/.test(String(who.body.reply)), String(who.body.reply).slice(0, 100));
+    // The owner's switch is only half the decision: it cannot lift Google's 429.
+    // (It used to — "come back online" reported ONLINE while both keys were
+    // still stopped, so the next question was sent, 429'd, and the app kept
+    // claiming to be online.)
+    const undo = await post(spent, '/api/offline', { on: false });
+    ok('offline: "come back online" cannot undo Google\'s 429', undo.body.offline === true && undo.body.reason === 'google-stopped', `${undo.body.offline} / ${undo.body.reason}`);
+    ok('offline: …and says so instead of promising the keys', /still offline/.test(String(undo.body.message)) && /midnight/.test(String(undo.body.message)), String(undo.body.message).slice(0, 110));
   } finally { await spent.stop(); }
 
   // (b) The owner's own switch: offline on purpose, then back — no quota involved.
@@ -803,6 +810,22 @@ function freePort() {
     ok('offline from boot: …and no call is made', /offline/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
     ok('offline from boot: the terminal said so at startup', /OFFLINE — local only/.test(boot.log()), (boot.log().match(/.*OFFLINE — local only.*/) || [''])[0].slice(0, 110));
   } finally { await boot.stop(); }
+
+  // (d) No key at all. The switch cannot invent one: "come back online" must
+  // keep reporting offline, or the page would show Online while every question
+  // is answered from this computer.
+  const noKey = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'offline-no-key', writeConfigFile: false });
+  try {
+    const state = await get(noKey, '/api/offline');
+    ok('no key: the app says offline, not broken', state.body.offline === true && state.body.reason === 'no-key', `${state.body.offline} / ${state.body.reason}`);
+    const chat = await post(noKey, '/api/command', { text: 'explain how a transistor works' });
+    ok('no key: …and answers from this computer instead of failing', /offline/i.test(String(chat.body.reply)) && noKey.stub.calls.length === 0, `stub calls=${noKey.stub.calls.length}`);
+    const undo = await post(noKey, '/api/offline', { on: false });
+    ok('no key: "come back online" cannot invent a key', undo.body.offline === true && undo.body.reason === 'no-key', `${undo.body.offline} / ${undo.body.reason}`);
+    ok('no key: …and the switch says so plainly', /still offline/.test(String(undo.body.message)), String(undo.body.message).slice(0, 110));
+    const still = await get(noKey, '/api/offline');
+    ok('no key: the page banner would still read Local only', still.body.offline === true, `${still.body.offline}`);
+  } finally { await noKey.stop(); }
 }
 
 /* ── 6. Settings → "The Brain" and the voice check, in the real page ──────── */
