@@ -27,6 +27,9 @@ import {
   explainBrainFailure,
   onQuotaEvent,
   quotaSnapshot,
+  offlineSnapshot,
+  offlineRefusal,
+  setOfflineMode,
   voiceQuotaSnapshot,
   configStatus,
   readApiConfigFile,
@@ -44,6 +47,7 @@ import {
   type GeminiRaw,
   type KeyInfo,
   type KeySlot,
+  type OfflineSnapshot,
 } from './config.js';
 import { KnowledgeStore } from './knowledge.js';
 import { BrainStore, BrainStoreError, containsSensitiveContent, looksLikeCredentialInput, type BrainTurn } from './brain.js';
@@ -74,7 +78,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-browser-voice-1';
+const SERVER_BUILD = '2026-10-13-offline-mode-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -758,16 +762,48 @@ function standaloneSystemInstruction(contextBlock: string): string {
   return parts.join('\n\n');
 }
 
+// ── OFFLINE: the chat carries on when the internet cannot be used ───────────
+/**
+ * Google's quota running out is not a broken chat, it is a mode. When the app
+ * is offline nothing is fetched from the internet and no call is counted — but
+ * the conversation does not stop. This is the answer for a question that would
+ * otherwise have gone to Gemini: a stored answer if there is one, and if not,
+ * a short honest line saying what happened (a warning, never a block) plus the
+ * two things that still move the work forward on this computer.
+ */
+function offlineChatReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>, state: OfflineSnapshot): string {
+  if (staleKnown) return `${knowledge.describeStale(staleKnown, resolveTextModel().model)}\n\n${state.warning}`;
+  const back = state.reason === 'google-stopped'
+    ? 'The keys come back at local midnight (Google resets its own daily quota then), or sooner if you add a key from another Google account in Settings → "The Brain".'
+    : state.reason === 'no-key'
+      ? `${KEY_HELP} Add one and fresh answers work at once — no restart.`
+      : 'Say "come back online" (or use the switch in Settings) and the keys are used again.';
+  const taught = `Nothing on this computer knows "${trimmed.slice(0, 60)}" yet. Two things still help: teach me with "learn: ${trimmed.slice(0, 40)} = <answer>" and I will answer it for ever with no call at all, or ask again once I am back online.`;
+  return `${state.warning} ${back}\n\n` +
+    `Still working, with no quota and no internet: ${state.works.slice(0, 5).join('; ')}.\n` +
+    `${taught}`;
+}
+
 async function processCommand(userCommand: string, onDelta?: (textSoFar: string) => void,
                               brainTurn: BrainTurn | null = null): Promise<string> {
   const trimmed = userCommand.trim();
   if (!trimmed) return 'Awaiting your command, sir.';
 
   const lower = trimmed.toLowerCase();
-  if (brainTurn?.clarification) return brainTurn.clarification;
+  // A topic clarification ("which saved topic should I resume?") is local and
+  // free, but it must not swallow a local COMMAND: "open the files room" also
+  // reads as "switch to <the files room>", and the room switch is the thing the
+  // owner actually asked for. The clarification is therefore answered only once
+  // nothing local has matched — just before the AI section, where it still
+  // saves the Gemini call it was written to save.
   if (looksLikeCredentialInput(trimmed)) return 'That message appears to contain a password, token, key, or other credential. I did not send it to Gemini or save it to memory; remove the value and resend if you intended a different question.';
   const studioIntent = parseStudioCommand(trimmed);
   if (studioIntent) {
+    // A video script is written by Gemini, so it is one of the things that
+    // needs the internet: refused up front while offline rather than after a
+    // doomed call.
+    const offlineNow = offlineSnapshot();
+    if (offlineNow.offline) return offlineRefusal('Writing that video script');
     try {
       const result = await executeStudioCommand(studioIntent, {
         store: videoProjectStore,
@@ -859,6 +895,10 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   );
   if (picMatch) {
     const subject = picMatch[1].trim();
+    // A picture is drawn by a Gemini model, so it needs the internet: refused
+    // up front while offline instead of after a doomed call.
+    const offlineNow = offlineSnapshot();
+    if (offlineNow.offline) return offlineRefusal('Making that picture');
     try {
       const img = await makeAiImage(subject);
       if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -1003,6 +1043,11 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   const researchIntent = parseResearchIntent(trimmed);
   if (researchIntent?.kind === 'clarify') return 'What would you like me to research? Give me a specific question or topic; I have not searched the web yet.';
   if (researchIntent?.kind === 'research') {
+    // Internet Research is the one feature that is ONLY the internet: while
+    // offline it is refused before a task is even queued, so nothing claims a
+    // search that cannot happen.
+    const offlineNow = offlineSnapshot();
+    if (offlineNow.offline) return offlineRefusal('Internet Research');
     if (!resolveGeminiKey().key) return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; I have not searched the web.';
     try {
       const task = researchTasks.start(researchIntent.question, null, brainTurn?.topic_id || '');
@@ -1151,6 +1196,11 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     return open ? 'The tools for this room are out, sir — the room itself stays clear.' : 'Tools away, sir.';
   }
 
+  // ── Nothing local matched, so the topic question is answered here ────────
+  // (Moved down from the top of this function: a local command must win over a
+  //  topic clarification, and the clarification still saves the Gemini call.)
+  if (brainTurn?.clarification) return brainTurn.clarification;
+
   // ── Does this need the AI at all? ────────────────────────────────────────
   // The owner's rule: the AI is for knowledge, research and conversation. A
   // command that asks the COMPUTER to do something it has no local tool for is
@@ -1191,6 +1241,40 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     const target = /(file|tree|folder)/.test(which) ? 'win-tree' : /setting/.test(which) ? 'win-settings' : /(telemetry|diagnostic)/.test(which) ? 'win-telemetry' : 'win-chat';
     broadcast({ type: 'ui_control', action: 'close-window', window: target });
     return 'Done, sir.';
+  }
+
+  // ── The offline switch, by voice or chat: local, free, no AI ─────────────
+  // "go offline" keeps everything on this computer until "come back online".
+  // Useful when the owner wants no internet traffic at all, and the honest
+  // counterpart to the automatic offline Google's 429 forces.
+  if (/\b(?:go|switch|stay|turn)\s+(?:yourself\s+)?offline\b|\boffline mode\b|\blocal only\b/i.test(lower)) {
+    const state = setOfflineMode(true);
+    broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
+    return `Offline, sir — everything stays on this computer and nothing is fetched from the internet until you say "come back online". The chat and every local feature keep working: ${state.works.slice(0, 5).join('; ')}.`;
+  }
+  if (/\b(?:come|go|switch|turn)\s+(?:yourself\s+)?back\s+online\b|\b(?:go|switch|turn)\s+online\b/i.test(lower)) {
+    const state = setOfflineMode(null);
+    broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
+    return state.offline
+      ? `The switch is back to automatic, sir, but I am still offline — ${state.why}. ${state.summary}`
+      : `The switch is back to automatic and I am online, sir — the keys will be used as soon as Google accepts them, and local answers are still tried first so most work costs nothing.`;
+  }
+  if (/\b(?:are you|am i)\s+(?:offline|online)\b|\boffline status\b|\bconnectivity\b/i.test(lower)) {
+    const state = offlineSnapshot();
+    return state.offline
+      ? `${state.summary} Still working: ${state.works.slice(0, 4).join('; ')}. Not available while offline: ${state.refused.slice(0, 3).join('; ')}.`
+      : `I am online, sir. ${state.summary} Today: ${quotaSnapshot().summary}`;
+  }
+
+  // ── OFFLINE GATE: no key, Google's quota spent, or the owner's switch ─────
+  // The question would have gone to Gemini. While offline it does not: the app
+  // answers from this computer and says so in one line. This is the difference
+  // between "the chat stopped" and "the chat went offline" — nothing is fetched,
+  // nothing is counted, and the conversation carries on.
+  const offline = offlineSnapshot();
+  if (offline.offline) {
+    console.log(`[JARVIS] OFFLINE (${offline.reason}) — answering “${trimmed.slice(0, 50)}” from this computer; no call sent, nothing counted.`);
+    return offlineChatReply(trimmed, staleKnown, offline);
   }
 
   const ai = brainCaller();
@@ -1239,6 +1323,13 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       if (err instanceof BrainError) {
         console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
         noteBrainHealth(false);
+        // Google's quota (429), a refused key, or the offline switch: the app is
+        // OFFLINE from here on, and a 429 is a WARNING, not a dead end. The full
+        // diagnosis stays in the server log, Settings and Brain Check; the chat
+        // gets a local answer instead of a wall of error text.
+        if (err.code === 'rate-limited' || err.code === 'google-stopped' || err.code === 'offline' || err.code === 'no-key') {
+          return offlineChatReply(trimmed, staleKnown, offlineSnapshot());
+        }
         // A stored answer from an earlier model, said plainly to be out of date, beats
         // silence — but it never replaces a call that could have been made.
         if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
@@ -1381,14 +1472,38 @@ onQuotaEvent((event) => {
     ? `Heads-up: ${event.message}`
     : event.kind === 'unreadable'
       ? `Heads-up: ${event.message}`
-      : event.switchedTo
-        ? `Key switch: ${event.message}`
-        : `Google has stopped us: ${event.message}`;
+      : event.kind === 'offline'
+        ? `${event.offline ? 'OFFLINE' : 'Back online'}: ${event.message}`
+        : event.switchedTo
+          ? `Key switch: ${event.message}`
+          : `Google has stopped us: ${event.message}`;
   const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
   messageHistory.push(line);
   saveHistory();
   broadcast(line);
+  if (event.kind === 'key-stopped' && !event.switchedTo) announceOfflineChange();
 });
+
+/**
+ * One announcement in the terminal AND the dialogue when the app crosses into
+ * or out of offline mode, so the owner is told once, clearly — a warning, never
+ * a wall of error text on every following message.
+ */
+let announcedOffline: boolean | null = null;
+function announceOfflineChange(): void {
+  const state = offlineSnapshot();
+  if (announcedOffline === state.offline) return;
+  announcedOffline = state.offline;
+  const text = state.offline
+    ? `OFFLINE — local only (${state.why}). The chat keeps working and nothing is fetched from the internet${state.reason === 'google-stopped' ? ' until local midnight' : ''}. This is a warning, not a block: every local feature still works, and no call is counted while offline.`
+    : 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
+  console.warn(`[JARVIS] ${text}`);
+  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
+  messageHistory.push(line);
+  saveHistory();
+  broadcast(line);
+  broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
+}
 
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Send current status
@@ -2149,6 +2264,13 @@ app.get('/api/research/tasks', requireAuth, (req: Request, res: Response) => {
 });
 
 app.post('/api/research/tasks', requireAuth, (req: Request, res: Response) => {
+  // Internet Research is the internet: while offline it is refused before a
+  // task is queued, so nothing ever claims a search that cannot happen.
+  const offlineNow = offlineSnapshot();
+  if (offlineNow.offline) {
+    res.status(503).json({ ok: false, error: offlineRefusal('Internet Research'), offline: offlineNow });
+    return;
+  }
   if (!resolveGeminiKey().key) {
     res.status(503).json({ ok: false, error: 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.' });
     return;
@@ -2214,6 +2336,12 @@ app.patch('/api/research/reports/:id', requireAuth, (req: Request, res: Response
 app.post('/api/research/reports/:id/update', requireAuth, (req: Request, res: Response) => {
   const report = researchStore.get(req.params.id);
   if (!report) { res.status(404).json({ ok: false, error: 'Saved research report not found.' }); return; }
+  // Updating a report runs a fresh grounded search, so it needs the internet.
+  const offlineNow = offlineSnapshot();
+  if (offlineNow.offline) {
+    res.status(503).json({ ok: false, error: offlineRefusal('Updating that research report'), offline: offlineNow });
+    return;
+  }
   if (!resolveGeminiKey().key) {
     res.status(503).json({ ok: false, error: 'Updating research needs the existing Gemini API key. The saved report is unchanged.' });
     return;
@@ -2245,6 +2373,13 @@ app.post('/api/research/reports/:id/followup', requireAuth, async (req: Request,
   const question = typeof req.body?.question === 'string' ? req.body.question.trim() : '';
   if (question.length < 5 || question.length > 1_000 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(question)) {
     res.status(400).json({ ok: false, error: 'Enter a follow-up between 5 and 1,000 characters.' });
+    return;
+  }
+  // A follow-up is answered by a Gemini model over the saved report, so it
+  // needs the internet even though no new search is run.
+  const offlineNow = offlineSnapshot();
+  if (offlineNow.offline) {
+    res.status(503).json({ ok: false, error: offlineRefusal('Answering that follow-up'), offline: offlineNow });
     return;
   }
   try {
@@ -2813,6 +2948,13 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
     res.status(400).json({ error: 'Say what the picture should be.' });
     return;
   }
+  // A picture is drawn by a Gemini model: refused up front while offline, with
+  // the reason, instead of after a doomed call.
+  const offlineNow = offlineSnapshot();
+  if (offlineNow.offline) {
+    res.status(503).json({ error: offlineRefusal('Making that picture'), offline: offlineNow });
+    return;
+  }
   try {
     const img = await makeAiImage(
       prompt.trim(),
@@ -2860,6 +3002,10 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
     // whether the local voice service is there as an alternative, and why not
     // when it is not.
     voiceLocal: voiceLocalInfo(),
+    // Whether the app is OFFLINE — Google's quota spent, no key, or the owner's
+    // own switch — and what that means for each feature. The page shows this as
+    // a banner, so "the chat is answering from this computer" is never a guess.
+    offline: offlineSnapshot(),
     // The two budgets, both visible in Settings → Voice: the brain's and the
     // voice's own. Speaking can never starve the answers.
     brain: brain.status(),
@@ -2900,7 +3046,28 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     userName: status.names.user,
     namesSource: status.names.source,
     quota: status.quota,
+    // Whether the app is offline (Google's quota spent, no key, or the owner's
+    // switch), so Settings can say it plainly next to the key and the count.
+    offline: offlineSnapshot(),
   });
+});
+
+// ── The offline switch ──────────────────────────────────────────────────────
+// GET  /api/offline          -> the state, why, and what works / is refused
+// POST /api/offline {on}     -> on: true = stay offline, false = stay online,
+//                               omitted/null = let Google's own state decide.
+// The switch is remembered in runtime/offline.json, so a deliberate "stay on
+// this computer today" survives a restart.
+app.get('/api/offline', requireAuth, (_req: Request, res: Response) => {
+  res.json({ ok: true, ...offlineSnapshot(), quota: quotaSnapshot() });
+});
+
+app.post('/api/offline', requireAuth, (req: Request, res: Response) => {
+  const raw = req.body?.on;
+  const on = raw === true || raw === 'true' || raw === 1 ? true : raw === false || raw === 'false' || raw === 0 ? false : null;
+  const state = setOfflineMode(on);
+  broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
+  res.json({ ok: true, ...state, quota: quotaSnapshot() });
 });
 
 // POST /api/settings/gemini-key -> save the owner's key where the app reads it
@@ -2981,6 +3148,10 @@ app.get('*all', (req: Request, res: Response) => {
 // Start server
 server.listen(PORT, HOST, () => {
   console.log(`[JARVIS] Core system running on http://${HOST}:${PORT}`);
+  // Say the connectivity state at boot, so an owner who restarts JARVIS after
+  // Google's quota ran out is told at once that it is offline and local-only —
+  // rather than discovering it on the first question.
+  announceOfflineChange();
   startLocalVoice();
   // Ask the voice service what it can really do: once shortly after it starts
   // (models load in the background), then on a slow timer, so a model that is
