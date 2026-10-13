@@ -2293,10 +2293,13 @@
     // The rows come from GET /api/web/sources, which reads the same registry the
     // search engine uses. So adding a supplier on the server adds its row here,
     // and this page never has to be edited again to take a new key.
-    const KIND_WORDS = { image: 'pictures', video: 'video', audio: 'sound', book: 'books' };
+    // The words for each kind come from the server with the supplier list. This
+    // page used to keep its own copy, and that copy was missing `model`, so the
+    // suppliers of 3D models were described as supplying "model".
+    let KIND_WORDS = {};
 
     function supplierRow(source) {
-      const covers = source.kinds.map((k) => KIND_WORDS[k] || k).join(', ');
+      const covers = source.kinds.map((k) => KIND_WORDS[k] || k).join(', ');   // a word never sent falls back to the kind itself
       const wrap = document.createElement('div');
       wrap.style.cssText = 'margin-top: 8px; padding: 8px 10px; border: 1px solid var(--glass-border); border-radius: 10px; background: rgba(0,0,0,0.22);';
       const head = document.createElement('div');
@@ -2350,6 +2353,9 @@
           return;
         }
         box.textContent = '';
+        if (info.kindWords && typeof info.kindWords === 'object') {
+          KIND_WORDS = info.kindWords;
+        }
         IMAGE_KEY_LABELS = {};
         for (const source of info.sources) {
           IMAGE_KEY_LABELS[source.id] = source.label;

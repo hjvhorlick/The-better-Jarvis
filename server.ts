@@ -61,6 +61,7 @@ import {
   missingKeysFor,
   readUrl,
   MEDIA_KINDS,
+  MEDIA_KIND_WORDS,
   searchAudio,
   searchBooks,
   searchImages,
@@ -3333,7 +3334,8 @@ app.get('/api/web/sources', requireAuth, (_req: Request, res: Response) => {
   // Places are a separate registry because they answer with coordinates and
   // addresses rather than a file, but they belong in the same list: they are
   // suppliers, and the owner loads their keys in the same place.
-  res.json({ ok: true, kinds: MEDIA_KINDS, coverage, sources, placeSources: describePlaceSources(), quotaUsed: false });
+  // kindWords ships with the list so the page never keeps its own copy of them.
+  res.json({ ok: true, kinds: MEDIA_KINDS, kindWords: MEDIA_KIND_WORDS, coverage, sources, placeSources: describePlaceSources(), quotaUsed: false });
 });
 
 app.get('/api/web/read', requireAuth, async (req: Request, res: Response) => {

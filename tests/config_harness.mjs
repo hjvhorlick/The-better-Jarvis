@@ -1379,6 +1379,20 @@ function freePort() {
     ok('supplier keys: every keyed supplier has a row in the registration area',
       sources.status === 200 && missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${ids.length} rows`);
 
+    // Every kind must have a word to be spoken about by. The page used to keep
+    // its own copy of these, and that copy was missing `model`, so the two
+    // suppliers of 3D models were described as supplying "model". The words now
+    // come from the server with the list, and the page keeps no copy.
+    const words = sources.body.kindWords || {};
+    const kinds = sources.body.kinds || [];
+    const wordless = kinds.filter((k) => !words[k]);
+    ok('supplier keys: every kind has a word in the interface', wordless.length === 0 && words.model === '3D models',
+      wordless.length ? `no word for: ${wordless.join(', ')}` : `${Object.keys(words).length} kinds described`);
+    const pageHtml = await (await fetch(srv.url('/'))).text();
+    ok('supplier keys: …and the page takes them from the server rather than its own copy',
+      /KIND_WORDS = info\.kindWords/.test(pageHtml) && !/KIND_WORDS = \{ image: 'pictures'/.test(pageHtml),
+      /KIND_WORDS = \{ image:/.test(pageHtml) ? 'the hardcoded copy is still there' : 'page reads the server');
+
     // The page must draw a row for each of those, place suppliers included.
     const html = await (await fetch(srv.url('/'))).text();
     ok('supplier keys: the page renders the place suppliers too',
