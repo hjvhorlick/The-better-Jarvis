@@ -2229,15 +2229,42 @@
       const body = Object.assign(enc ? { enc } : { text: txt }, { requestId });
       // Replies normally arrive on the websocket as they are written. If that
       // socket is down (a proxy that drops upgrades, a sleeping tab), the reply
-      // also comes back in this response — and the id it carries keeps the two
-      // paths from ever producing two bubbles or two voices for one command.
+      // also comes back in this response. Never turn an HTTP error into silence.
       const socketWasUp = (typeof ws !== 'undefined') && ws && ws.readyState === WebSocket.OPEN;
+      const controller = new AbortController();
+      let finished = false;
+      const requestTimer = setTimeout(() => controller.abort(), 90000);
+      const reportFailure = (message) => {
+        if (finished || renderedReplies.has(requestId)) return;
+        finished = true;
+        appendChat('system', message || 'I could not get a reply from the assistant service. Please try again. If this keeps happening, the JARVIS server may need attention.');
+      };
       _authFetch('/api/command', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      }).then((r) => (r.ok ? r.json() : null)).then((data) => {
-        if (!data || !data.reply) return;
+        body: JSON.stringify(body),
+        signal: controller.signal
+      }).then(async (r) => {
+        if (!r.ok) {
+          let detail = '';
+          try {
+            const problem = await r.json();
+            detail = problem && (problem.error || problem.message) ? String(problem.error || problem.message) : '';
+          } catch (_) {}
+          throw new Error('HTTP ' + r.status + (detail ? ': ' + detail : ''));
+        }
+        return r.json();
+      }).then((data) => {
+        if (!data || !data.reply) {
+          // The websocket may still be processing this request. If it does not
+          // finish, report the missing reply rather than leaving the user waiting.
+          setTimeout(() => {
+            if (!renderedReplies.has(requestId)) reportFailure('The assistant service received the message but returned no reply. Please try again.');
+          }, socketWasUp ? 8000 : 0);
+          return;
+        }
+        finished = true;
+        clearTimeout(requestTimer);
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
         if (renderedReplies.has(id)) return;        // the socket already completed it
@@ -2256,8 +2283,7 @@
           speakReply(data.reply, id);
         } else {
           // The socket was open when sent, but a proxy/reconnect can still drop
-          // its frames. Give it a brief chance; if nothing claimed the id, HTTP
-          // becomes the fallback instead of silently losing the answer.
+          // its frames. Give it a brief chance; HTTP becomes the fallback.
           setTimeout(() => {
             if (renderedReplies.has(id)) return;
             const lateLive = liveStreamBubble(id);
@@ -2273,12 +2299,17 @@
             renderedReplies.set(id, Date.now());
           }, 700);
         }
-      }).catch(() => {
-        if (!socketWasUp) {
-          const id = requestId;
-          if (!liveStreamBubble(id)) appendChat('system', 'The server did not answer — is JARVIS still running on port 3000?');
-        }
-      });
+      }).catch((err) => {
+        clearTimeout(requestTimer);
+        console.warn('[chat] command request failed:', err && err.message ? err.message : err);
+        const detail = err && err.name === 'AbortError'
+          ? 'The assistant took too long to respond (90 seconds). Please try again.'
+          : 'The assistant request failed' + (err && err.message ? ' (' + err.message + ')' : '') + '. Please try again.';
+        // If the websocket was connected, allow its in-flight reply a short
+        // window before displaying an error; a successful socket reply wins.
+        if (socketWasUp) setTimeout(() => reportFailure(detail), 8000);
+        else reportFailure(detail);
+      }).finally(() => clearTimeout(requestTimer));
     }
     window.sendCommand = sendCommand;
 
