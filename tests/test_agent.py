@@ -125,7 +125,8 @@ def test_a_real_429_goes_offline_and_the_chat_carries_on(isolated, monkeypatch):
     # The count is NOT pretended to be used up — it was Google, not this app.
     assert a.budget.snapshot()["used"] == 1
     second = a.agent.handle("tell me another joke")
-    assert second["source"] == "local" and "local midnight" in second["reply"]
+    # The reply promises GOOGLE's reset — midnight Pacific — not the app's local midnight.
+    assert second["source"] == "local" and "midnight Pacific" in second["reply"]
     assert len(models.calls) == 1                         # no further call was sent
     # …and local work carries on regardless.
     assert a.agent.handle("what time is it")["source"] == "local"

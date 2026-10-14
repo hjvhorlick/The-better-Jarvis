@@ -5,3 +5,4 @@ google-genai>=2.25.0
 #  a part's speech_metadata and the model returns a complete WAV. The app was
 #  developed and tested against 2.29.0 — see requirements.lock.txt.)
 httpx>=0.27
+tzdata; sys_platform == 'win32'  # zoneinfo: America/Los_Angeles — Google's quota reset day

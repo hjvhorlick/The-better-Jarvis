@@ -406,7 +406,8 @@ def script_from_brief(chat, budget, brief: str, seconds: int, aspect: str) -> di
     if budget.offline or not budget.try_spend():
         raise MediaError(f"Writing that script needs the internet, and the app is offline — "
                          f"{budget.offline_reason()}. Nothing was fetched and nothing was counted. "
-                         "It comes back at local midnight, or as soon as a working key is set.")
+                         "It comes back at midnight Pacific — Google's own quota reset — or as "
+                         "soon as a working key is set.")
     try:
         raw = chat.complete(
             prompt=(f"Write a {seconds}-second short video script, {aspect} framing, about: {brief}\n\n"

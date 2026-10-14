@@ -424,8 +424,9 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
                 budget.mark_exhausted()
                 raise HTTPException(status_code=429,
                                     detail="Google reports its quota is reached, so the app is now "
-                                           "OFFLINE (local only) until local midnight. This is Google "
-                                           "stopping us, not this app's count. The chat keeps working.")
+                                           "OFFLINE (local only) until midnight Pacific — Google's own "
+                                           "quota reset. This is Google stopping us, not this app's "
+                                           "count. The chat keeps working.")
             raise HTTPException(status_code=502, detail=str(exc))
         if warning and isinstance(result, dict):
             result = {**result, "warning": warning}

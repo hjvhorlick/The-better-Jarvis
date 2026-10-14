@@ -4,13 +4,14 @@ These are the owner's rules, and they are the opposite of what this module used
 to do (a hard daily budget that refused calls Google would still have answered):
 
   * the count never refuses a call — past the warning level it only says so;
-  * a real 429 from Google puts the app OFFLINE for the rest of the local day,
-    and offline means "no internet calls", never "no chat";
+  * a real 429 from Google puts the app OFFLINE until Google's own quota
+    resets — midnight Pacific, not this computer's local midnight — and
+    offline means "no internet calls", never "no chat";
   * SUPPER_OFFLINE=1 asks for the same offline mode by hand;
   * a damaged counter file is left alone and blocks nothing.
 """
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -18,13 +19,15 @@ from backend.quota import DailyBudget
 
 
 class Day:
-    """A clock the test can move between days."""
+    """A clock the test can move between days (fixed to UTC, so the Pacific-day
+    arithmetic inside the budget does not depend on the machine running this)."""
 
-    def __init__(self, day=9):
+    def __init__(self, day=9, hour=12):
         self.day = day
+        self.hour = hour
 
     def __call__(self):
-        return datetime(2026, 10, self.day, 12, 0, 0)
+        return datetime(2026, 10, self.day, self.hour, 0, 0, tzinfo=timezone.utc)
 
 
 def test_the_count_never_blocks_a_call_it_only_warns(tmp_path):
@@ -99,14 +102,38 @@ def test_a_real_429_puts_the_app_offline_for_the_day(tmp_path):
     assert saved["google_stopped"]["1"]["reason"] == "quota"
 
 
-def test_offline_ends_on_a_new_local_day(tmp_path):
-    clock = Day(9)
+def test_offline_survives_the_local_midnight_and_ends_at_midnight_pacific(tmp_path):
+    """Google's stop ends on GOOGLE's day: midnight Pacific.
+
+    2026-10-09 12:00 UTC is Pacific 2026-10-09 05:00; rolling this computer's
+    clock into 2026-10-10 01:00 UTC (a new LOCAL day) is still Pacific
+    2026-10-09 18:00 — the stop must NOT end there (that was the bug: resuming
+    hours before Google's quota really resets). Only once the Pacific day turns
+    (2026-10-10 12:00 UTC = Pacific 05:00) do the keys get tried again.
+    """
+    clock = Day(9, hour=12)
     b = DailyBudget(20, path=tmp_path / "q.json", clock=clock)
     b.mark_exhausted()
     assert b.offline is True
-    clock.day = 10
+    clock.day, clock.hour = 10, 1                      # our local day rolled over
+    assert b.snapshot()["used"] == 0                   # the COUNT starts again …
+    assert b.offline is True                           # … but Google's stop stays
+    assert b.try_spend() is False                      # no call may go out yet
+    clock.hour = 12                                    # Pacific day has turned
     assert b.offline is False                          # the keys are tried again
     assert b.try_spend() is True
+
+
+def test_a_stop_survives_a_restart_even_when_the_local_day_changed(tmp_path):
+    path = tmp_path / "q.json"
+    clock = Day(9, hour=12)
+    first = DailyBudget(20, path=path, clock=clock)
+    first.mark_exhausted()
+    clock.day, clock.hour = 10, 1                      # restart after local midnight
+    again = DailyBudget(20, path=path, clock=clock)    # …file still says day 9
+    assert again.offline is True and again.try_spend() is False
+    clock.hour = 12                                    # Pacific day has turned
+    assert again.offline is False
 
 
 def test_offline_survives_a_restart(tmp_path):

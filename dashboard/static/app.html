@@ -1500,7 +1500,7 @@
                  only when Google refuses the first key with a 429 (its quota) or
                  rejects it does the second one take over, for the rest of the
                  local day. Saved as gemini_api_key_2 in the same file. -->
-            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after local midnight. <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after midnight Pacific (Google's own quota reset). <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key2-input" autocomplete="off" spellcheck="false" placeholder="AIza… (second key, from another Google account/project)"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
@@ -1561,9 +1561,9 @@
             <span class="settings-desc" id="image-keys-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
-                 real 429 from Google stops calls, and only until local midnight. -->
+                 real 429 from Google stops calls, and only until midnight Pacific (Google's own quota reset). -->
             <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
-            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until local midnight, and the message then says plainly that Google stopped us.</span>
+            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until midnight Pacific (Google's own quota reset), and the message then says plainly that Google stopped us.</span>
 
             <!-- OFFLINE MODE: when Google's quota is spent the app does not stop,
                  it goes offline and answers from this computer. The switch here
@@ -1573,7 +1573,7 @@
               <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(true)">📴 Go offline (local only)</button>
               <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(null)">🔄 Automatic</button>
             </div>
-            <span class="settings-desc">Offline is a <b>mode, not an error</b>: Google's 429 is only a warning, and the chat never stops. While offline everything on this computer still works (chat, the knowledge base, memory, notes and reminders, the drafting desk, time and arithmetic, diagnostics, the rooms, the files, My Hands, the local voice) and <b>nothing is fetched from the internet</b>. “Automatic” lets Google's own state decide: online while a key is accepted, offline from the moment every key is refused until local midnight. <code>SUPPER_OFFLINE=1</code> does the same from the environment.</span>
+            <span class="settings-desc">Offline is a <b>mode, not an error</b>: Google's 429 is only a warning, and the chat never stops. While offline everything on this computer still works (chat, the knowledge base, memory, notes and reminders, the drafting desk, time and arithmetic, diagnostics, the rooms, the files, My Hands, the local voice) and <b>nothing is fetched from the internet</b>. “Automatic” lets Google's own state decide: online while a key is accepted, offline from the moment every key is refused until midnight Pacific (Google's quota reset). <code>SUPPER_OFFLINE=1</code> does the same from the environment.</span>
           </div>
         </div>
 
@@ -2056,7 +2056,7 @@
         document.getElementById('offline-banner-detail').textContent =
           `The chat keeps working from this computer — ${(state.works || []).slice(0, 4).join(', ')}. ` +
           `Not available while offline: ${(state.refused || []).slice(0, 3).join(', ')}. ` +
-          (state.reason === 'google-stopped' ? 'Calls resume at local midnight.' : '');
+          (state.reason === 'google-stopped' ? 'Calls resume at midnight Pacific (Google\'s own quota reset).' : '');
         const toggle = document.getElementById('offline-banner-toggle');
         // Only the owner's own switch can be switched back from here: when Google
         // is what stopped us, the honest button opens Settings to add a key.
@@ -2153,7 +2153,7 @@
             return `key ${s} stopped by Google at ${hhmm} (${st.reason === 'quota' ? 'a real 429, its quota' : 'it rejected the key'})`;
           });
           const googleLine = q.stoppedByGoogle
-            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at local midnight.'
+            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at midnight Pacific (Google\'s own quota reset).'
             : stops.length ? stops.join('; ') : 'Google has not stopped any key today.';
           const warnLine = q.warnAt > 0
             ? (q.pastWarn ? `⚠ at or past your warning level of ${q.warnAt} (${q.warnSource}) — only a warning, nothing is blocked.` : `Warning level ${q.warnAt} (${q.warnSource}).`)
