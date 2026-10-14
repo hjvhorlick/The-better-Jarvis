@@ -1706,7 +1706,8 @@ function announceOfflineChange(): void {
   const atBoot = announcedOffline === null;
   announcedOffline = state.offline;
   if (state.offline) {
-    console.warn(`[JARVIS] offline (${state.why}).`);
+    // The terminal keeps the full warning, once. The dialogue gets only the short line.
+    console.warn(`[JARVIS] No Gemini right now (${state.why}). This is a warning, not a block: local features and the open web keep working, and no call is counted.`);
     for (let i = messageHistory.length - 1; i >= 0; i--) {
       const m = messageHistory[i];
       if (m.type === 'log' && typeof m.id === 'string' && m.id.startsWith(QUOTA_EXPLAINER_ID)) messageHistory.splice(i, 1);
