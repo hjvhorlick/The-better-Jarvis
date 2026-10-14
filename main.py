@@ -419,7 +419,7 @@ class JarvisLive:
         self._last_user_speech = time.monotonic()  # updated on every user utterance
         self._session_log: list[str] = []          # conversation turns for end-of-session summary
 
-        self._enhanced_live = True  # proactive audio; auto-disabled if the server rejects it
+        self._enhanced_live = False  # proactive audio OFF: JARVIS does not speak unprompted
 
         _base_dir = Path(__file__).resolve().parent
         _inline_names = {t["name"] for t in TOOL_DECLARATIONS}
@@ -1713,7 +1713,7 @@ class JarvisLive:
                     tg.create_task(self._play_audio())
                     tg.create_task(self._run_system_monitor())
                     tg.create_task(self._run_background_monitor())
-                    tg.create_task(self._run_proactive_mode())
+                    pass  # silence check-ins are OFF: JARVIS answers questions, he does not fill silences
                     tg.create_task(self._run_sleep_watch())
                     if self._dashboard:
                         tg.create_task(self._relay_phone_audio())
@@ -1721,7 +1721,7 @@ class JarvisLive:
                     # Morning briefing — fires once per process launch (if enabled).
                     # Skipped in wake-word mode: it comes up asleep, and a briefing
                     # would mean talking while "asleep".
-                    if not self._briefing_sent and get_brief_enabled() and self._awake:
+                    if False and not self._briefing_sent and get_brief_enabled() and self._awake:  # morning briefing OFF: no unprompted speech at launch
                         self._briefing_sent = True
                         tg.create_task(self._send_startup_briefing())
 

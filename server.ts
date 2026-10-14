@@ -1705,8 +1705,6 @@ onQuotaEvent((event) => {
  */
 let announcedOffline: boolean | null = null;
 const QUOTA_EXPLAINER_ID = 'quota-explainer';
-/** Set at boot: the first page that opens hears the explanation once, spoken. */
-let speakExplainerOnNextConnect = false;
 
 /**
  * The complete explanation of the quota and the limits, in Jarvis's own words.
@@ -1733,10 +1731,14 @@ function quotaAndLimitExplanation(): string {
   return parts.join('\n\n');
 }
 
+/** The one line Jarvis gives about being offline. Shown once, never spoken unprompted. */
+const OFFLINE_NOTE = 'I am running offline for now: Gemini is not answering, so I answer from this computer and the open web. Chats keep working. Say "explain the quota" if you want the details.';
+
 /**
  * One announcement when the app crosses into or out of offline mode. Going
- * offline, Jarvis says the full explanation himself (one copy in the dialogue,
- * replacing any older one). Coming back online is a short system notice.
+ * offline, Jarvis mentions it once in the dialogue (replacing any older
+ * mention, and never spoken unprompted). Coming back online is a short system
+ * notice, and starting online is not news at all.
  */
 function announceOfflineChange(): void {
   const state = offlineSnapshot();
@@ -1744,22 +1746,20 @@ function announceOfflineChange(): void {
   const atBoot = announcedOffline === null;
   announcedOffline = state.offline;
   if (state.offline) {
-    console.warn(`[JARVIS] offline (${state.why}) — the quota and limit explanation is in the dialogue.`);
+    console.warn(`[JARVIS] offline (${state.why}).`);
     for (let i = messageHistory.length - 1; i >= 0; i--) {
       const m = messageHistory[i];
       if (m.type === 'log' && typeof m.id === 'string' && m.id.startsWith(QUOTA_EXPLAINER_ID)) messageHistory.splice(i, 1);
     }
     const line: LogMessage = {
       type: 'log', speaker: 'jarvis', id: `${QUOTA_EXPLAINER_ID}-${Date.now()}`,
-      text: quotaAndLimitExplanation(), timestamp: Date.now(),
+      text: OFFLINE_NOTE, timestamp: Date.now(),
     };
     messageHistory.push(line);
     saveHistory();
-    if (atBoot) speakExplainerOnNextConnect = true;
-    broadcast(line);
+    broadcast({ ...line, replay: true });   // shown once; a page open now does not read it aloud
   } else if (!atBoot) {
-    // Starting online is not news; only a real change back online is announced.
-    const text = 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
+    const text = 'Back ONLINE — the Gemini keys are usable again.';
     console.warn(`[JARVIS] ${text}`);
     const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
     messageHistory.push(line);
@@ -1776,10 +1776,8 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Send history (up to 50 items). Marked as a replay so that a page which has
   // just opened never reads the old conversation out loud.
   for (const item of messageHistory.slice(-50)) {
-    const isBootExplainer = speakExplainerOnNextConnect && item.type === 'log' && typeof item.id === 'string' && item.id.startsWith(QUOTA_EXPLAINER_ID);
-    ws.send(JSON.stringify(isBootExplainer ? item : { ...item, replay: true }));
+    ws.send(JSON.stringify({ ...item, replay: true }));
   }
-  speakExplainerOnNextConnect = false;
 
   ws.on('message', async (data: Buffer | string) => {
     try {
