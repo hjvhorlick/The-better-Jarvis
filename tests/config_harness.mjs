@@ -473,7 +473,11 @@ function freePort() {
     const settings = await get(srv, '/api/settings/gemini-key');
     ok('…and Settings agrees there is no key', settings.body.present === false && settings.body.source === null, JSON.stringify({ present: settings.body.present, source: settings.body.source }));
     const greeting = await post(srv, '/api/command', { text: 'hello' });
-    ok('…and an offline greeting stays brief and honest', /no Gemini key is set/.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
+    // The old reply bolted the app's own state onto the greeting
+    // ("…My reasoning core is offline because no Gemini key is set"). The owner
+    // asked for the opposite: a greeting is the whole answer, and the key
+    // status lives in Settings, "are you offline", and the terminal.
+    ok('…and an offline greeting is just the greeting — no status report', /^Good day/.test(String(greeting.body.reply)) && !/no Gemini key is set|reasoning core|offline/i.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
        String(greeting.body.reply));
     const chat = await post(srv, '/api/command', { text: 'what can you tell me offline' });
     // The old reply was a paragraph about being offline and where the key files

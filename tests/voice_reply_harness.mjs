@@ -285,12 +285,14 @@ function decodeWav(b64) {
     ok('…and the honest message names the model that failed',
       /harness-text|gemini-flash-latest/.test(reply.reply || '') && /cannot classify|failed/.test(reply.reply || ''),
       String(reply.reply).slice(0, 140));
-    // Fast must not mean dishonest: a greeting no longer spends a call, so it
-    // cannot discover a broken brain for itself — it must still say so.
+    // Fast must not mean chatty: a greeting no longer spends a call, so it
+    // cannot discover a broken brain for itself — and it does not try. The
+    // greeting is the whole answer; the state of the brain is the brain
+    // check's own business, reported below.
     await get(srv, '/api/brain-check');            // exactly what the page does on load
     const greet = (await post(srv, '/api/command', { text: 'hello' })).body;
-    ok('…and small talk says so briefly, even though it never asked Google',
-      /reasoning core did not answer its last check/.test(greet.reply || '') && String(greet.reply).length < 100,
+    ok('…and small talk stays a greeting, with no commentary about app state',
+      /^Good day[^.]*\.$/.test(String(greet.reply).trim()) && !/reasoning core|did not answer|offline/i.test(String(greet.reply || '')),
       String(greet.reply).slice(0, 120));
     const check = (await get(srv, '/api/brain-check')).body;
     ok('…and the brain check fails with the same honesty', check.ok === false && check.code === 'failed', JSON.stringify({ ok: check.ok, code: check.code, error: String(check.error).slice(0, 60) }));
