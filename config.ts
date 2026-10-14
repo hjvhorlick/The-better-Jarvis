@@ -35,18 +35,15 @@
  *   COUNT  The app COUNTS and WARNS; it never BLOCKS. Every outbound question
  *          adds one unit to runtime/quota.json (total and per key), reset at
  *          local midnight. Past SUPPER_GEMINI_DAILY_WARN (default 20) the
- *          terminal and Settings warn — the call still goes through. The only
- *          thing that stops calls is Google itself: a real 429 marks THAT key
- *          as stopped by Google until midnight Pacific (its own quota reset —
- *          NOT our local midnight: the count and the stop have different
- *          days). When every key we have
- *          is stopped, calls are refused with a message that says Google did
- *          it, not this app. A counter file that cannot be read never blocks
- *          either: the count continues in memory and Settings says the file
- *          could not be read. (The old SUPPER_GEMINI_DAILY_BUDGET block is
- *          gone; if that setting is still present it is read as the warning
- *          level.) The file keeps the {day, used} shape the engine room
- *          reads, with the per-key detail beside it.
+ *          server terminal warns; the page stays focused on chat. This count
+ *          never blocks. A Gemini request is skipped when no key is usable, the
+ *          owner disables Gemini, or Google refuses all configured keys; none
+ *          of those conditions gates chat or separate local/open-web paths. A
+ *          real 429 stops THAT key until Google's Pacific-midnight reset (not
+ *          our local count reset). An unreadable counter never blocks: counting
+ *          continues in memory and the terminal records the failure.
+ *          SUPPER_GEMINI_DAILY_BUDGET is now only a warning level. The file
+ *          keeps the {day, used} shape the engine room reads, with per-key detail.
  *
  * Provenance: written for this project (CC BY-NC 4.0, see CREDITS.md). The
  * settings order, the field names and the quota rules mirror the existing
@@ -62,14 +59,6 @@ export const API_CONFIG_PATH = path.join(REPO_ROOT, 'config', 'api_keys.json');
 export const ENV_FILE = path.join(REPO_ROOT, '.env');
 export const RUNTIME_DIR = path.join(REPO_ROOT, 'runtime');
 export const QUOTA_FILE = path.join(RUNTIME_DIR, 'quota.json');
-/**
- * The voice gets its own counter and its own limit. Speaking is not thinking:
- * a reply is one text call, but reading it out loud is a call per sentence, and
- * the owner wants the server voice on ALL the time. Sharing one budget would
- * mean twenty spoken sentences a day and no answers left — so the two are
- * counted apart, and both are visible in Settings.
- */
-export const VOICE_QUOTA_FILE = path.join(RUNTIME_DIR, 'voice_quota.json');
 export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json');
 
 /**
@@ -105,7 +94,6 @@ export const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
  * answered.)
  */
 export const DEFAULT_DAILY_WARN = 20;
-export const DEFAULT_VOICE_BUDGET = 400;          // spoken sentences a day
 
 // The keys may already be in the shell. Note that before dotenv runs, so the
 // dashboard can say honestly whether a key came from the shell or from ./.env.
@@ -335,7 +323,7 @@ export function resolveKeySlot(slot: KeySlot): KeyInfo {
       tail: value.slice(-4),
       slot,
       detail: slot === 2
-        ? 'read from config/api_keys.json (gemini_api_key_2) — saved by Settings → "The Brain"'
+        ? 'read from config/api_keys.json (gemini_api_key_2) — saved by Settings → Optional Gemini access'
         : 'read from config/api_keys.json (gemini_api_key) — the file the desktop app and every actions/*.py use',
     };
   }
@@ -675,14 +663,14 @@ export async function discoverModels(caller: BrainCaller, kind: 'text' | 'image'
     .map((model) => ({ model, source: 'discovered from your key (ai.models.list() — last resort)' }));
 }
 
-// ── COUNT (the app counts and warns — only Google may stop a call) ──────────
+// ── COUNT (the app warns; provider availability never gates chat) ──────────
 /** Why Google stopped a key today. */
 export interface StopRecord {
   /** ISO time it happened. */
   at: string;
   /** 'quota' = a real 429 from Google; 'key-rejected' = Google refused the key itself. */
   reason: 'quota' | 'key-rejected';
-  /** The short text Google sent, for the terminal and Settings. */
+  /** The short text Google sent, for the terminal and diagnostic API. */
   detail: string;
 }
 
@@ -712,7 +700,7 @@ export interface QuotaSnapshot {
   switchedAt: string | null;
   /** True when a second key is set. */
   hasSecondKey: boolean;
-  /** A plain sentence the terminal and Settings can print. */
+  /** A plain sentence for terminal output and diagnostic API consumers. */
   summary: string;
   source: string;
   note: string;
@@ -927,7 +915,7 @@ function writeBrainCounter(counter: BrainCounter): void {
   }
 }
 
-/** The one-line account of today, for the terminal, Settings and the chat. */
+/** The one-line account of today, for diagnostics and explicit status requests. */
 function summarise(counter: BrainCounter, warn: WarnInfo, active: ActiveKey, hasSecondKey: boolean): string {
   const parts: string[] = [];
   parts.push(`${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today (key 1: ${counter.keys[1]}, key 2: ${counter.keys[2]})`);
@@ -964,36 +952,16 @@ export function quotaSnapshot(): QuotaSnapshot {
     hasSecondKey,
     summary: summarise(counter, warn, active, hasSecondKey),
     source: warn.source,
-    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks; only a real 429 from Google stops calls, and only until Google's own daily quota resets at midnight Pacific. Google's real limit differs by model and project; check AI Studio.",
+    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks a call. Provider calls may be unavailable without a key, when the owner disables Gemini, or when Google refuses every usable key; a real 429 stops a key until Google's Pacific-midnight reset. Google's limit differs by model and project; check AI Studio.",
   };
 }
 
-// ── What happened: the server prints these in the terminal and the dashboard ─
-export type QuotaEvent =
-  | { kind: 'warn'; used: number; warnAt: number; message: string }
-  | { kind: 'unreadable'; message: string }
-  | { kind: 'offline'; offline: boolean; reason: OfflineReason | null; message: string }
-  | { kind: 'key-stopped'; slot: KeySlot; reason: StopRecord['reason']; switchedTo: KeySlot | null; message: string };
-
-let quotaListener: ((event: QuotaEvent) => void) | null = null;
-/** server.ts registers one listener so every event is shown in the terminal AND the dashboard. */
-export function onQuotaEvent(listener: ((event: QuotaEvent) => void) | null): void {
-  quotaListener = listener;
-}
-function emit(event: QuotaEvent): void {
-  try { if (quotaListener) quotaListener(event); } catch { /* a listener must never break a call */ }
-}
-let warnAnnounced = '';
-let unreadableAnnounced = '';
-
 export interface SpendResult {
-  /** False ONLY when the app is offline (Google stopped every key, no key, or the owner's switch). The count never says no. */
+  /** False ONLY when no configured key may be called; chat continues locally. */
   allowed: boolean;
   slot: KeySlot | null;
   snapshot: QuotaSnapshot;
-  /** A warning to show — the call still goes through. */
-  warning: string | null;
-  /** Why the app is offline, when it is. The caller answers locally instead of stopping. */
+  /** Why the provider call is unavailable, when it is. */
   offline: OfflineSnapshot;
 }
 
@@ -1003,38 +971,29 @@ export interface SpendResult {
  * (another model, another thinking setting) do NOT count again, because they
  * fetched no new answer. The one exception is the switch to the second key,
  * see countRetryOnKey(). Local answers never come here at all. This counts
- * and warns; it only refuses when the app is OFFLINE — Google has stopped
- * every key we have for today, no key is set, or the owner switched it off.
- * An offline refusal is not a block on the chat: the caller answers locally
- * and says so in one line. Nothing is counted for a call never made.
+ * and warns; it skips only the Gemini provider call when no configured key may
+ * be used. That does not gate chat or separate local/open-web paths. Nothing is
+ * counted for a provider call that is never made.
  */
 export function spendGeminiCall(): SpendResult {
   const active = resolveActiveKey();
   const offline = offlineSnapshot();
   if (!active.slot || offline.offline) {
-    // Offline: no call is made, so nothing is counted, and the caller answers
-    // from this computer instead of stopping the conversation.
-    return { allowed: false, slot: active.slot, snapshot: quotaSnapshot(), warning: null, offline };
+    // No Gemini call is made, so nothing is counted. The caller decides which
+    // local or open-web path is available; this gate does not stop chat.
+    return { allowed: false, slot: active.slot, snapshot: quotaSnapshot(), offline };
   }
   const counter = readBrainCounter();
   counter.used += 1;
   counter.keys[active.slot] += 1;
   writeBrainCounter(counter);
 
-  const warnings: string[] = [];
   const warn = resolveDailyWarn();
   if (warn.warnAt > 0 && counter.used >= warn.warnAt) {
-    const message = `⚠ ${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today — ${counter.used === warn.warnAt ? 'that reaches' : 'past'} your warning level of ${warn.warnAt} (${warn.source}). The call still goes through: this count never blocks, only Google can.`;
+    const message = `⚠ ${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today — ${counter.used === warn.warnAt ? 'that reaches' : 'past'} your warning level of ${warn.warnAt} (${warn.source}). The call is being sent; this count never blocks it.`;
     console.warn(`[JARVIS] ${message}`);
-    warnings.push(message);
-    if (warnAnnounced !== counter.day) { warnAnnounced = counter.day; emit({ kind: 'warn', used: counter.used, warnAt: warn.warnAt, message }); }
   }
-  if (counter.unreadable) {
-    const message = '⚠ runtime/quota.json could not be read, so the day\'s count is being kept in memory only (nothing is blocked). Fix or delete that file and restart JARVIS to count in it again.';
-    warnings.push(message);
-    if (unreadableAnnounced !== counter.day) { unreadableAnnounced = counter.day; emit({ kind: 'unreadable', message }); }
-  }
-  return { allowed: true, slot: active.slot, snapshot: quotaSnapshot(), warning: warnings.length ? warnings.join(' ') : null, offline };
+  return { allowed: true, slot: active.slot, snapshot: quotaSnapshot(), offline };
 }
 
 /**
@@ -1070,61 +1029,52 @@ export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason
     ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again at ${googleResetPromise()}.`
     : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at ${googleResetPromise()}.`;
   console.warn(`[JARVIS] ${message}`);
-  emit({ kind: 'key-stopped', slot, reason, switchedTo, message });
   return { switchedTo, allStopped: !switchedTo };
 }
 
-// ── OFFLINE MODE: Google running out is a mode, not a dead end ──────────────
+// ── GEMINI PROVIDER STATUS: unavailability is not an app-wide offline gate ─
 /**
- * The owner's rule: JARVIS works offline as well as online.
+ * The owner's rule: JARVIS works independently of Gemini wherever local
+ * capabilities allow. A real Google 429 can stop Gemini requests for a key, but
+ * it does not stop the dashboard or unrelated web/local tools. There is no
+ * status-change announcement in chat; explicit status requests may report the
+ * provider state. The separate manual switch only controls Gemini calls.
  *
- * Google's quota is not this app's to control. When Google answers 429 for every
- * key we hold, the app does NOT stop and it does NOT keep apologising — it goes
- * OFFLINE and carries on with everything that runs on this computer: the chat
- * still answers (from the local knowledge base, memory, drafts, reminders, the
- * time, arithmetic, the rooms, diagnostics, the voice), and nothing is fetched
- * from the internet until the keys come back at midnight Pacific (Google's
- * own quota reset). A 429 is
- * therefore a WARNING the owner is told about once, never a block on the chat.
- *
- * Offline has three causes, all reported honestly:
+ * The Gemini-provider status has three causes, all reported honestly:
  *   'google-stopped'  every key was refused by Google today (a real 429, or the
  *                     key itself) — automatic, and over at midnight Pacific;
  *   'no-key'          no Gemini key is configured at all;
- *   'manual'          the owner switched the app offline on purpose.
+ *   'manual'          the owner disabled Gemini calls with the manual switch.
  *
- * The manual switch is remembered in runtime/offline.json (git-ignored) so a
- * deliberate "stay on this computer today" survives a restart; SUPPER_OFFLINE
- * (1/0) does the same from the environment. Setting it back to automatic lets
- * Google's own state decide again.
+ * The Gemini-only switch is remembered in runtime/offline.json (git-ignored)
+ * so disabled provider calls survive a restart; SUPPER_OFFLINE (1/0) is the
+ * environment override. Setting it back to automatic lets provider state decide.
  */
 export const OFFLINE_FILE = path.join(RUNTIME_DIR, 'offline.json');
 
 export type OfflineReason = 'google-stopped' | 'no-key' | 'manual';
 
 export interface OfflineSnapshot {
-  /** True when no call may go to the internet and the app answers locally. */
+  /** True when no Gemini provider call may be made; separate web/local paths continue. */
   offline: boolean;
   reason: OfflineReason | null;
-  /** One plain sentence saying why, for the terminal, Settings and the chat. */
+  /** One plain sentence for diagnostics and explicit user requests. */
   why: string;
-  /** True while the owner's own switch is what holds the app offline. */
+  /** True while the owner's own switch disables Gemini provider calls. */
   forced: boolean;
-  /** The owner's switch: true = stay offline, false = stay online, null = automatic. */
+  /** Gemini switch: true = disabled, false = allowed, null = automatic. */
   override: boolean | null;
-  /** ISO time the app went offline, when it is known. */
+  /** ISO time provider access became unavailable, when it is known. */
   since: string | null;
-  /** What still works, because it never leaves this computer. */
+  /** Local and separate open-web paths that remain available. */
   works: string[];
-  /** What is refused while offline, because it would need the internet. */
+  /** Gemini-dependent tasks with their available alternatives. */
   refused: string[];
-  /** A short line for the chat: a warning, never a block. */
-  warning: string;
   summary: string;
   note: string;
 }
 
-/** What runs on this computer and therefore keeps running offline. */
+/** Paths that remain available while the Gemini provider is unavailable. */
 export const OFFLINE_WORKS: string[] = [
   'the open web — search, facts, pictures, video and sound, with no key and no quota',
   'chat and small talk (answered from this computer)',
@@ -1134,20 +1084,18 @@ export const OFFLINE_WORKS: string[] = [
   'time, date and arithmetic',
   'system status and diagnostics',
   'the rooms, the file browser, the camera and My Hands',
-  'the local voice (the browser voice, or Kokoro/faster-whisper on this machine)',
+  'local Kokoro speech with a local-only browser speech fallback, and local faster-whisper listening',
 ];
 
 /**
- * What genuinely needs a MODEL — not the internet. The internet is available
- * whatever the quota is doing, so nothing here is refused for want of a
- * connection; each of these simply has no model to do its particular job, and
- * each has a key-free alternative that is used instead.
+ * What needs Gemini specifically, not what needs the internet. These entries
+ * describe the online provider path only; separate open-web and local alternatives
+ * remain available when Gemini is unavailable.
  */
 export const OFFLINE_REFUSED: string[] = [
   'an answer written by a Gemini model (the open web answers instead)',
   'a written, grounded research report (the sources are still found)',
   'a picture DRAWN by a model (a real photograph is found instead)',
-  'the server TTS voice (the local voice still speaks)',
 ];
 
 function readOfflineOverride(): { override: boolean | null; at: string | null } {
@@ -1164,10 +1112,10 @@ function readOfflineOverride(): { override: boolean | null; at: string | null } 
   }
 }
 
-/** The owner's own switch, with the honest sentence that goes with the result. */
+/** The explicit Gemini switch response for the command that changed it. */
 export type OfflineSwitchResult = OfflineSnapshot & { message: string };
 
-/** Switch the app offline (or back online) by hand. `null` returns to automatic. */
+/** Disable or re-enable Gemini calls by hand. `null` returns to automatic. */
 export function setOfflineMode(on: boolean | null): OfflineSwitchResult {
   try {
     fs.mkdirSync(RUNTIME_DIR, { recursive: true });
@@ -1180,22 +1128,21 @@ export function setOfflineMode(on: boolean | null): OfflineSwitchResult {
     console.warn('[config] the offline switch could not be saved:', err instanceof Error ? err.message : err);
   }
   const snapshot = offlineSnapshot();
-  // The switch is only ever the owner's half of the decision: it can force
-  // offline, but it cannot conjure a key or lift Google's 429. So the words
-  // follow the state that was actually measured, never a promise.
+  // The switch changes only Gemini access; it cannot conjure a key or lift a
+  // Google 429. Make the response describe the measured provider state, not
+  // claim that the internet or app is offline.
   const said = on === true
-    ? 'OFFLINE by your own switch — local only, nothing will be fetched from the internet until you switch it back.'
+    ? 'Gemini calls are disabled by your switch. Local chat and separate open-web tools remain available; say "come back online" to re-enable Gemini calls.'
     : on === false && snapshot.offline
-      ? `The switch is back to automatic, but I am still offline — ${snapshot.why}${snapshot.reason === 'google-stopped' ? ` until midnight Pacific (Google's own quota reset)` : ''}. The keys are used again the moment that lifts.`
+      ? `Gemini is still unavailable — ${snapshot.why}. The switch is automatic; local chat and tools remain available.`
       : on === false
-        ? 'Online again: the keys will be used as soon as Google accepts them.'
-        : 'The offline switch is back to automatic: Google\'s own state decides.';
+        ? 'Gemini calls are enabled again and will be used only when a task needs them.'
+        : 'Gemini availability is back under automatic control.';
   console.warn(`[JARVIS] ${said}`);
-  emit({ kind: 'offline', offline: snapshot.offline, reason: snapshot.reason, message: `${said} ${snapshot.summary}` });
   return { ...snapshot, message: said };
 }
 
-/** The app's connectivity state right now, and what it means for each feature. */
+/** Gemini-provider availability for explicit diagnostic API consumers. */
 export function offlineSnapshot(): OfflineSnapshot {
   const { override, at } = readOfflineOverride();
   const quota = quotaSnapshot();
@@ -1205,7 +1152,7 @@ export function offlineSnapshot(): OfflineSnapshot {
   let since: string | null = at;
   if (override === true) {
     reason = 'manual';
-    why = 'you switched the app offline yourself';
+    why = 'you disabled Gemini calls with the manual switch';
   } else if (quota.stoppedByGoogle) {
     reason = 'google-stopped';
     const stops = [quota.googleStopped[1], quota.googleStopped[2]].filter(Boolean) as StopRecord[];
@@ -1219,8 +1166,8 @@ export function offlineSnapshot(): OfflineSnapshot {
   }
   const offline = reason !== null;
   const summary = offline
-    ? `No Gemini right now (${why}). Everything else keeps working — including the open web: search, facts, pictures and video cost no key and no quota${reason === 'google-stopped' ? `. The keys come back at ${googleResetPromise()}` : ''}.`
-    : 'Online — the keys are usable, and local answers are still tried first so most work never spends a call.';
+    ? `Gemini is unavailable (${why}). Local features and separate open-web tools remain available${reason === 'google-stopped' ? `. The Gemini keys can be tried again at ${googleResetPromise()}` : ''}.`
+    : 'Gemini provider available — local answers are still tried first, so most work never spends a call.';
   return {
     offline,
     reason,
@@ -1230,97 +1177,18 @@ export function offlineSnapshot(): OfflineSnapshot {
     since,
     works: OFFLINE_WORKS,
     refused: OFFLINE_REFUSED,
-    warning: offline
-      ? `There is no Gemini right now (${why}), so I answered from this computer and the open web instead — no model called, no quota used.`
-      : '',
     summary,
-    note: "Offline is a mode, not an error: the app counts and warns, Google's 429 only decides whether the internet may be used, and every local feature keeps working either way.",
+    note: "Gemini availability affects only provider calls. Local features and separate open-web tools continue working either way.",
   };
 }
 
-/** True when no call may leave this computer. */
+/** True when the Gemini provider call path is unavailable. */
 export function isOffline(): boolean {
   return offlineSnapshot().offline;
 }
 
-// There is deliberately no offlineRefusal() here any more. It used to write the
-// "this feature needs the internet and I am offline" paragraph, and it was
-// attached to video scripts, Internet Research and the picture maker. A quota
-// running out means "no Gemini" — it never meant "no internet" — so every one of
-// those features now reaches the open web instead of refusing, and the paragraph
-// itself is gone. Nothing in this app refuses a request because of a quota.
-
-// ── The voice's own counter (the voice is local now: it never touches Gemini) ─
-interface Counter { day: string; used: number; unreadable: boolean; }
-
-function readCounter(file: string): Counter {
-  const day = localDay();
-  if (unreadableDay[file] === day) return { day, used: 0, unreadable: true };
-  if (!fs.existsSync(file)) return { day, used: 0, unreadable: false };
-  try {
-    const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as { day?: unknown; used?: unknown };
-    const used = Number(data?.used);
-    if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
-    return { day, used: data?.day === day ? Math.floor(used) : 0, unreadable: false };
-  } catch {
-    unreadableDay[file] = day;
-    return { day, used: 0, unreadable: true };
-  }
-}
-
-function writeCounter(day: string, used: number, file: string): void {
-  const tmp = `${file}.tmp`;
-  try {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify({ day, used }), { mode: 0o600 });
-    fs.renameSync(tmp, file);
-    saveFailed[file] = false;
-  } catch {
-    saveFailed[file] = true;
-  }
-}
-
-export interface BudgetInfo { limit: number; source: string; }
-
-export interface VoiceQuotaSnapshot {
-  day: string; used: number; limit: number; remaining: number; enabled: boolean;
-  unreadable: boolean; saved: boolean; resets: string; source: string; note: string;
-}
-
-export function resolveVoiceBudget(): BudgetInfo {
-  const raw = (process.env.SUPPER_GEMINI_VOICE_BUDGET || '').trim();
-  if (!raw) return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET} spoken sentences a day)` };
-  const value = Number.parseInt(raw, 10);
-  if (!Number.isFinite(value) || value < 0) {
-    return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET}) — SUPPER_GEMINI_VOICE_BUDGET could not be read` };
-  }
-  return { limit: value, source: 'SUPPER_GEMINI_VOICE_BUDGET' };
-}
-
-export function voiceQuotaSnapshot(): VoiceQuotaSnapshot {
-  const budget = resolveVoiceBudget();
-  const counter = readCounter(VOICE_QUOTA_FILE);
-  return {
-    day: counter.day,
-    used: counter.used,
-    limit: budget.limit,
-    remaining: counter.unreadable ? 0 : Math.max(0, budget.limit - counter.used),
-    enabled: true,                       // never a switch: the count warns, it does not turn anything off
-    unreadable: counter.unreadable,
-    saved: !saveFailed[VOICE_QUOTA_FILE],
-    resets: 'local midnight',
-    source: budget.source,
-    note: "The voice's own count in runtime/voice_quota.json. It is a warning level, never a ceiling — nothing is refused because of it. The voice runs on this computer (Kokoro / faster-whisper) and never uses a Gemini call, so this stays at zero unless a server voice is used.",
-  };
-}
-
-// There is deliberately NO trySpendVoiceBudget() here any more. The voice used
-// to have its own hard ceiling — once the count reached SUPPER_GEMINI_VOICE_BUDGET
-// the voice simply refused to speak. Nothing ever called it, and a limit invented
-// here is not a limit Google imposed, so it has been deleted rather than kept as
-// a trap. The count below is information: it warns and never blocks. What does
-// stop the SERVER voice is the same thing that stops any internet feature — the
-// app being offline — and the local voice keeps speaking either way.
+// There is no app-wide offline refusal. Gemini-dependent requests may use
+// separate open-web alternatives; a provider quota never disables those paths.
 
 // ── The brain: one call path, honest failures ───────────────────────────────
 export interface GeminiRaw {
@@ -1349,14 +1217,13 @@ export interface BrainCaller {
 }
 
 /**
- * ── SPEED: the settings that make a reply arrive in a second, not ten ────────
+ * ── SPEED: remove avoidable thinking delay without trimming the answer ───────
  *
  * Gemini *thinks* before it answers unless it is told not to. That thinking is
  * invisible in the reply and costs several seconds of waiting on every single
- * command — the owner hears silence, then a paragraph. For a voice assistant the
- * answer is worth more than the deliberation, so thinking is turned down and
- * the answer length is capped, because a capped answer is written sooner and
- * spoken sooner.
+ * command. Keep the fast thinking settings, but do not set an output-token cap:
+ * chat and speech must preserve every word the model returns. Tasks that need a
+ * deliberately bounded output set their own limit in their own request config.
  *
  * ── WHICH PARAMETER? THIS IS WHERE THE GENERATION MATTERS ────────────────────
  * The two generations do NOT take the same setting, and sending the wrong one
@@ -1377,8 +1244,6 @@ export interface BrainCaller {
  * thinking setting at all — see isConfigRejection() — and remembers which one
  * worked, so the mistake is never paid for twice.
  */
-export const SPEED_MAX_OUTPUT_TOKENS = 900;
-
 /** How to ask a model to keep its thinking short. */
 export type ThinkingMode = 'level' | 'budget' | 'none';
 
@@ -1395,10 +1260,7 @@ export function preferredThinkingMode(model: string): ThinkingMode {
 }
 
 export function speedConfig(model: string, mode: ThinkingMode = preferredThinkingMode(model)): Record<string, unknown> {
-  const cfg: Record<string, unknown> = {
-    maxOutputTokens: SPEED_MAX_OUTPUT_TOKENS,
-    temperature: 0.7,
-  };
+  const cfg: Record<string, unknown> = { temperature: 0.7 };
   if (mode === 'level') cfg.thinkingConfig = { thinkingLevel: 'LOW' };
   else if (mode === 'budget') cfg.thinkingConfig = { thinkingBudget: 0 };
   return cfg;
@@ -1527,21 +1389,6 @@ function trimRaw(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
-/** What Google did to each key today, in one plain sentence. */
-function googleStopStory(): string {
-  const snap = quotaSnapshot();
-  const line = (slot: KeySlot): string => {
-    const stop = snap.googleStopped[slot];
-    if (stop) return `key ${slot} was stopped at ${clockTime(stop.at)} (${stopReasonText(stop)})`;
-    return '';
-  };
-  const parts = [line(1), line(2)].filter(Boolean);
-  const second = snap.hasSecondKey
-    ? ''
-    : ' No second key is set — add one in Settings → "The Brain" (from a different Google account/project) and I carry on with it when the first runs out.';
-  return `${parts.length ? parts.join('; ') + '.' : ''}${second} This app counted ${snap.used} call${snap.used === 1 ? '' : 's'} today and did not block any of them.`;
-}
-
 export interface FailureContext {
   code: BrainFailureCode;
   model: string;
@@ -1551,46 +1398,33 @@ export interface FailureContext {
   attempts: AttemptReport[];
 }
 
+/** Keep provider failures short; they affect a requested Gemini task, not chat availability. */
 export function explainBrainFailure(ctx: FailureContext): string {
-  const { key } = ctx;
   switch (ctx.code) {
     case 'no-key':
-      return `I have no Gemini key, sir. ${key.detail}. Add "gemini_api_key" to config/api_keys.json (Settings → "The Brain" writes it there), or set GEMINI_API_KEY — either is read at once, no restart.`;
+      return 'Gemini is optional and no key is configured. Local chat and tools remain available.';
     case 'google-stopped':
-      return `Google has stopped our calls for today, sir — Google, not this app. ${googleStopStory()}` +
-        ` So there is no Gemini until ${googleResetPromise()}, and I am answering from everything else: this computer and the open web, which needs no key and no quota.` +
-        ` That is a warning, not a block — the keys come back at ${googleResetPromise()}, or sooner if you add a key from another Google account in Settings → "The Brain".`;
-    case 'offline':
-      return `You switched me off Gemini, sir, so no model is called and nothing is counted.` +
-        ` The chat, every local feature and the open web all keep working — search, facts, pictures and video need no key. Say "come back online" (or use the switch in Settings) and the keys are used again at once.`;
-    case 'model-unavailable': {
-      const tried = ctx.attempts.filter((a) => a.error).map((a) => a.model).join(', ') || ctx.model;
-      return `The model name was withdrawn, sir — my key is fine, so do not change it. Google answered 404 NOT_FOUND for ${tried}.` +
-        ` Set SUPPER_TEXT_MODEL (or GEMINI_MODEL) to a current model, or clear both and I fall back to the app's moving alias ${DEFAULT_TEXT_MODEL}.` +
-        (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
-    }
-    case 'key-rejected':
-      return `Google refused key ${key.slot} itself (${key.source || 'no source'}; ending in …${key.tail ?? '????'}), which comes from ${key.detail} — the key is the problem here, not the model (${ctx.model}).` +
-        ` Paste a working key in Settings → "The Brain".` + (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'rate-limited':
-      return `Google answered 429 — its own quota is used up for key ${key.slot} (ending in …${key.tail ?? '????'}) on ${ctx.model}. That is Google stopping us, sir, not this app: this app's count only warns. ${googleStopStory()}` +
-        ` There is no Gemini for now, so I am answering from this computer and the open web instead — neither costs a quota. ` +
-        `Calls resume at ${googleResetPromise()}, which is when Google's own daily quota resets. Neither the key nor the model name is at fault.` +
-        (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
+      return 'Google is not accepting Gemini requests right now. Local chat and tools remain available; try again later.';
+    case 'offline':
+      return 'Gemini is turned off. Local chat, tools, and separate open-web paths remain available.';
+    case 'model-unavailable':
+      return 'The configured Gemini model is unavailable. Check SUPPER_TEXT_MODEL or use the app default.';
+    case 'key-rejected':
+      return 'Google rejected the configured Gemini key. Check Settings → Optional Gemini access.';
     case 'connection':
-      return `The call never reached Google, sir — a connection problem, so neither the key (${key.source || 'none'}) nor the model (${ctx.model}) is at fault.` +
-        ` The key is fine; check the internet connection or a proxy, then try again.` + (ctx.raw ? ` The error was: ${trimRaw(ctx.raw)}` : '');
+      return 'Gemini could not be reached. Check the connection or proxy; local features remain available.';
     case 'empty':
-      return `I reached ${ctx.model}, sir, but it sent back nothing I can use. The model name is accepted and the key works; try again, and if it repeats check that this model can answer text.`;
+      return 'Gemini returned no usable text. Try again.';
     default:
-      return `The call to Gemini failed for a reason I cannot classify (model ${ctx.model}, key from ${key.source || 'none'}): ${trimRaw(ctx.raw || 'no detail')}.`;
+      return 'The Gemini request failed. Local features remain available; check the server console for details.';
   }
 }
 
 /**
- * The failure for a closed gate: the app is OFFLINE, so no call was made and
- * nothing was counted. The code says which kind of offline it is, so a caller
- * can answer locally and say so in one honest line instead of stopping.
+ * The Gemini provider call was skipped, so no call was counted. Preserve the
+ * provider-specific code for explicit diagnostics; normal chat can use its own
+ * local/open-web fallback without announcing status changes.
  */
 function offlineGateError(gate: SpendResult, key: KeyInfo, attempts: AttemptReport[], model: string, modelSource: string): BrainError {
   const code: BrainFailureCode = gate.offline?.reason === 'no-key' ? 'no-key'
@@ -1644,10 +1478,8 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
   // candidate model, so a single question whose first model was unavailable
   // burned three, five, sometimes twenty units on retries that never fetched
   // an answer. Retries of the same question are free; a new question counts
-  // again. The count never refuses: the gate below is closed only when the app
-  // is OFFLINE — Google has stopped every key we have, no key is set, or the
-  // owner switched it off. A closed gate is never a dead end: the caller
-  // answers from this computer instead.
+  // again. The gate below can skip this Gemini request when no key may be used,
+  // but that does not gate chat or separate local/open-web paths.
   const spend = opts.spend || spendGeminiCall;
   const gate = spend();
   if (!gate.allowed) {
@@ -1684,7 +1516,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
     lastSource = next.source;
 
     // The speed settings ride along with every text call: thinking off where the
-    // model takes that setting, and a capped answer. See speedConfig().
+    // model takes that setting, without capping the answer. See speedConfig().
     const usedSpeed = opts.speed !== false && opts.kind === 'text';
     type Outcome = { raw?: GeminiRaw; error?: ClassifiedError };
     const attempt = async (cfg: Record<string, unknown> | undefined): Promise<Outcome> => {
@@ -1821,8 +1653,8 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
   const attempts: AttemptReport[] = [];
   const spend = opts.spend || spendGeminiCall;
   // ONE unit per QUESTION, as in runBrain() and the standalone app. The count
-  // never refuses; only being OFFLINE closes this gate (Google stopped every
-  // key, no key is set, or the owner switched the app offline).
+  // never refuses a call; provider unavailability can skip this Gemini request
+  // without gating chat or separate local/open-web routes.
   const gate = spend();
   if (!gate.allowed) {
     throw offlineGateError(gate, key, attempts, candidates[0]?.model || '', candidates[0]?.source || '');

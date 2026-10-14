@@ -1,16 +1,17 @@
-"""JARVIS's local voice service. One path, on this computer, no Gemini.
+"""JARVIS's local voice service: Kokoro speech and faster-whisper transcription.
 
   Speaking  Kokoro makes the voice; this service plays it through the computer's speakers.
   Hearing   faster-whisper turns the microphone's audio (sent by the page) into words.
 
 The Node server (server.ts) starts this file and forwards /api/voice/* to it. It listens on
-127.0.0.1 only. The browser never speaks; it only captures the microphone.
+127.0.0.1 only. The page captures microphone audio; this service transcribes it locally. The
+app-local Kokoro voice is primary for output, with an explicitly local browser voice as fallback.
 
-Endpoints (JSON in, JSON out):
-  GET  /health                       what is ready
-  POST /speak       {text}           speak the text out loud; answers when playback has finished
-  POST /stop        {}               stop the sentence being spoken now
-  POST /transcribe  {rate, pcm}      pcm = base64 of mono little-endian int16 audio at `rate`
+Endpoints:
+  GET  /health                       readiness of local speech and hearing
+  POST /speak       {text}           speak the complete text; answers after playback finishes
+  POST /stop        {}               stop speech already playing
+  POST /transcribe  raw PCM + X-Audio-Rate, or {rate, pcm} as base64 JSON
 
 Settings (environment, optional):
   SUPPER_KOKORO_DIR          folder with kokoro-v1.0.onnx and voices-v1.0.bin (default models/kokoro)
@@ -58,8 +59,10 @@ STT_LANGUAGE = os.environ.get("SUPPER_STT_LANGUAGE", "en").strip() or "en"
 PORT = int(os.environ.get("SUPPER_LOCAL_VOICE_PORT", "3101"))
 STT_RATE = 16000
 
-_speak_lock = threading.Lock()   # one sentence at a time
+_speak_lock = threading.Lock()   # one reply at a time
+_kokoro_load_lock = threading.Lock()
 _hear_lock = threading.Lock()
+_whisper_load_lock = threading.Lock()
 _active_stream = None            # the speakers' stream while JARVIS is talking (for /stop)
 _out_stream = None               # the speakers' stream, kept open between replies
 _out_rate = 0
@@ -117,24 +120,26 @@ def kokoro_files_present() -> bool:
 def kokoro():
     global _kokoro, _speak_failed
     if _kokoro is None:
-        if not kokoro_files_present():
-            raise VoiceError(
-                "no-model",
-                f"The Kokoro voice files are missing. Put {KOKORO_MODEL} and {KOKORO_VOICES} in {KOKORO_DIR} "
-                "(docs/LOCAL_VOICE.md says where to get them).",
-            )
-        try:
-            from kokoro_onnx import Kokoro
-        except ImportError:
-            raise VoiceError("no-package", "kokoro-onnx is not installed. Run: pip install -r backend/requirements-local-voice.txt")
-        log(f"loading the Kokoro voice ({TTS_VOICE})")
-        try:
-            _kokoro = Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES))
-        except Exception as err:
-            _speak_failed = f"the Kokoro voice files could not be loaded ({err})"
-            raise VoiceError("no-model", f"The Kokoro voice files could not be loaded ({err}). Check {KOKORO_MODEL} and {KOKORO_VOICES} in {KOKORO_DIR}.")
-        _speak_failed = ""
-        log("the Kokoro voice is ready")
+        with _kokoro_load_lock:
+            if _kokoro is None:
+                if not kokoro_files_present():
+                    raise VoiceError(
+                        "no-model",
+                        f"The Kokoro voice files are missing. Put {KOKORO_MODEL} and {KOKORO_VOICES} in {KOKORO_DIR} "
+                        "(docs/LOCAL_VOICE.md says where to get them).",
+                    )
+                try:
+                    from kokoro_onnx import Kokoro
+                except ImportError:
+                    raise VoiceError("no-package", "kokoro-onnx is not installed. Run: pip install -r backend/requirements-local-voice.txt")
+                log(f"loading the Kokoro voice ({TTS_VOICE})")
+                try:
+                    _kokoro = Kokoro(str(KOKORO_DIR / KOKORO_MODEL), str(KOKORO_DIR / KOKORO_VOICES))
+                except Exception as err:
+                    _speak_failed = f"the Kokoro voice files could not be loaded ({err})"
+                    raise VoiceError("no-model", f"The Kokoro voice files could not be loaded ({err}). Check {KOKORO_MODEL} and {KOKORO_VOICES} in {KOKORO_DIR}.")
+                _speak_failed = ""
+                log("the Kokoro voice is ready")
     return _kokoro
 
 
@@ -265,25 +270,27 @@ def stop() -> None:
 def whisper():
     global _whisper, _whisper_failed
     if _whisper is None:
-        if _whisper_failed is not None and time.monotonic() - _whisper_failed[0] < _WHISPER_RETRY_S:
-            # Fail at once with the reason we already know, instead of making
-            # this clip wait through another doomed download.
-            raise VoiceError("no-model", _whisper_failed[1])
-        try:
-            from faster_whisper import WhisperModel
-        except ImportError:
-            raise VoiceError("no-package", "faster-whisper is not installed. Run: pip install -r backend/requirements-local-voice.txt")
-        log(f"loading the speech model ({STT_MODEL}); the first run downloads it once — this can take a minute")
-        try:
-            _whisper = WhisperModel(STT_MODEL, device="cpu", compute_type="int8")
-        except Exception as err:
-            reason = (f"The speech model ({STT_MODEL}) could not be loaded ({err}). "
-                      "The first load needs the internet once; after that it works offline.")
-            _whisper_failed = (time.monotonic(), reason)
-            log(f"the speech model could not be loaded — hearing is off until this is fixed: {err}")
-            raise VoiceError("no-model", reason)
-        _whisper_failed = None
-        log("the speech model is ready")
+        with _whisper_load_lock:
+            if _whisper is None:
+                if _whisper_failed is not None and time.monotonic() - _whisper_failed[0] < _WHISPER_RETRY_S:
+                    # Fail at once with the reason we already know, instead of making
+                    # this clip wait through another doomed download.
+                    raise VoiceError("no-model", _whisper_failed[1])
+                try:
+                    from faster_whisper import WhisperModel
+                except ImportError:
+                    raise VoiceError("no-package", "faster-whisper is not installed. Run: pip install -r backend/requirements-local-voice.txt")
+                log(f"loading the speech model ({STT_MODEL}); the first run downloads it once — this can take a minute")
+                try:
+                    _whisper = WhisperModel(STT_MODEL, device="cpu", compute_type="int8")
+                except Exception as err:
+                    reason = (f"The speech model ({STT_MODEL}) could not be loaded ({err}). "
+                              "The first load needs the internet once; after that it works offline.")
+                    _whisper_failed = (time.monotonic(), reason)
+                    log(f"the speech model could not be loaded — hearing is off until this is fixed: {err}")
+                    raise VoiceError("no-model", reason)
+                _whisper_failed = None
+                log("the speech model is ready")
     return _whisper
 
 
@@ -504,8 +511,9 @@ def main() -> None:
     if speak_why or hear_why:
         # Said once, at startup, in the server console where the owner looks —
         # and /health repeats it to the dashboard, so it is never a mystery.
-        log("the voice service is running anyway: the dashboard's own browser voice still works. "
-            "For this computer's voice: pip install -r backend/requirements-local-voice.txt (and put the Kokoro files in models/kokoro).")
+        log("the voice service is running, but at least one local voice path is not ready. "
+            "Install backend/requirements-local-voice.txt and put the Kokoro files in models/kokoro; "
+            "chat remains available while voice setup is repaired.")
     threading.Thread(target=preload, daemon=True).start()
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
     log("ready")

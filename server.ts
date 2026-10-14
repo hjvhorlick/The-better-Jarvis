@@ -16,9 +16,8 @@ import { spawn, type ChildProcess } from 'child_process';
 import { WebSocketServer, WebSocket } from 'ws';
 import multer from 'multer';
 import { GoogleGenAI } from '@google/genai';
-// The dashboard's ONE settings resolver. It loads ./.env itself (that is where
-// dotenv used to be called from here) and then resolves the key, the model, the
-// names and the daily budget exactly the way the engine room does.
+// The dashboard's settings resolver. It loads ./.env, resolves the optional
+// Gemini key/model and names, and keeps provider accounting diagnostic-only.
 import {
   BrainError,
   brainCheck,
@@ -29,11 +28,9 @@ import {
   IMAGE_KEY_SERVICES,
   type ImageService,
   explainBrainFailure,
-  onQuotaEvent,
   quotaSnapshot,
   offlineSnapshot,
   setOfflineMode,
-  voiceQuotaSnapshot,
   configStatus,
   readApiConfigFile,
   resolveActiveKey,
@@ -42,7 +39,6 @@ import {
   resolveKeySlot,
   resolveNames,
   resolveTextModel,
-  googleResetPromise,
   modelCandidates,
   runBrain,
   runBrainStream,
@@ -104,7 +100,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-14-browser-voice-1';
+const SERVER_BUILD = '2026-10-14-chat-first-local-voice-3';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -263,7 +259,7 @@ let jarvisState: 'active' | 'sleeping' = 'active';
 
 interface LogMessage {
   type: 'log';
-  /** 'system' is a plain notice in the dialogue (the count's warnings, a key switch) — shown, never spoken. */
+  /** 'system' is a non-spoken notice in the dialogue. */
   speaker: 'jarvis' | 'user' | 'system';
   text: string;
   timestamp: number;
@@ -273,10 +269,6 @@ interface LogMessage {
   /** Only ever true for the history replayed to a newly opened page. */
   replay?: boolean;
 }
-
-/** Where a Gemini key is looked for, named in full so the owner is never left guessing. */
-const KEY_HELP = `I looked for one in the environment (GEMINI_API_KEY, including ./.env) and in config/api_keys.json (gemini_api_key). `
-  + `Settings → "The Brain" writes it to config/api_keys.json, where the desktop app and every action read it.`;
 
 const greetingName = NAMES.user ? `, ${NAMES.user}` : ', sir';
 const messageHistory: LogMessage[] = [
@@ -350,7 +342,7 @@ function decryptMessage(b64Data: string, pin: string): string | null {
 // ── The Gemini client, built from the app's own settings ────────────────────
 // One resolver (./config.ts) decides the key and the model for every call path
 // on this server. The key is read fresh each time the client is rebuilt, so a
-// key saved in Settings → "The Brain" takes effect at once — no restart, and no
+// key saved in Settings → "Optional Gemini access" takes effect at once — no restart, and no
 // second configuration to drift away from the app's. There is one client per
 // key slot; which one answers is decided per call, so when Google stops the
 // first key mid-question the retry goes out on the second at once.
@@ -468,16 +460,15 @@ function brainCaller(): BrainCaller | null {
 
 function researchProviderFailure(error: unknown, phase: 'search' | 'report' | 'followup'): string {
   if (error instanceof BrainError) {
-    if (error.code === 'no-key') return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.';
-    if (error.code === 'google-stopped') return `Google has stopped our Gemini calls for today (its own quota, not this app's count). No further provider call was made; calls resume at ${googleResetPromise()}.`;
-    if (error.code === 'rate-limited') return 'Google reports a Gemini rate limit (429). Research stopped; try again after the provider limit resets.';
-    if (error.code === 'key-rejected') return 'Gemini rejected the configured key. Check Settings → The Brain; the secret value is not shown here.';
-    if (error.code === 'connection') return 'The Gemini service could not be reached. No web search is being claimed.';
-    if (error.code === 'model-unavailable') return 'No available configured text model completed this request. Check SUPPER_TEXT_MODEL and model access.';
+    if (error.code === 'no-key') return 'A written research report needs optional Gemini access; the dashboard and other local features remain available.';
+    if (error.code === 'google-stopped' || error.code === 'rate-limited') return 'Google is not accepting Gemini research requests right now. The collected sources remain available in Research.';
+    if (error.code === 'key-rejected') return 'Google rejected the configured Gemini key. Check Settings → Optional Gemini access.';
+    if (error.code === 'connection') return 'Gemini could not be reached. No completed report is being claimed.';
+    if (error.code === 'model-unavailable') return 'No configured Gemini model completed this research request.';
   }
-  if (phase === 'search') return 'Google Search grounding failed. Confirm that the configured Gemini model and API account support Google Search grounding; no web search is being claimed.';
-  if (phase === 'followup') return 'The report follow-up could not be generated. The saved report was not changed.';
-  return 'Search completed, but report generation failed. The search results were not presented as a completed report.';
+  if (phase === 'search') return 'The Gemini search step failed; no completed web search is being claimed.';
+  if (phase === 'followup') return 'The report follow-up could not be generated. The saved report is unchanged.';
+  return 'Report generation failed. The search results were not presented as a completed report.';
 }
 
 async function callGroundedResearchSearch(question: string) {
@@ -589,14 +580,14 @@ async function generateStudioScript(request: import('./studio/projects.js').Stud
  * What the last real contact with the reasoning core said.
  *
  * Small talk does not read this — a greeting is the whole answer and never
- * carries app state. Brain Check and Settings report it instead, which is
- * where the owner goes to ask about the state of the machine.
+ * carries app state. The diagnostic API uses it only for an explicit provider
+ * health check; ordinary chat does not surface provider status.
  */
 let brainHealth: { ok: boolean; at: number } | null = null;
 const BRAIN_HEALTH_STALE_MS = 15 * 60 * 1000;
 function noteBrainHealth(ok: boolean): void {
-  // Keep only the state, not Google's raw diagnostics. Error details are shown
-  // in the full reply / Brain Check; a greeting must stay short and speakable.
+  // Keep only the health state here. Detailed diagnostics stay in the server
+  // log and explicit Brain Check response, never on an unrelated chat reply.
   brainHealth = { ok, at: Date.now() };
 }
 
@@ -789,20 +780,6 @@ function standaloneSystemInstruction(contextBlock: string): string {
   return parts.join('\n\n');
 }
 
-// ── OFFLINE: the chat carries on when the internet cannot be used ───────────
-/**
- * Google's quota running out is not a broken chat, it is a mode. When the app
- * no model is available, no call is counted — but
- * the conversation does not stop. This is the answer for a question that would
- * otherwise have gone to Gemini: a stored answer if there is one, and if not,
- * a short honest line saying what happened (a warning, never a block) plus the
- * two things that still move the work forward on this computer.
- */
-/**
- * A real photograph of the subject, from the open web — no model, no quota.
- * Used whenever a drawn picture is not available, so "make me a picture of the
- * reactor" still produces a picture of the reactor.
- */
 /**
  * Clean up what was captured after "a picture of …" / "a book about …".
  *
@@ -820,6 +797,7 @@ function cleanSubject(raw: string): string {
   return withoutArticle.trim().length >= 2 ? withoutArticle.trim() : s;
 }
 
+/** Find a real photograph on the open web when the owner asks for a picture. */
 async function pictureFromWeb(subject: string): Promise<string> {
   try {
     const hits = await searchImages(subject, { maxResults: 6 });
@@ -838,7 +816,7 @@ async function pictureFromWeb(subject: string): Promise<string> {
         .filter(Boolean).join(' · ');
       return `Here is a real photograph of ${subject}: ${best.url}\n\n`
         + `${hits.slice(0, 6).map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}`).join('\n')}\n\n`
-        + `(${credit}${credit ? ' — ' : ''}found on the open web, no model called, no quota used.)`;
+        + `(${credit}${credit ? ' — ' : ''}found on the open web.)`;
     }
   } catch (err) {
     console.warn('[JARVIS] the picture search failed:', err instanceof Error ? err.message : err);
@@ -862,7 +840,7 @@ async function mediaFromWeb(subject: string, kind: 'video' | 'audio'): Promise<s
     if (hits.length) {
       return `Here is what I found for ${subject}:\n`
         + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.author ? ` (by ${hit.author})` : ''}${hit.license ? ` · ${hit.license}` : ''}`).join('\n')
-        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used.)`;
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')}.)`;
     }
   } catch (err) {
     console.warn(`[JARVIS] the ${noun} search failed:`, err instanceof Error ? err.message : err);
@@ -881,7 +859,7 @@ async function bookFromWeb(subject: string): Promise<string> {
     if (hits.length) {
       return `Here is what I found for ${subject}:\n`
         + hits.map((hit, i) => `${i + 1}. ${hit.title}${hit.author ? ` — ${hit.author}` : ''}\n   read or download: ${hit.page}\n   file: ${hit.url}`).join('\n')
-        + `\n\n(From Project Gutenberg — public domain, no model called, no quota used.)`;
+        + `\n\n(From Project Gutenberg — public domain.)`;
     }
   } catch (err) {
     console.warn('[JARVIS] the book search failed:', err instanceof Error ? err.message : err);
@@ -900,7 +878,7 @@ async function placeFromWeb(subject: string): Promise<string> {
     if (hits.length) {
       return `Here is what I found for ${subject}:\n`
         + hits.map((hit, i) => `${i + 1}. ${hit.address || hit.name}\n   ${hit.lat.toFixed(5)}, ${hit.lon.toFixed(5)}${hit.placeType ? ` · ${hit.placeType}` : ''}${hit.page ? `\n   ${hit.page}` : ''}`).join('\n')
-        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used.)`;
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')}.)`;
     }
   } catch (err) {
     console.warn('[JARVIS] the place search failed:', err instanceof Error ? err.message : err);
@@ -919,7 +897,7 @@ async function modelFromWeb(subject: string): Promise<string> {
     if (hits.length) {
       return `Here is what I found for ${subject}:\n`
         + hits.map((hit, i) => `${i + 1}. ${hit.title}${hit.author ? ` — ${hit.author}` : ''}\n   ${hit.url}${hit.license ? `\n   ${hit.license}` : ''}`).join('\n')
-        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')} — no model called, no quota used. Check the licence on each page before you print.)`;
+        + `\n\n(From ${[...new Set(hits.map((h) => h.source))].join(' and ')}. Check the licence on each page before you print.)`;
     }
   } catch (err) {
     console.warn('[JARVIS] the 3D model search failed:', err instanceof Error ? err.message : err);
@@ -927,11 +905,12 @@ async function modelFromWeb(subject: string): Promise<string> {
   return `I could not find a printable model of \u201c${subject.slice(0, 60)}\u201d on the open web.`;
 }
 
+/** Try the independent web/knowledge paths after a requested Gemini answer fails. */
 async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeStore['lookup']>): Promise<string> {
   try {
     const answer = await answerFromWeb(trimmed, { maxResults: 5 });
     if (answer.fact || answer.hits.length) {
-      return `${answer.reply}\n\n(From the open web — Wikipedia and DuckDuckGo. No model was called and no quota was used.)`;
+      return `${answer.reply}\n\n(From the open web — Wikipedia and DuckDuckGo.)`;
     }
   } catch (err) {
     console.warn('[JARVIS] the open-web answer failed:', err instanceof Error ? err.message : err);
@@ -939,8 +918,8 @@ async function openWebReply(trimmed: string, staleKnown: ReturnType<KnowledgeSto
   // Nothing on the web either. Then, and only then, say so — in one line, with
   // the one thing that actually helps.
   if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
-  return `I could not find anything on “${trimmed.slice(0, 60)}” — the open web gave me nothing, and Gemini is not answering right now. `
-    + `Teach me with “learn: ${trimmed.slice(0, 40)} = <answer>” and I will know it for ever.`;
+  return `I could not find anything on “${trimmed.slice(0, 60)}”, sir. `
+    + `Teach me with “learn: ${trimmed.slice(0, 40)} = <answer>” and I will remember it.`;
 }
 
 async function processCommand(userCommand: string, onDelta?: (textSoFar: string) => void,
@@ -1219,14 +1198,11 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     const subject = cleanSubject(webSearch[1]);
     try {
       const hits = await searchWeb(subject, { maxResults: 6 });
-      const fact = hits.length ? null : null;
       if (hits.length) {
         return `Here is what the open web says about ${subject}:\n`
-          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n')
-          + '\n\n(No model was called and no quota was used.)';
+          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n');
       }
-      void fact;
-      return `The open web gave me nothing for “${subject.slice(0, 60)}”. Nothing was counted.`;
+      return `The open web gave me nothing for “${subject.slice(0, 60)}”.`;
     } catch (err) {
       console.warn('[JARVIS] web search failed:', err instanceof Error ? err.message : err);
       return `I could not reach the open web for “${subject.slice(0, 60)}” — ${explainFetchError(err)}.`;
@@ -1242,8 +1218,7 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       const hits = await searchWeb(subject, { maxResults: 6 }).catch(() => []);
       if (hits.length) {
         return `A written research report needs a model, and there is no Gemini key on this machine — but I searched the open web instead, which needs no key:\n`
-          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n')
-          + '\n\n(No model called, no quota used. Add a key in Settings → "The Brain" for the written report.)';
+          + hits.map((hit, i) => `${i + 1}. ${hit.title} — ${hit.url}${hit.snippet ? `\n   ${hit.snippet}` : ''}`).join('\n');
       }
       return 'A written research report needs a model, and there is no Gemini key on this machine. The open web gave me nothing either.';
     }
@@ -1399,15 +1374,13 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   if (brainTurn?.clarification) return brainTurn.clarification;
 
   // ── Does this need the AI at all? ────────────────────────────────────────
-  // The owner's rule: the AI is for knowledge, research and conversation. A
-  // command that asks the COMPUTER to do something it has no local tool for is
-  // answered honestly — with the option to spend a Gemini call — instead of
-  // quietly turning every "open/draft/send/make" into one.
+  // The owner's rule: Gemini is for knowledge, research and conversation. A
+  // command that asks the COMPUTER to do something with no local tool is named
+  // as unsupported; it is not silently sent to Gemini.
   const forcing = /\b(use (?:the )?ai|ask gemini|use gemini|search (?:the )?(?:web|internet)|do some research)\b/i.test(lower);
   if (looksLikeComputerTask(lower) && !looksLikeKnowledgeQuestion(lower) && !forcing) {
-    return `That one is a job for this computer rather than a question, sir, and this build has no local tool for “${trimmed.slice(0, 60)}” — so the only way I could answer is a Gemini call (one on the day's count). ` +
-      `Here is what I do locally, with no AI and no cost: the drafting desk ("draft an email to … about …", "read my drafts"), my notes and your reminders, the local knowledge base ("learn: …", "what have you learned"), the time and date, diagnostics, My Hands and the rooms, the camera ("camera on"), the tools of a room, opening and closing the windows, and mute. ` +
-      `Say “${trimmed.slice(0, 40)} — use the AI” and I will spend the call; otherwise tell me what you want done and I will keep it on this machine.`;
+    return `I cannot perform “${trimmed.slice(0, 60)}” with this dashboard's local tools, sir. ` +
+      'I can still work with files, notes, reminders, drafts, My Hands, the camera and the rooms.';
   }
   if (forcing) console.log('[JARVIS] the owner asked for the AI explicitly — spending one call');
 
@@ -1440,27 +1413,24 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     return 'Done, sir.';
   }
 
-  // ── The offline switch, by voice or chat: local, free, no AI ─────────────
-  // "go offline" keeps everything on this computer until "come back online".
-  // Useful when the owner wants no internet traffic at all, and the honest
-  // counterpart to the automatic offline Google's 429 forces.
+  // ── Optional online text-answer switch via chat command ─────────────────
+  // This controls Gemini calls only; local chat and separate open-web paths
+  // remain available while the provider is disabled or rate-limited.
   if (/\b(?:go|switch|stay|turn)\s+(?:yourself\s+)?offline\b|\boffline mode\b|\blocal only\b/i.test(lower)) {
     const state = setOfflineMode(true);
-    broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
-    return `No Gemini, sir — no model will be called and nothing will be counted, until you say "come back online". Everything else keeps working, including the open web: ${state.works.slice(0, 4).join('; ')}.`;
+    return state.message;
   }
   if (/\b(?:come|go|switch|turn)\s+(?:yourself\s+)?back\s+online\b|\b(?:go|switch|turn)\s+online\b/i.test(lower)) {
     const state = setOfflineMode(null);
-    broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
     return state.offline
-      ? `The switch is back to automatic, sir, but I am still offline — ${state.why}. ${state.summary}`
-      : `The switch is back to automatic and I am online, sir — the keys will be used as soon as Google accepts them, and local answers are still tried first so most work costs nothing.`;
+      ? `Gemini remains unavailable — ${state.why}. Local chat and separate open-web paths remain available.`
+      : state.message;
   }
   if (/\b(?:are you|am i)\s+(?:offline|online)\b|\boffline status\b|\bconnectivity\b/i.test(lower)) {
     const state = offlineSnapshot();
     return state.offline
-      ? `${state.summary} Still working: ${state.works.slice(0, 4).join('; ')}. Not available while offline: ${state.refused.slice(0, 3).join('; ')}.`
-      : `I am online, sir. ${state.summary} Today: ${quotaSnapshot().summary}`;
+      ? `${state.summary} Still working: ${state.works.slice(0, 4).join('; ')}. Gemini-dependent tasks: ${state.refused.slice(0, 3).join('; ')}.`
+      : `Gemini is available, sir. ${state.summary} Today: ${quotaSnapshot().summary}`;
   }
 
   const findPic = trimmed.match(/^(?:jarvis,?\s+)?(?:find|show|get|look up|google)\s+(?:me\s+)?(?:a|an|the|some)?\s*(?:picture|image|photo|photos|pictures|images)\s*(?:of|for|showing|about)?\s+(.{2,300})$/i);
@@ -1494,20 +1464,13 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       // The Brain provides history for this one conversation only. Other topics
       // and global dashboard logs are not appended to the model request.
       const turns = brainTurn?.history || [];
-      const asksForDetail = /\b(?:in detail|detailed|step[- ]by[- ]step|comprehensive|deep dive|full analysis|long explanation|explain fully)\b/i.test(trimmed);
-      // Character comes from the standalone recipe (backend/persona.py):
-      // the owner's own system instruction, speaking-style preset and
-      // personality file last — NOT the web's old 35-words-or-fewer gag and
-      // 128-token cap, which made Jarvis clipped and unlike himself. The
-      // personality file now decides how long an answer runs; the token cap
-      // below is only a generous safety net. The answering machinery itself
-      // (streaming + fast no-thinking setting) stays: it is what makes the
-      // first words arrive quickly, and since the quota fix it spends one
-      // budget unit per question no matter how it retries.
+      // Keep the owner's full answer: do not set an app-level generation cap.
+      // The model's own supported limit applies, while the page streams every
+      // returned piece into the same chat reply and voice queue.
       const systemInstruction = standaloneSystemInstruction(brainTurn?.context_block || '');
       const run = await runBrainStream(ai, {
         kind: 'text',
-        config: { systemInstruction, maxOutputTokens: asksForDetail ? 1400 : 700 },
+        config: { systemInstruction },
         contents: [
           ...turns,
           { role: 'user', parts: [{ text: trimmed }] },
@@ -1518,8 +1481,13 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       if (run.model !== configured.model) {
         console.log(`[JARVIS] ${configured.model} is unavailable — ${run.model} (${run.modelSource}) answered instead.`);
       }
-      // Keep the answer (when it is safe to keep) so the same question costs
-      // nothing next time — the same rule the desktop app follows, same file.
+      const interrupted = run.attempts.find((attempt) => attempt.ok && attempt.error?.startsWith('cut short:'));
+      if (interrupted) {
+        noteBrainHealth(false);
+        console.warn(`[JARVIS] the answer from ${run.model} stopped partway through; keeping the words received and marking the reply incomplete.`);
+        return `${run.value.trim()}\n\nI could not finish the full answer, sir; the text service stopped partway through, so the reply above is incomplete.`;
+      }
+      // Keep only a complete answer so the same question costs nothing next time.
       noteBrainHealth(true);
       // The model that ACTUALLY answered is recorded with the answer, so a later question
       // can tell whether the stored words are still from the model in use.
@@ -1527,60 +1495,25 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
       if (kept) console.log(`[JARVIS] kept the answer as entry ${kept.id} (${run.model}) — asking again costs nothing`);
       return run.value;
     } catch (err) {
-      // Honest failure, naming the real cause: a 404 means the model name was
-      // withdrawn (the key is fine), a missing key names every file checked,
-      // and only a genuine connection error blames the connection.
-      if (err instanceof BrainError) {
-        console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
-        noteBrainHealth(false);
-        // Google's quota (429), a refused key, or the offline switch: the app is
-        // OFFLINE from here on, and a 429 is a WARNING, not a dead end. The full
-        // diagnosis stays in the server log, Settings and Brain Check; the chat
-        // gets a local answer instead of a wall of error text.
-        if (err.code === 'rate-limited' || err.code === 'google-stopped' || err.code === 'offline' || err.code === 'no-key') {
-          return openWebReply(trimmed, staleKnown);
-        }
-        // A stored answer from an earlier model, said plainly to be out of date, beats
-        // silence — but it never replaces a call that could have been made.
-        if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
-        return err.message;
-      }
-      console.error('Gemini error:', err);
-      const message = err instanceof Error ? err.message : String(err);
+      // A provider failure must never stop local chat. Log the concise provider
+      // result, then try the local knowledge and open-web paths for the reply.
+      if (err instanceof BrainError) console.warn(`[JARVIS] Gemini call failed (${err.code}): ${err.message}`);
+      else console.error('Gemini error:', err);
       noteBrainHealth(false);
-      if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
-      return `I reached for Gemini, sir, but the call failed in a way I cannot classify: ${message}. The key is set and the model is ${resolveTextModel().model}; the server log has the full error.`;
+      return openWebReply(trimmed, staleKnown);
     }
   }
 
-  // No key: local, built-in answers only — nothing pretends to be AI, and the
-  // last line tells the owner exactly where a key is looked for.
-  const keyHelp = KEY_HELP;
-  // A stored answer (even one from an earlier model, which could not be re-checked) is
-  // more use than a built-in brush-off — and it is labelled with its date and model so
-  // nothing pretends to be current.
+  // No model answered; use a known local answer if available, otherwise keep
+  // the failure short and continue to accept the next chat command.
   if (staleKnown) return knowledge.describeStale(staleKnown, resolveTextModel().model);
-  if (lower.includes('who are you') || lower.includes('what are you') || lower.includes('identity')) {
-    return `I am ${NAMES.assistant}, your automated personal assistant. My reasoning core is offline at the moment — no Gemini key is set — so I am running on my built-in local replies. ${keyHelp}`;
-  }
-  if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-    return `Good day${NAMES.user ? `, ${NAMES.user}` : ', sir'}. One honest note: my reasoning is offline (no Gemini key), so I can only give built-in local replies. ${keyHelp}`;
-  }
-  if (lower.includes('time') || lower.includes('date')) {
-    return `Current server timestamp is ${new Date().toLocaleString()}.`;
-  }
-  if (lower.includes('wake') || lower.includes('online')) {
-    return `The server is awake, sir, but my reasoning is offline — no Gemini key is set. ${keyHelp}`;
-  }
-
-  return `My reasoning is offline, sir — no Gemini key is set, so I can only run the built-in local commands. ${keyHelp}`;
+  return `I could not find a local answer, sir. Teach me with “learn: ${trimmed.slice(0, 40)} = <answer>” and I will remember it.`;
 }
 
 /**
  * Does this read as "do something on the computer" rather than "tell me / talk
- * to me"? Used only to avoid spending an AI call on a command nothing local can
- * carry out — the reply then says so and offers the call rather than making it
- * silently.
+ * to me"? Used to avoid sending an unsupported computer operation to Gemini;
+ * the reply says which local tools are available instead.
  */
 function looksLikeComputerTask(lower: string): boolean {
   return /^\s*(?:please\s+)?(?:jarvis,?\s+)?(?:open|close|start|stop|launch|run|quit|kill|install|uninstall|delete|remove|move|rename|copy|create (?:a )?(?:file|folder|note)|draft|write (?:an? )?(?:email|letter|report|document)|send (?:an? )?email|compose|schedule|book|order|buy|print|scan|turn (?:on|off)|set (?:the )?(?:volume|brightness|timer|alarm)|shut ?down|restart|reboot|screenshot|type|click|scroll|drag|download|upload|convert|resize|compress|edit (?:the )?(?:image|photo|video))\b/i.test(lower);
@@ -1610,7 +1543,6 @@ function writeReminders(list: Array<{ text: string; at: string }>): void {
 
 // Real telemetry for the Diagnostics button — honest readings, no theatre.
 function realStatusReport(): string {
-  const voice = resolveVoiceModel();
   const mem = process.memoryUsage();
   const up = Math.round(process.uptime());
   const key = resolveGeminiKey();
@@ -1626,23 +1558,20 @@ function realStatusReport(): string {
     'Real telemetry, sir — measured, not scripted:',
     `• Server uptime ${Math.floor(up / 60)} min ${up % 60} s · memory ${Math.round(mem.rss / 1048576)} MB`,
     `• Connected interfaces: ${wss.clients.size}`,
-    `• Gemini neural core: ${key.key ? `linked — key 1 ending in …${key.tail} from ${key.source}` : 'NO KEY — my reasoning is offline and only built-in local replies work'}`,
-    `• Second key (fallback): ${key2.present ? `set — ending in …${key2.tail} from ${key2.source}` : 'not set (optional; add it in Settings → The Brain)'}`,
+    `• Gemini provider: ${key.key ? `key 1 configured — ending in …${key.tail} from ${key.source}` : 'not configured — local chat and separate open-web paths remain available'}`,
+    `• Second key (fallback): ${key2.present ? `set — ending in …${key2.tail} from ${key2.source}` : 'not set (optional; add it in Settings → Optional Gemini access)'}`,
     `• Key answering now: ${status.activeKey.slot ? `key ${status.activeKey.slot} (…${status.activeKey.tail}) — ${status.activeKey.reason}` : 'none'}`,
     `• Keys looked for in: the environment (GEMINI_API_KEY / GEMINI_API_KEY_2, including ./.env), then config/api_keys.json (gemini_api_key / gemini_api_key_2)`,
     `• Text model: ${model.model} (from ${model.source})`,
     `• Picture model: ${picture.image ? `${picture.image} (${picture.imageSource})` : 'not set — I ask your key which picture model it may use, and remember the one that works'}`,
-    `• Gemini calls today: ${quota.summary}; resets at local midnight. This count only warns — only a real 429 from Google stops calls.`,
+    `• Gemini calls today: ${quota.summary}; resets at local midnight. This count only warns; key availability, the Gemini switch, or Google's own stop affects Gemini requests only, not chat or local tools.`,
     `• Conversation log: ${messageHistory.length} visible entries; durable turns use memory/recent_dialogue.json with overflow in memory/dialogue_archive.jsonl`,
     `• Stored memories: ${notes} in memory/long_term.json; migration ${brainStatus.migration?.state || 'unknown'}${brainStatus.storage_error ? ` (${brainStatus.storage_error})` : ''}`,
-    `• Voice model: ${voice.model} (from ${voice.source})${voice.note}`,
-    '• Voice: speech out 🔊 and speech in 🎤 run in your browser; the microphone is always listening, and 🔇 mutes it.',
   ].join('\n');
 }
 
 // ── WebSockets Setup ──────────────────────────────────────────────────────────
 const wss = new WebSocketServer({ noServer: true });
-const audioWss = new WebSocketServer({ noServer: true });
 
 // ── My Hands gesture bus (/ws/myhands) ──────────────────────────────────────
 // The browser running the camera publishes small gesture events here, and every
@@ -1670,64 +1599,6 @@ function broadcast(payload: object) {
       client.send(msg);
     }
   });
-}
-
-// ── The count's news, told in the terminal AND the dashboard ────────────────
-// config.ts already prints each event in the terminal. Here the same news is
-// put in the dialogue as a system line (not spoken), so the owner sees at once
-// when the count passes the warning level, when key 2 takes over, and when
-// Google has stopped us for the day — three different things, named apart.
-onQuotaEvent((event) => {
-  // The quota is not a chat topic. The terminal keeps every event; the dialogue
-  // gets only the one line from announceOfflineChange, when the quota runs out.
-  if (event.kind === 'key-stopped' && !event.switchedTo) announceOfflineChange();
-});
-
-/**
- * One announcement in the terminal AND the dialogue when the app crosses into
- * or out of offline mode, so the owner is told once, clearly — a warning, never
- * a wall of error text on every following message.
- */
-let announcedOffline: boolean | null = null;
-const QUOTA_EXPLAINER_ID = 'quota-explainer';
-
-/** The one line about the quota. Shown once, never spoken unprompted. */
-const OFFLINE_NOTE = 'The Gemini quota is finished for now.';
-
-/**
- * One announcement when the app crosses into or out of offline mode. Going
- * offline, Jarvis mentions it once in the dialogue (replacing any older
- * mention, and never spoken unprompted). Coming back online is a short system
- * notice, and starting online is not news at all.
- */
-function announceOfflineChange(): void {
-  const state = offlineSnapshot();
-  if (announcedOffline === state.offline) return;
-  const atBoot = announcedOffline === null;
-  announcedOffline = state.offline;
-  if (state.offline) {
-    // The terminal keeps the full warning, once. The dialogue gets only the short line.
-    console.warn(`[JARVIS] No Gemini right now (${state.why}). This is a warning, not a block: local features and the open web keep working, and no call is counted.`);
-    for (let i = messageHistory.length - 1; i >= 0; i--) {
-      const m = messageHistory[i];
-      if (m.type === 'log' && typeof m.id === 'string' && m.id.startsWith(QUOTA_EXPLAINER_ID)) messageHistory.splice(i, 1);
-    }
-    const line: LogMessage = {
-      type: 'log', speaker: 'jarvis', id: `${QUOTA_EXPLAINER_ID}-${Date.now()}`,
-      text: OFFLINE_NOTE, timestamp: Date.now(),
-    };
-    messageHistory.push(line);
-    saveHistory();
-    broadcast({ ...line, replay: true });   // shown once; a page open now does not read it aloud
-  } else if (!atBoot) {
-    const text = 'Gemini is back.';
-    console.warn(`[JARVIS] ${text}`);
-    const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
-    messageHistory.push(line);
-    saveHistory();
-    broadcast(line);
-  }
-  broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
 }
 
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
@@ -1760,19 +1631,14 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   });
 });
 
-// Voice command fallback: the page streams raw PCM16 here, then sends {"type":"end"}.
-// The audio is wrapped as WAV and transcribed by Gemini; the transcript goes back to the
-// page, which submits it as a normal command. Used when the browser has no built-in
-// speech recognition (or it fails). Needs GEMINI_API_KEY; without it, a clear message
-// is returned instead of silence.
-const MAX_VOICE_SECONDS = 15;
-
+// Local microphone transcription. The supported dashboard posts raw PCM to
+// /api/voice/transcribe; this helper keeps the model, if present, on this machine.
 interface VoiceResult {
   type: 'transcript' | 'error';
   text?: string;
   message?: string;
   /** Machine-readable reason, so the page can print the right advice. */
-  code?: 'too-short' | 'no-key' | 'empty' | 'failed';
+  code?: 'too-short' | 'empty' | 'failed';
 }
 
 async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceResult> {
@@ -1793,35 +1659,6 @@ async function transcribeVoice(pcm: Buffer, sampleRate: number): Promise<VoiceRe
     message: answer.message || 'The local voice could not hear that.',
   };
 }
-
-audioWss.on('connection', (ws: WebSocket) => {
-  const chunks: Buffer[] = [];
-  let collected = 0;
-  let sampleRate = 48000;
-  let done = false;
-
-  ws.on('message', async (data: Buffer, isBinary: boolean) => {
-    if (!isBinary) {
-      try {
-        const m = JSON.parse(data.toString());
-        if (m.type === 'start' && Number(m.rate) > 0) {
-          sampleRate = Math.min(Math.max(Number(m.rate), 8000), 96000);
-        } else if (m.type === 'end' && !done) {
-          done = true;
-          const result = await transcribeVoice(Buffer.concat(chunks), sampleRate);
-          if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(result));
-          ws.close();
-        }
-      } catch {
-        /* ignore malformed control frames */
-      }
-      return;
-    }
-    if (done) return;
-    collected += data.length;
-    if (collected <= sampleRate * 2 * MAX_VOICE_SECONDS) chunks.push(data);
-  });
-});
 
 server.on('upgrade', (req, socket, head) => {
   const urlObj = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
@@ -1847,10 +1684,6 @@ server.on('upgrade', (req, socket, head) => {
   if (pathname === '/ws') {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
-    });
-  } else if (pathname === '/ws/phone-audio') {
-    audioWss.handleUpgrade(req, socket, head, (ws) => {
-      audioWss.emit('connection', ws, req);
     });
   } else {
     socket.destroy();
@@ -2682,10 +2515,10 @@ app.post('/api/voice/transcribe', requireAuth, async (req: Request, res: Respons
   }
 });
 
-// ── JARVIS's voice: made and played on this computer by local_voice/service.py ──
-// Kokoro makes the voice and plays it through this computer's speakers; faster-whisper
-// turns the microphone's audio into words. Neither one calls Gemini, so the Gemini
-// budget is spent only on answers. The browser captures the microphone and never speaks.
+// ── JARVIS's local voice service ────────────────────────────────────────────
+// Kokoro speaks through this computer's speakers; faster-whisper transcribes
+// microphone audio locally. The page may use an installed local browser voice as
+// a TTS fallback, selected only when localService === true.
 const LOCAL_VOICE_PORT = Number(process.env.SUPPER_LOCAL_VOICE_PORT) || 3101;
 const LOCAL_VOICE_URL = `http://127.0.0.1:${LOCAL_VOICE_PORT}`;
 
@@ -2798,43 +2631,57 @@ function startLocalVoice(): void {
 /**
  * What the local voice service says about itself, kept fresh in the background.
  *
- * Both server-side ways of using the voice (Kokoro speaking, faster-whisper
- * hearing) fail for reasons the owner can act on — a missing package, a missing
- * model file — and both used to fail invisibly: the service died at import and
- * the panels still claimed a model. The state belongs in the panels.
+ * The app-local voice service reports speaking and hearing readiness separately
+ * so Settings can describe the actual fallback paths without hiding failures.
  */
 interface LocalVoiceInfo {
-  service: boolean;    // the Python service answered at all
-  ready: boolean;      // it can both speak and hear right now
-  message: string;     // why not, in plain words ('' when it is ready)
+  service: boolean;       // the Python service answered at all
+  ready: boolean;         // speaking and hearing are both ready
+  speakReady: boolean;
+  hearReady: boolean;
+  speakMessage: string;
+  hearMessage: string;
+  message: string;
   at: number;
 }
 
-let localVoiceInfoCache: LocalVoiceInfo = { service: false, ready: false, message: 'not checked yet', at: 0 };
+let localVoiceInfoCache: LocalVoiceInfo = {
+  service: false, ready: false, speakReady: false, hearReady: false,
+  speakMessage: 'not checked yet', hearMessage: 'not checked yet', message: 'not checked yet', at: 0,
+};
 
 async function probeLocalVoice(): Promise<void> {
   try {
     const res = await fetch(`${LOCAL_VOICE_URL}/health`, { signal: AbortSignal.timeout(5_000) });
     const data = (await res.json()) as Record<string, unknown>;
-    // Older services only report the voice files; read both shapes.
+    // Older services only report the voice files; read both response shapes.
     const speakReady = data.speakReady !== undefined ? !!data.speakReady : !!data.voiceFilesPresent;
     const hearReady = data.hearReady !== undefined ? !!data.hearReady : true;
-    // Speaking and hearing usually fail for the SAME reason (a missing numpy
-    // says it twice); the panel should read it once.
-    const reasons = [...new Set([data.speakReason, data.hearReason]
-      .filter((r): r is string => typeof r === 'string' && r.trim().length > 0))].join(' ');
+    const speakMessage = typeof data.speakReason === 'string' ? data.speakReason.trim() : '';
+    const hearMessage = typeof data.hearReason === 'string' ? data.hearReason.trim() : '';
+    const message = [!speakReady && speakMessage, !hearReady && hearMessage].filter(Boolean).join(' ')
+      || (speakReady && hearReady ? '' : 'the voice service is running but nothing is loaded');
     localVoiceInfoCache = {
       service: true,
       ready: speakReady && hearReady,
-      message: speakReady && hearReady ? '' : (reasons || 'the voice service is running but nothing is loaded'),
+      speakReady,
+      hearReady,
+      speakMessage,
+      hearMessage,
+      message,
       at: Date.now(),
     };
   } catch (err) {
     const timedOut = err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError');
+    const message = timedOut ? 'the voice service did not answer in time' : 'the voice service is not running on this computer';
     localVoiceInfoCache = {
       service: false,
       ready: false,
-      message: timedOut ? 'the voice service did not answer in time' : 'the voice service is not running on this computer',
+      speakReady: false,
+      hearReady: false,
+      speakMessage: message,
+      hearMessage: message,
+      message,
       at: Date.now(),
     };
   }
@@ -2842,27 +2689,7 @@ async function probeLocalVoice(): Promise<void> {
 
 function voiceLocalInfo(): LocalVoiceInfo { return localVoiceInfoCache; }
 
-/**
- * The voice in use, for the status panels.
- *
- * The mouth the dashboard actually uses is normally the BROWSER's own voice:
- * free, offline, no models, and it comes out of the speakers of the machine the
- * person is sitting at. This describes the SERVER side — what JARVIS can
- * additionally offer on the computer he runs on — and whether it is really
- * ready, instead of naming a model that may not even load.
- */
-function resolveVoiceModel(): { model: string; source: string; note: string } {
-  const health = voiceLocalInfo();
-  return {
-    model: `Kokoro ${(process.env.SUPPER_TTS_VOICE || 'bm_george').trim()} on this computer`,
-    source: 'local_voice/service.py',
-    note: health.ready
-      ? ` · ready (used as the fallback; the browser's own voice speaks first)`
-      : ` · NOT available here — ${health.message}`,
-  };
-}
-
-// POST /api/voice/speak -> speak one sentence on this computer. Answers when playback has finished.
+// POST /api/voice/speak -> speak the complete reply on this computer. Answers when playback has finished.
 // Body: { text }. Answer: { ok } or { ok: false, code, message }.
 app.post('/api/voice/speak', requireAuth, async (req: Request, res: Response) => {
   const text = typeof req.body?.text === 'string' ? req.body.text.trim() : '';
@@ -3146,7 +2973,7 @@ app.get('/api/files/read', requireAuth, (req: Request, res: Response) => {
 // ── AI heavy lifting for the rooms ──────────────────────────────────────────
 // Jarvis makes or changes pictures; the hand tools are only the fallback for
 // minor touches. POST /api/ai/image: { prompt, image? (base64 PNG) } →
-// { image (base64 PNG), mime }. Honest 503 when no key is on this machine.
+// { image (base64 PNG), mime }. A 503 is used only when drawing and web fallback fail.
 app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
   const { prompt, image } = req.body || {};
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -3195,9 +3022,8 @@ app.post('/api/ai/image', requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-// GET /api/system-status -> Real-time telemetry & capabilities
+// GET /api/system-status -> app process and local-service status only
 app.get('/api/system-status', (_req: Request, res: Response) => {
-  const voice = resolveVoiceModel();
   const mem = process.memoryUsage();
   res.json({
     ok: true,
@@ -3210,35 +3036,11 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
       rssMB: Math.round(mem.rss / (1024 * 1024)),
       heapUsedMB: Math.round(mem.heapUsed / (1024 * 1024)),
     },
-    modules: [
-      { name: 'My Hands Spatial Controller', status: 'ready', icon: '✋' },
-      { name: 'PC File System Tree & Inspector', status: 'ready', icon: '📂' },
-      { name: 'Physical Glass Acrylic Surfaces', status: 'active', icon: '🪟' },
-      { name: `Gemini Neural Core (${resolveTextModel().model})`, status: !resolveGeminiKey().key ? 'not configured'
-        : brainHealth?.ok ? 'connection verified'
-          : brainHealth && Date.now() - brainHealth.at <= BRAIN_HEALTH_STALE_MS ? 'last connection test failed'
-            : 'key configured; provider not recently tested', icon: '🧠' },
-      { name: 'Autonomous Self-Repair Sandbox', status: 'ready', icon: '🔧' },
-      { name: 'Dual-Channel Telemetry Relay', status: 'connected', icon: '📡' },
-      { name: `Server voice model (${voice.model})`, status: voice.note.trim() ? 'changed by a setting' : 'current', icon: '🔊' },
-      { name: `Local knowledge base (${knowledge.count()} answers, shared with the desktop app)`, status: 'ready', icon: '📚' },
-      { name: `Local drafting desk (${drafts.list().length} draft(s) written here, no AI)`, status: 'ready', icon: '✍️' },
-    ],
-    // What the SERVER side of the voice can do. The mouth the dashboard uses
-    // first is the browser's own voice, which no server can see — this says
-    // whether the local voice service is there as an alternative, and why not
-    // when it is not.
+    // App-local Kokoro is the primary speaking path; this reports whether it
+    // and the faster-whisper listener are actually ready on this computer.
     voiceLocal: voiceLocalInfo(),
-    // Whether the app is OFFLINE — Google's quota spent, no key, or the owner's
-    // own switch — and what that means for each feature. The page shows this as
-    // a banner, so "the chat is answering from this computer" is never a guess.
-    offline: offlineSnapshot(),
-    // The two budgets, both visible in Settings → Voice: the brain's and the
-    // voice's own. Speaking can never starve the answers.
-    brain: brain.status(),
     knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
     drafts: { count: drafts.list().length, dir: 'runtime/drafts' },
-    voice: voiceQuotaSnapshot(),
   });
 });
 
@@ -3246,7 +3048,6 @@ app.get('/api/system-status', (_req: Request, res: Response) => {
 // The key itself is never returned, only its last four characters and its source.
 app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) => {
   const status = configStatus();
-  const voiceModel = resolveVoiceModel();       // the mouth's own model, reported beside the brain's
   res.json({
     present: status.key.present,
     tail: status.key.tail,
@@ -3259,13 +3060,9 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     activeKey: status.activeKey,
     build: SERVER_BUILD,                                   // the page's marker is compared against this
     configRoot: CONFIG_ROOT,                               // the folder this server reads its settings from
-    model: status.model.text,                              // the model in use for chat, voice and the brain check
+    model: status.model.text,                              // the model in use for Gemini text requests and the brain check
     knowledge: { entries: knowledge.count(), file: 'runtime/knowledge.json', starters: 'knowledge/starter.json' },
     drafts: { count: drafts.list().length, dir: 'runtime/drafts' },
-    voice: voiceQuotaSnapshot(),
-    voiceModel: voiceModel.model,
-    voiceModelSource: voiceModel.source,
-    voiceModelNote: voiceModel.note,
     modelSource: status.model.textSource,
     imageModel: status.model.image,
     imageModelSource: status.model.imageSource,
@@ -3273,18 +3070,16 @@ app.get('/api/settings/gemini-key', requireAuth, (_req: Request, res: Response) 
     userName: status.names.user,
     namesSource: status.names.source,
     quota: status.quota,
-    // Whether the app is offline (Google's quota spent, no key, or the owner's
-    // switch), so Settings can say it plainly next to the key and the count.
+    // Optional Gemini provider state for explicit diagnostic API consumers.
     offline: offlineSnapshot(),
   });
 });
 
-// ── The offline switch ──────────────────────────────────────────────────────
-// GET  /api/offline          -> the state, why, and what works / is refused
-// POST /api/offline {on}     -> on: true = stay offline, false = stay online,
-//                               omitted/null = let Google's own state decide.
-// The switch is remembered in runtime/offline.json, so a deliberate "stay on
-// this computer today" survives a restart.
+// ── Optional Gemini provider switch ─────────────────────────────────────────
+// GET  /api/offline          -> Gemini availability plus unaffected alternatives
+// POST /api/offline {on}     -> on: true = disable Gemini calls, false = enable,
+//                               omitted/null = use Google's/provider's state.
+// This compatibility route remembers the Gemini-only setting in runtime/offline.json.
 // ── Pictures, video and sound: the optional free keys ───────────────────────
 // GET  /api/settings/image-keys        -> which keyed suppliers have a key
 // POST /api/settings/image-keys        -> { service, key } for any of them
@@ -3507,7 +3302,6 @@ app.post('/api/offline', requireAuth, (req: Request, res: Response) => {
   const raw = req.body?.on;
   const on = raw === true || raw === 'true' || raw === 1 ? true : raw === false || raw === 'false' || raw === 0 ? false : null;
   const state = setOfflineMode(on);
-  broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
   res.json({ ok: true, ...state, quota: quotaSnapshot() });
 });
 
@@ -3589,10 +3383,6 @@ app.get('*all', (req: Request, res: Response) => {
 // Start server
 server.listen(PORT, HOST, () => {
   console.log(`[JARVIS] Core system running on http://${HOST}:${PORT}`);
-  // Say the connectivity state at boot, so an owner who restarts JARVIS after
-  // Google's quota ran out is told at once that it is offline and local-only —
-  // rather than discovering it on the first question.
-  announceOfflineChange();
   startLocalVoice();
   // Ask the voice service what it can really do: once shortly after it starts
   // (models load in the background), then on a slow timer, so a model that is
