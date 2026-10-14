@@ -587,10 +587,9 @@ async function generateStudioScript(request: import('./studio/projects.js').Stud
 /**
  * What the last real contact with the reasoning core said.
  *
- * Small talk does not spend a call, so it cannot discover a broken brain for
- * itself — it reads this instead. Without it, "hello" would answer cheerfully
- * while the reasoning core was unreachable, which is exactly the pretence this
- * app is not allowed to make: fast must not mean dishonest.
+ * Small talk does not read this — a greeting is the whole answer and never
+ * carries app state. Brain Check and Settings report it instead, which is
+ * where the owner goes to ask about the state of the machine.
  */
 let brainHealth: { ok: boolean; at: number } | null = null;
 const BRAIN_HEALTH_STALE_MS = 15 * 60 * 1000;
@@ -598,12 +597,6 @@ function noteBrainHealth(ok: boolean): void {
   // Keep only the state, not Google's raw diagnostics. Error details are shown
   // in the full reply / Brain Check; a greeting must stay short and speakable.
   brainHealth = { ok, at: Date.now() };
-}
-/** A short, honest aside for small talk when the brain is known to be down. */
-function brainDownNote(): string {
-  if (!brainHealth || brainHealth.ok) return '';
-  if (Date.now() - brainHealth.at > BRAIN_HEALTH_STALE_MS) return '';
-  return ' My reasoning core did not answer its last check.';
 }
 
 /**
@@ -625,6 +618,14 @@ function localSmallTalk(lower: string): string | null {
     const match = words.match(/^(.*?)\s+(?:jarvis|sir|there)$/);
     return !!match && phrases.includes(match[1]);
   };
+
+  // The name on its own is a greeting. It used to fall through the regex above
+  // (which needs a phrase BEFORE "jarvis") and out to the open web, so saying
+  // "Jarvis" sent a web search for the word "jarvis" and reported that nothing
+  // was found - the one thing a greeting must never do.
+  if (words === 'jarvis' || words === NAMES.assistant.toLowerCase() || words === 'you there' || words === 'there') {
+    return 'Yes' + greetingName + '?';
+  }
 
   if (addressed(['hello', 'hi', 'hey', 'hiya', 'howdy', 'greetings', 'good morning', 'good afternoon', 'good evening', 'good day', 'morning', 'afternoon', 'evening', "what's up", 'sup'])) {
     return `Good day${greetingName}.`;
@@ -1254,13 +1255,12 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
     }
   }
 
-  // Small talk is a first-class local response, even if an older release
-  // happened to cache a long Gemini answer for "hello" or "thanks".
+  // Small talk is answered here and goes no further. It used to carry a status
+  // report on the end - "My reasoning core is offline because no Gemini key is
+  // set" after every "hello" - which is meta-commentary about the app's own
+  // state, in the middle of a greeting. The greeting is the whole answer.
   const chat = localSmallTalk(lower);
-  if (chat) {
-    if (!resolveGeminiKey().key) return `${chat} My reasoning core is offline because no Gemini key is set.`;
-    return chat + brainDownNote();
-  }
+  if (chat) return chat;
 
   // A stored answer is used straight away — unless it is a Gemini answer from another
   // model (or from before the app recorded which model made it). Those must not silently
