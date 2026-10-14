@@ -1444,6 +1444,10 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   // "go offline" keeps everything on this computer until "come back online".
   // Useful when the owner wants no internet traffic at all, and the honest
   // counterpart to the automatic offline Google's 429 forces.
+  // "explain the quota" / "what are my limits": the whole explanation, said by Jarvis.
+  if (/^(?:please\s+)?(?:jarvis,?\s+)?(?:explain|tell me about|what (?:is|are)|how (?:does|do)|show)\s+(?:(?:the|my|and|your)\s+)*(?:quota|limits?|quotas)(?:\s+and\s+(?:the\s+)?(?:limits?|quota))?\b|^(?:please\s+)?(?:my\s+|the\s+)?(?:quota|limits?)(?:\s+and\s+(?:the\s+)?limits?)?\s*\??$/i.test(trimmed)) {
+    return quotaAndLimitExplanation();
+  }
   if (/\b(?:go|switch|stay|turn)\s+(?:yourself\s+)?offline\b|\boffline mode\b|\blocal only\b/i.test(lower)) {
     const state = setOfflineMode(true);
     broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
@@ -1700,18 +1704,68 @@ onQuotaEvent((event) => {
  * a wall of error text on every following message.
  */
 let announcedOffline: boolean | null = null;
+const QUOTA_EXPLAINER_ID = 'quota-explainer';
+/** Set at boot: the first page that opens hears the explanation once, spoken. */
+let speakExplainerOnNextConnect = false;
+
+/**
+ * The complete explanation of the quota and the limits, in Jarvis's own words.
+ * Said when the app goes offline (and at boot), and on request: "explain the quota".
+ */
+function quotaAndLimitExplanation(): string {
+  const state = offlineSnapshot();
+  const q = quotaSnapshot();
+  const parts: string[] = [];
+  parts.push(state.offline
+    ? `I am OFFLINE right now, sir, because ${state.why}. I am not calling Gemini, and nothing is counted while this lasts.`
+    : 'I am ONLINE right now, sir: the Gemini keys are usable. Local answers are still tried first, so most questions cost nothing.');
+  const warnText = q.warnAt > 0
+    ? `I warn you once today's count reaches ${q.warnAt} (set by SUPPER_GEMINI_DAILY_WARN, default 20)`
+    : 'the warning level is switched off';
+  parts.push(`Your count: ${q.used} Gemini call${q.used === 1 ? '' : 's'} today. ${warnText}${q.pastWarn ? ', and we are past it now' : ''}. This count is this app's own, kept in runtime/quota.json, and it starts again at local midnight. It only warns; it never stops a call.`);
+  parts.push(`The real limit belongs to Google, not to this app. Only a real 429 from Google stops calls, and only for the key Google refused. Google's daily quota resets at ${googleResetPromise()}. Google's own limits differ by model and project, so AI Studio shows the true figures.`);
+  parts.push(q.hasSecondKey
+    ? 'A second key is set. If Google refuses the first key, the second takes over for the rest of the day. It only doubles the allowance when it comes from a different Google account or project.'
+    : 'No second key is set. If Google refuses your only key, nothing else can answer Gemini until the reset. A second key from a different Google account or project can take over then; add it in Settings → The Brain.');
+  if (q.stoppedByGoogle) parts.push('Google has stopped the key for today, so Gemini calls stay off until that reset.');
+  parts.push(`While offline I still work: the open web (search, facts, pictures, video and sound, with no key and no quota), chat and small talk, the local knowledge base, your memory, notes and reminders, the drafting desk, the time and date, and the rooms and camera. I cannot write an answer with a Gemini model, draw a picture with a model, or write a grounded research report until the keys come back.`);
+  parts.push('To return to automatic, say "come back online". To stay offline on purpose, say "go offline".');
+  return parts.join('\n\n');
+}
+
+/**
+ * One announcement when the app crosses into or out of offline mode. Going
+ * offline, Jarvis says the full explanation himself (one copy in the dialogue,
+ * replacing any older one). Coming back online is a short system notice.
+ */
 function announceOfflineChange(): void {
   const state = offlineSnapshot();
   if (announcedOffline === state.offline) return;
+  const atBoot = announcedOffline === null;
   announcedOffline = state.offline;
-  const text = state.offline
-    ? `No Gemini right now (${state.why})${state.reason === 'google-stopped' ? `; the keys come back at ${googleResetPromise()}` : ''}. This is a warning, not a block: every local feature still works, the open web still works — search, facts, pictures and video need no key and no quota — and no call is counted.`
-    : 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
-  console.warn(`[JARVIS] ${text}`);
-  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
-  messageHistory.push(line);
-  saveHistory();
-  broadcast(line);
+  if (state.offline) {
+    console.warn(`[JARVIS] offline (${state.why}) — the quota and limit explanation is in the dialogue.`);
+    for (let i = messageHistory.length - 1; i >= 0; i--) {
+      const m = messageHistory[i];
+      if (m.type === 'log' && typeof m.id === 'string' && m.id.startsWith(QUOTA_EXPLAINER_ID)) messageHistory.splice(i, 1);
+    }
+    const line: LogMessage = {
+      type: 'log', speaker: 'jarvis', id: `${QUOTA_EXPLAINER_ID}-${Date.now()}`,
+      text: quotaAndLimitExplanation(), timestamp: Date.now(),
+    };
+    messageHistory.push(line);
+    saveHistory();
+    if (atBoot) speakExplainerOnNextConnect = true;
+    broadcast(line);
+  } else if (!atBoot) {
+    // Starting online is not news; only a real change back online is announced.
+    const text = 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
+    console.warn(`[JARVIS] ${text}`);
+    const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
+    messageHistory.push(line);
+    saveHistory();
+    broadcast(line);
+  }
   broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
 }
 
@@ -1722,8 +1776,10 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // Send history (up to 50 items). Marked as a replay so that a page which has
   // just opened never reads the old conversation out loud.
   for (const item of messageHistory.slice(-50)) {
-    ws.send(JSON.stringify({ ...item, replay: true }));
+    const isBootExplainer = speakExplainerOnNextConnect && item.type === 'log' && typeof item.id === 'string' && item.id.startsWith(QUOTA_EXPLAINER_ID);
+    ws.send(JSON.stringify(isBootExplainer ? item : { ...item, replay: true }));
   }
+  speakExplainerOnNextConnect = false;
 
   ws.on('message', async (data: Buffer | string) => {
     try {
