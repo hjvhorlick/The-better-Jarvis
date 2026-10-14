@@ -22,6 +22,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
+import { JSDOM } from 'jsdom';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -81,5 +82,94 @@ test('every other served page parses too', () => {
       const error = checkSyntax(block);
       assert.equal(error, null, `inline script block ${i} of ${rel} does not parse:\n${error}`);
     }
+  }
+});
+
+test('the whole Rooms page toggles every room tool strip on every press', async () => {
+  const html = readFileSync(join(ROOT, 'dashboard', 'static', 'rooms.html'), 'utf-8');
+  const dom = new JSDOM(html, {
+    url: 'https://jarvis.test/rooms.html',
+    runScripts: 'outside-only',
+    pretendToBeVisual: true,
+  });
+  const { window } = dom;
+  try {
+    window.fetch = async () => ({ ok: true, json: async () => ({}) });
+    window.WebSocket = class {
+      constructor() { this.readyState = 1; }
+      addEventListener() {}
+      close() { this.readyState = 3; }
+    };
+    const context = {
+      clearRect() {}, drawImage() {}, save() {}, restore() {}, beginPath() {}, arc() {}, fill() {},
+      moveTo() {}, lineTo() {}, stroke() {}, rect() {}, ellipse() {}, fillText() {},
+      getImageData() { return { data: new Uint8ClampedArray(4) }; }, putImageData() {},
+    };
+    window.HTMLCanvasElement.prototype.getContext = () => context;
+
+    const css = window.document.createElement('style');
+    css.textContent = readFileSync(join(ROOT, 'web', 'styles.css'), 'utf-8');
+    window.document.head.appendChild(css);
+
+    // Evaluate the real modules in the same order as rooms.html. The shell's
+    // loader is replaced only so its initial Coding environment does not need a
+    // network import; Flat itself is the real source, evaluated as a classic
+    // script for jsdom and returned by that loader when the test opens Flat.
+    window.eval(readFileSync(join(ROOT, 'web', 'shell.js'), 'utf-8'));
+    const flatSource = readFileSync(join(ROOT, 'web', 'environments', 'flat.js'), 'utf-8')
+      .replace(/\bexport\s+default\s+/, 'window.__flatEnvironment = ');
+    window.eval(flatSource);
+    window.Shell._setLoader(async (id) => ({
+      default: id === 'flat' ? window.__flatEnvironment : { mount() {} },
+    }));
+    window.eval(readFileSync(join(ROOT, 'web', 'environments', 'register.js'), 'utf-8'));
+    window.eval(readFileSync(join(ROOT, 'web', 'camera.js'), 'utf-8'));
+
+    const body = window.document.body;
+    const toggle = window.document.getElementById('env-tools-toggle');
+    const firstStrip = window.document.querySelector('.env-tools');
+    assert.ok(toggle && firstStrip, 'the page scripts must have built the switch and room tool strips');
+    assert.equal(body.classList.contains('show-tools'), false, 'tools start hidden until requested');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+    assert.equal(window.getComputedStyle(firstStrip).display, 'none');
+
+    for (let i = 0; i < 8; i++) {
+      const shouldOpen = i % 2 === 0;
+      toggle.click();
+      assert.equal(body.classList.contains('show-tools'), shouldOpen, `body state after press ${i + 1}`);
+      assert.equal(toggle.getAttribute('aria-pressed'), String(shouldOpen), `ARIA state after press ${i + 1}`);
+      assert.equal(window.getComputedStyle(firstStrip).display === 'none', !shouldOpen,
+        `room tools should ${shouldOpen ? 'show' : 'hide'} after press ${i + 1}`);
+    }
+
+    // Voice control and the button share the same state, even after explicit
+    // open/close messages arrive from the dashboard parent.
+    const sendTools = (open) => window.dispatchEvent(new window.MessageEvent('message', {
+      origin: window.location.origin,
+      data: { type: 'jarvis-rooms-tools', open },
+    }));
+    sendTools(true);
+    assert.equal(body.classList.contains('show-tools'), true);
+    toggle.click();
+    assert.equal(body.classList.contains('show-tools'), false, 'button clicks must follow the state set by voice control');
+    sendTools(true);
+    assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+
+    const flatTab = window.document.querySelector('.env-switch[data-env="flat"]');
+    flatTab.click();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const drawer = window.document.querySelector('.flat-drawer');
+    const flatTools = window.document.getElementById('tool-flat-tools');
+    assert.ok(drawer && flatTools, 'Flat must mount its own drawer and Tools button');
+    assert.equal(drawer.hidden, true);
+    assert.equal(window.getComputedStyle(drawer).display, 'none', 'CSS must not override the drawer hidden attribute');
+    flatTools.click();
+    assert.equal(drawer.hidden, false);
+    assert.equal(window.getComputedStyle(drawer).display, 'flex');
+    flatTools.click();
+    assert.equal(drawer.hidden, true);
+    assert.equal(window.getComputedStyle(drawer).display, 'none');
+  } finally {
+    window.close();
   }
 });

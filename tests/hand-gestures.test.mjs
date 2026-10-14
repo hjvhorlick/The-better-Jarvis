@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
+const dashboardHtml = readFileSync(new URL("../dashboard/static/app.html", import.meta.url), "utf8");
+const serverSource = readFileSync(new URL("../server.ts", import.meta.url), "utf8");
 
 await import("../dashboard/static/hand-gestures.js");
 const { mapToCover, summarizeHand, createGestureEngine } = globalThis.JarvisHandGestures;
@@ -18,6 +21,27 @@ function okPinch(gap = 0.02, zOffset = 0) {
   lm[20] = { x: 0.77, y: 0.52, z: 0 };
   return lm;
 }
+
+test("the supported dashboard wires real camera frames to the visible gesture UI", () => {
+  assert.match(dashboardHtml, /id="btn-toggle-hands"[^>]*onclick="toggleMyHandsTracking\(\)"/);
+  assert.match(dashboardHtml, /<video id="bg-camera"[^>]*autoplay[^>]*playsinline[^>]*muted/);
+  assert.match(dashboardHtml, /<canvas id="hand-overlay-canvas"><\/canvas>/);
+  assert.match(dashboardHtml, /id="hand-cursor" class="hand-cursor"/);
+  assert.match(dashboardHtml, /navigator\.mediaDevices\.getUserMedia\(constraints\)/);
+  assert.match(dashboardHtml, /HandLandmarker\.createFromOptions/);
+  assert.match(dashboardHtml, /landmarker\.detectForVideo\(bgCam, now\)/);
+  assert.match(dashboardHtml, /drawHandSkeleton\(lms, screenPointForCameraLandmark\)/);
+  assert.match(dashboardHtml, /function publishGesture\(cursorX, cursorY, frame, handSpeed = 0\)/);
+  assert.match(dashboardHtml, /requestVideoFrameCallback/);
+  assert.match(dashboardHtml, /requestAnimationFrame\(trackingFrame\)/);
+  assert.match(dashboardHtml, /new WebSocket\(`\$\{proto\}:\/\/\$\{location\.host\}\/ws\/myhands`\)/);
+  assert.match(dashboardHtml, /Tracking requires a real camera; do not substitute synthetic landmarks\./);
+  assert.doesNotMatch(dashboardHtml, /simulated/);
+
+  assert.match(serverSource, /pathname === '\/ws\/myhands'/);
+  assert.match(serverSource, /handsWss\.clients\.forEach\(\(client\)/);
+  assert.match(serverSource, /client\.send\(msg\)/);
+});
 
 test("cover mapping mirrors and crops exactly like the camera element", () => {
   const center = mapToCover({ x: 0.5, y: 0.5 }, 1920, 1080, 1000, 1000, true);

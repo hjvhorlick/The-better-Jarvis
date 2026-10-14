@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>__ASSISTANT_NAME__ — Autonomous Workspace & Spatial Interface</title>
+  <title>__ASSISTANT_NAME__ — Chat</title>
   <script src="/static/crypto.js"></script>
   <!-- ONE look everywhere: the same clear-glass tokens, the rounded face and the
        pane/control shapes are shared with the rooms (rooms.html links the
@@ -130,7 +130,7 @@
     }
 
     .hud-brand {
-      display: flex; align-items: center; gap: 12px; cursor: pointer;
+      display: flex; align-items: center; gap: 12px; cursor: default;
     }
     .brand-symbol {
       width: 34px; height: 34px; border-radius: 9px;
@@ -174,62 +174,12 @@
       box-shadow: 0 0 14px var(--accent-glow);
     }
 
-    .hud-status-group {
-      display: flex; align-items: center; gap: 12px;
-    }
-    .status-pill {
-      display: flex; align-items: center; gap: 6px;
-      padding: 5px 12px; border-radius: 99px;
-      background: rgba(255, 255, 255, 0.05);
-      border: 1px solid var(--glass-border);
-      font-size: 11px; font-weight: 700; letter-spacing: 1px;
-      text-transform: uppercase; color: var(--text-muted);
-      transition: all 0.3s ease;
-    }
-    .status-pill.online {
-      background: var(--emerald-dim); border-color: rgba(16, 185, 129, 0.35); color: var(--emerald);
-    }
-    .status-dot {
-      width: 7px; height: 7px; border-radius: 50%; background: var(--text-muted);
-    }
-    .status-pill.online .status-dot {
-      background: var(--emerald); box-shadow: 0 0 8px var(--emerald); animation: pulseDot 2s infinite;
-    }
-    @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
-
-    /* ── OFFLINE BANNER: Google's quota is a mode, not a dead end ────────────
-       Shown whenever the app is offline (quota spent, no key, or the owner's
-       own switch). It says what happened, that the chat keeps working, and
-       holds the switch — so the state is never a mystery and never a block. */
-    .status-pill.offline {
-      background: rgba(255, 184, 107, 0.12); border-color: rgba(255, 184, 107, 0.4); color: #ffb86b;
-    }
-    .status-pill.offline .status-dot { background: #ffb86b; box-shadow: 0 0 8px #ffb86b; }
-    #offline-banner {
-      position: absolute; top: var(--header-h); left: 50%; transform: translateX(-50%);
-      z-index: 40; display: none; align-items: center; gap: 14px;
-      max-width: min(880px, calc(100% - 48px)); margin-top: 10px; padding: 10px 16px;
-      border-radius: 12px; border: 1px solid rgba(255, 184, 107, 0.35);
-      background: rgba(24, 18, 8, 0.82); backdrop-filter: blur(14px);
-      color: var(--text-muted); font-size: 12px; line-height: 1.5;
-      box-shadow: 0 10px 34px rgba(0, 0, 0, 0.45);
-    }
-    #offline-banner.shown { display: flex; }
-    #offline-banner .offline-icon { font-size: 18px; }
-    #offline-banner b { color: #ffb86b; }
-    #offline-banner .offline-actions { display: flex; gap: 8px; flex: none; }
-    #offline-banner button {
-      padding: 5px 12px; border-radius: 8px; cursor: pointer; font-size: 11px; font-weight: 700;
-      letter-spacing: 0.6px; text-transform: uppercase;
-      background: rgba(255, 184, 107, 0.14); border: 1px solid rgba(255, 184, 107, 0.4); color: #ffb86b;
-    }
-    #offline-banner button:hover { background: rgba(255, 184, 107, 0.24); }
-
-    /* ── WORKSPACE DESKTOP STAGE ── */
+    /* ── USER-OPENED WORKSPACE TOOLS ── */
     #workspace-stage {
       position: absolute; top: var(--header-h); left: 0; right: 0; bottom: 0;
-      overflow: hidden; z-index: 10;
+      overflow: hidden; z-index: 30; pointer-events: none;
     }
+    #workspace-stage .glass-window { pointer-events: auto; }
 
     /* Dull glass modifier when My Hands is engaged */
     body.myhands-engaged .glass-window {
@@ -369,79 +319,9 @@
       display: flex; flex-direction: column;
     }
 
-    /* ── PANEL 1: JARVIS CORE TELEMETRY ── */
-    #win-telemetry {
-      width: 320px; height: 460px;
-    }
-    .telemetry-content {
-      padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px;
-    }
-    .reactor-pod {
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      padding: 16px; background: rgba(0, 0, 0, 0.25); border-radius: 14px;
-      border: 1px solid rgba(255, 255, 255, 0.06);
-    }
-    .reactor-disc {
-      position: relative; width: 110px; height: 110px; border-radius: 50%;
-      display: flex; align-items: center; justify-content: center;
-      background: radial-gradient(circle, rgba(255, 214, 10, 0.25) 0%, rgba(24, 25, 30, 0.8) 70%);
-      border: 2px solid rgba(255, 214, 10, 0.4);
-      box-shadow: 0 0 30px var(--accent-glow), inset 0 0 20px rgba(255, 214, 10, 0.3);
-      animation: rotateRing 20s linear infinite;
-    }
-    @keyframes rotateRing { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-    .reactor-core {
-      position: absolute; width: 44px; height: 44px; border-radius: 50%;
-      background: var(--jg-gold-pale); box-shadow: 0 0 24px rgba(255, 246, 200, 0.85), 0 0 50px var(--accent);
-      animation: reactorBreathe 3s ease-in-out infinite;
-    }
-    @keyframes reactorBreathe {
-      0%, 100% { transform: scale(0.92); opacity: 0.85; }
-      50% { transform: scale(1.05); opacity: 1; }
-    }
-    .reactor-state-tag {
-      margin-top: 14px; font-size: 11px; font-weight: 700;
-      letter-spacing: 2px; text-transform: uppercase; color: var(--emerald);
-    }
-
-    .metric-grid {
-      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
-    }
-    .metric-card {
-      background: rgba(255, 255, 255, 0.04);
-      border: 1px solid rgba(255, 255, 255, 0.07);
-      border-radius: 12px; padding: 12px;
-    }
-    .metric-lbl {
-      font-size: 10px; font-weight: 700; color: var(--text-muted);
-      letter-spacing: 1px; text-transform: uppercase;
-    }
-    .metric-val {
-      font-size: 17px; font-weight: 800; color: var(--text-main); margin-top: 4px;
-    }
-    .metric-sub {
-      font-size: 10px; color: var(--emerald); margin-top: 2px;
-    }
-
-    .action-btn {
-      flex: 1; padding: 10px 12px; border-radius: 10px;
-      font-size: 11px; font-weight: 700; letter-spacing: 1px;
-      text-transform: uppercase; cursor: pointer; border: none;
-      transition: all 0.15s ease;
-    }
-    .action-btn.primary {
-      background: var(--accent); color: #1b1a12;
-    }
-    .action-btn.primary:hover { opacity: 0.9; }
-    .action-btn.secondary {
-      background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
-      color: var(--text-sub);
-    }
-    .action-btn.secondary:hover { background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); }
-
     /* ── PANEL 2: SPATIAL CHAT & DIRECTIVE STREAM ── */
     #win-chat {
-      width: 480px; height: 560px;
+      width: 100%; height: 100%; min-width: 0; min-height: 0;
     }
     .chat-container {
       display: flex; flex-direction: column; height: 100%;
@@ -493,23 +373,6 @@
       color: #ffd60a; overflow-x: auto; white-space: pre-wrap;
     }
 
-    /* Quick suggestion chips */
-    .suggestion-row {
-      display: flex; gap: 6px; overflow-x: auto; padding: 8px 16px;
-      border-top: 1px solid rgba(255, 255, 255, 0.06);
-      background: rgba(0, 0, 0, 0.15); flex-shrink: 0;
-    }
-    .suggestion-row::-webkit-scrollbar { display: none; }
-    .sugg-chip {
-      padding: 5px 12px; border-radius: 99px;
-      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
-      font-size: 11px; font-weight: 600; color: var(--text-sub);
-      white-space: nowrap; cursor: pointer; transition: all 0.15s ease;
-    }
-    .sugg-chip:hover {
-      background: var(--accent-dim); border-color: var(--accent); color: var(--jg-gold-pale);
-    }
-
     /* Input Footer */
     .chat-footer {
       padding: 12px 16px; border-top: 1px solid rgba(255, 255, 255, 0.08);
@@ -540,59 +403,7 @@
       background: var(--accent); color: #1b1a12;
     }
     .chat-btn-send:hover { opacity: 0.9; }
-    .chat-btn-icon {
-      background: rgba(255, 255, 255, 0.06); border-color: rgba(255, 255, 255, 0.1);
-      color: var(--text-sub); font-size: 15px;
-    }
-    .chat-btn-icon:hover {
-      background: rgba(255, 255, 255, 0.12); color: var(--jg-gold-pale); border-color: rgba(255, 255, 255, 0.2);
-    }
-    .chat-btn-icon.recording {
-      background: rgba(244, 63, 94, 0.2); border-color: var(--rose); color: var(--rose);
-      animation: micPulse 1.2s infinite;
-    }
-    .chat-btn-icon.working {
-      background: rgba(245, 158, 11, 0.18); border-color: #f59e0b; color: #fbbf24;
-      animation: micPulse 0.9s infinite;
-    }
     @keyframes micPulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.6; transform: scale(0.96); } }
-
-    /* ── THE MIC STRIP: what the microphone is doing, in plain words ────── */
-    .mic-strip {
-      display: none; align-items: center; gap: 8px; flex-shrink: 0;
-      padding: 7px 14px; font-size: 11px; color: #fecdd3;
-      background: rgba(244, 63, 94, 0.10);
-      border-top: 1px solid rgba(244, 63, 94, 0.28);
-    }
-    .mic-strip.show { display: flex; }
-    .mic-strip::before {
-      content: ''; flex-shrink: 0; width: 8px; height: 8px; border-radius: 50%;
-      background: var(--rose); box-shadow: 0 0 8px var(--rose);
-      animation: micPulse 1.1s infinite;
-    }
-    .mic-strip.trouble { background: rgba(245, 158, 11, 0.12); border-top-color: rgba(245, 158, 11, 0.35); color: #fde68a; }
-    .mic-strip.trouble::before { background: #f59e0b; box-shadow: 0 0 8px #f59e0b; animation: none; }
-    /* Always-on: the microphone is listening — calm, not red */
-    .mic-strip.armed { background: rgba(52, 211, 153, 0.10); border-top-color: rgba(52, 211, 153, 0.28); color: #a7f3d0; }
-    .mic-strip.armed::before { background: var(--emerald); box-shadow: 0 0 8px var(--emerald); }
-    .mic-strip.armed .mic-meter { display: none; }
-    #mic-strip.armed #mic-send-btn { display: none; }
-    .mic-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .mic-meter {
-      flex-shrink: 0; width: 88px; height: 6px; border-radius: 99px; overflow: hidden;
-      background: rgba(255, 255, 255, 0.14);
-    }
-    .mic-meter-fill {
-      width: 0%; height: 100%; border-radius: 99px;
-      background: linear-gradient(90deg, #34d399, #fbbf24 70%, #f43f5e);
-      transition: width 0.08s linear;
-    }
-    .mic-strip-btn {
-      flex-shrink: 0; padding: 3px 9px; border-radius: 99px; cursor: pointer;
-      background: rgba(255, 255, 255, 0.12); border: 1px solid rgba(255, 255, 255, 0.22);
-      color: inherit; font-size: 10.5px; font-weight: 700;
-    }
-    .mic-strip-btn:hover { background: rgba(255, 255, 255, 0.22); }
 
     /* ── THE EARS BAR: always there while the microphone is on ───────────────
        It is the one place that says whether JARVIS is listening, and the one
@@ -627,10 +438,6 @@
     .chat-bubble.streaming .bubble-header::after {
       content: ' ●'; color: var(--emerald); animation: micPulse 1s infinite;
     }
-    .chat-btn-icon.muted {
-      background: rgba(217, 180, 90, 0.18); border-color: rgba(217, 180, 90, 0.5); color: #e7cf7d;
-    }
-
     /* Buttons inside a System bubble — "Open in New Tab", "Voice settings" */
     .bubble-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
     .bubble-action-btn {
@@ -797,7 +604,7 @@
     }
     .switch-toggle.on .switch-knob { transform: translateX(20px); }
 
-    /* Layout Preset Buttons */
+    /* Theme preset buttons */
     .preset-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
     }
@@ -851,10 +658,6 @@
       background: rgba(255, 214, 10, 0.35);
       box-shadow: 0 0 24px var(--accent-glow);
     }
-    .hand-cursor.simulated {
-      border-style: solid;
-      border-color: #ffd60a;
-    }
     .cursor-tag {
       position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
       background: rgba(14, 15, 18, 0.9);
@@ -877,90 +680,6 @@
       transition: stroke-dashoffset 0.05s linear;
     }
 
-    /* ── CAMERA DIAGNOSTICS & HELPER BANNER ── */
-    .cam-helper-banner {
-      position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
-      width: min(780px, calc(100% - 32px));
-      background: rgba(14, 15, 18, 0.92);
-      border: 1px solid rgba(255, 214, 10, 0.4);
-      backdrop-filter: blur(24px) saturate(180%);
-      -webkit-backdrop-filter: blur(24px) saturate(180%);
-      border-radius: 16px; padding: 14px 20px;
-      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.7), 0 0 24px rgba(255, 214, 10, 0.25);
-      display: none; align-items: center; justify-content: space-between; gap: 16px;
-      z-index: 950; animation: bannerIn 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-    }
-    @keyframes bannerIn {
-      from { opacity: 0; transform: translateX(-50%) translateY(-14px); }
-      to { opacity: 1; transform: translateX(-50%) translateY(0); }
-    }
-    .cam-helper-left {
-      display: flex; align-items: center; gap: 14px; min-width: 0;
-    }
-    .cam-helper-icon {
-      font-size: 26px; flex-shrink: 0;
-    }
-    .cam-helper-title {
-      font-size: 13px; font-weight: 700; color: var(--jg-gold-pale);
-    }
-    .cam-helper-desc {
-      font-size: 11px; color: var(--text-sub); margin-top: 2px;
-      line-height: 1.4;
-    }
-    .cam-helper-actions {
-      display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-    }
-    .cam-banner-btn {
-      padding: 7px 13px; border-radius: 99px; font-size: 12px; font-weight: 700;
-      border: 1px solid var(--glass-border); cursor: pointer;
-      display: flex; align-items: center; gap: 5px;
-      transition: all 0.15s ease;
-    }
-    .cam-banner-btn.primary {
-      background: var(--accent); border-color: var(--accent); color: var(--jg-gold-pale);
-      box-shadow: 0 0 14px var(--accent-glow);
-    }
-    .cam-banner-btn.primary:hover {
-      background: #c99a1e;
-    }
-    .cam-banner-btn.secondary {
-      background: rgba(255, 255, 255, 0.08); color: var(--jg-gold-pale);
-    }
-    .cam-banner-btn.secondary:hover {
-      background: rgba(255, 255, 255, 0.16);
-    }
-    .cam-banner-close {
-      width: 26px; height: 26px; border-radius: 50%;
-      background: rgba(255, 255, 255, 0.05); border: 1px solid rgba(255, 255, 255, 0.1);
-      color: var(--text-muted); cursor: pointer; display: flex; align-items: center; justify-content: center;
-      font-size: 11px;
-    }
-    .cam-banner-close:hover {
-      background: rgba(255, 255, 255, 0.15); color: var(--jg-gold-pale);
-    }
-
-    /* ── SPATIAL STATUS TELEMETRY HUD (Bottom-Right) ── */
-    #spatial-status-hud {
-      position: absolute; bottom: 16px; right: 20px;
-      background: rgba(18, 20, 24, 0.85);
-      border: 1px solid var(--glass-border);
-      backdrop-filter: blur(14px);
-      padding: 8px 16px; border-radius: 99px;
-      display: flex; align-items: center; gap: 14px;
-      font-size: 11px; font-weight: 600; color: var(--text-sub);
-      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-      z-index: 50; user-select: none;
-    }
-    .spatial-badge {
-      display: flex; align-items: center; gap: 5px;
-    }
-    .spatial-dot {
-      width: 6px; height: 6px; border-radius: 50%; background: var(--text-muted);
-    }
-    .spatial-dot.active {
-      background: var(--emerald); box-shadow: 0 0 8px var(--emerald);
-    }
-
     /* ── TOAST NOTIFICATION ── */
     #hud-toast {
       position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(20px);
@@ -977,99 +696,72 @@
     #hud-toast.show {
       opacity: 1; transform: translateX(-50%) translateY(0);
     }
-    /* ── THE JARVIS DOCK: slim left column — visualiser up top, chats below ── */
-    #jarvis-dock {
-      position: fixed; top: var(--header-h); left: 0; bottom: 0; width: 260px;
-      z-index: 940; display: flex; flex-direction: column;
-      background: rgba(18, 20, 24, 0.82);
-      backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
-      border-right: 1px solid var(--glass-border);
+    /* The conversation is the main screen; tools stay in the compact header. */
+    #chat-workspace {
+      position: fixed; inset: var(--header-h) 0 0;
+      z-index: 20; display: flex; justify-content: center;
+      min-width: 0; padding: 12px clamp(8px, 2vw, 24px);
+      background: transparent; border: 0; box-shadow: none;
+      backdrop-filter: none; -webkit-backdrop-filter: none;
+      pointer-events: none;
     }
-    /* Section 1: the original JARVIS window, fitted to the narrow frame —
-       the round reactor, its readings and the wake buttons. */
-    #dock-top {
-      flex: 0 0 auto; border-bottom: 1px solid var(--glass-border);
-      /* Only as tall as the round JARVIS + wake buttons need — the chat
-         window below starts just under the active JARVIS section. */
+    #chat-content {
+      display: flex; width: min(100%, 1240px); height: 100%; min-width: 0; min-height: 0;
+      pointer-events: auto;
     }
-    #dock-top .window-body { padding: 10px; }
-    #dock-top .reactor-pod { padding: 8px; }
-    #dock-top .reactor-disc { width: 84px; height: 84px; }
-    #dock-top .reactor-core { width: 32px; height: 32px; }
-    #dock-top .reactor-state-tag { margin-top: 8px; font-size: 10px; letter-spacing: 1.5px; }
-    /* The readings (Memory RSS, Uptime) are noise in the panel — hidden.
-       The round JARVIS and the wake buttons are all that stays. No heading
-       either: the sections need no "Core Telemetry" or "Command & Dialogue"
-       titles — the panel speaks for itself. */
-    #dock-top .metric-grid { display: none; }
-    #dock-top .window-header { display: none; }
-    #dock-chat .window-header { display: none; }
-    #dock-chat { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 0; }
-    #dock-chat .chat-container { height: 100%; display: flex; flex-direction: column; }
-    #dock-chat .chat-feed { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+    #chat-content .glass-window.primary-chat {
+      position: static !important;
+      width: 100% !important; height: 100% !important;
+      min-width: 0 !important; min-height: 0 !important;
+      display: flex !important; flex-direction: column;
+      --jg-sand: var(--jg-panel-sand);
+      background-color: rgba(18, 20, 24, var(--jg-panel-alpha));
+      backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
+      -webkit-backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
+      border: var(--jg-line-width) solid var(--jg-line);
+      border-radius: var(--jg-radius);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
+                  0 0 var(--jg-glow-size) var(--jg-glow),
+                  0 18px 40px -18px rgba(0, 0, 0, 0.72);
+      color: var(--jg-text); touch-action: auto; transform: none !important;
+    }
+    body.myhands-engaged #chat-content .glass-window.primary-chat {
+      background: var(--dull-glass-bg);
+      backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
+      -webkit-backdrop-filter: blur(var(--dull-glass-blur)) saturate(140%);
+      border-color: var(--dull-glass-border);
+      box-shadow: var(--dull-glass-shadow);
+    }
+    #chat-content .window-header,
+    #chat-content .window-grab-bar,
+    #chat-content .window-resizer,
+    #chat-content .window-actions { display: none !important; }
+    #chat-content .window-body { flex: 1 1 auto; min-height: 0; }
+    #chat-content .chat-container { height: 100%; display: flex; flex-direction: column; }
+    #chat-content .chat-feed {
+      flex: 1 1 auto; min-height: 0; overflow-y: auto;
+      padding: clamp(18px, 2.5vw, 34px); gap: 14px; touch-action: pan-y;
+    }
+    #chat-content .chat-bubble {
+      max-width: min(86%, 820px); padding: 14px 18px;
+      font-size: 15px; line-height: 1.65; border-radius: 12px;
+    }
+    #chat-content .chat-bubble.speaker-system { font-size: 12px; }
+    #chat-content .bubble-header { font-size: 10px; letter-spacing: 1.2px; }
+    #chat-content .code-block { font-size: 13px; padding: 12px; }
+    #chat-content .chat-footer { padding: 14px clamp(14px, 2.5vw, 28px) 18px; gap: 10px; }
+    #chat-content .chat-input { min-width: 0; min-height: 48px; padding: 12px 15px; font-size: 16px; }
+    #chat-content .chat-btn { min-height: 48px; padding: 12px 18px; font-size: 13px; }
+    #chat-content .listen-bar { padding: 8px 14px; font-size: 12px; }
+    #chat-content .listen-bar-btn { padding: 6px 12px; font-size: 11px; }
+    #spatial-status-hud { display: none; }
 
-    /* Command & Dialogue in the narrow panel: smaller type, tighter spacing,
-       so the conversation fits the window properly. */
-    #dock-chat .chat-feed { padding: 10px; gap: 8px; }
-    #dock-chat .chat-bubble { font-size: 11.5px; line-height: 1.5; padding: 8px 11px; max-width: 92%; border-radius: 11px; }
-    #dock-chat .chat-bubble.speaker-system { font-size: 10px; }
-    #dock-chat .bubble-header { font-size: 8.5px; letter-spacing: 1px; margin-bottom: 3px; }
-    #dock-chat .code-block { font-size: 10.5px; padding: 7px; }
-    #dock-chat .suggestion-row { padding: 6px 10px; gap: 5px; }
-    #dock-chat .sugg-chip { font-size: 9.5px; padding: 4px 9px; }
-    #dock-chat .chat-footer { padding: 8px 10px; gap: 5px; }
-    #dock-chat .chat-input { font-size: 11.5px; padding: 8px 10px; }
-    #dock-chat .chat-btn { font-size: 10.5px; padding: 8px 9px; }
-    #dock-chat .chat-btn-icon { font-size: 13px; }
     .chat-img {
       display: block; max-width: 100%; margin-top: 7px;
       border-radius: 10px; border: 1px solid rgba(255, 214, 10, 0.3);
       cursor: pointer;
     }
 
-    /* A docked window: the same window, pinned inside the left panel.
-       It keeps its title bar but can no longer be dragged, resized or
-       minimised — it is part of the main interface now. */    .glass-window.docked {
-      position: static !important;
-      width: 100% !important; height: 100% !important;
-      min-width: 0 !important; min-height: 0 !important;
-      display: flex !important; flex-direction: column;
-      border: none; border-radius: 0; box-shadow: none;
-      background: transparent;
-      transform: none !important;
-    }
-    #dock-top .glass-window.docked { height: auto !important; }
-    .glass-window.docked .window-body { flex: 1 1 auto; min-height: 0; }
-    .glass-window.docked .window-header { cursor: default; }
-    .glass-window.docked .window-grab-bar,
-    .glass-window.docked .window-resizer,
-    .glass-window.docked .window-actions { display: none !important; }
-
-    /* ── THE DESKTOP: the open area — your folders as icons you pick up ── */
-    .desk-icon {
-      position: fixed; width: 96px; z-index: 6;
-      text-align: center; cursor: grab; user-select: none;
-      padding: 10px 4px 8px; border-radius: 14px;
-      touch-action: none;
-    }
-    .desk-icon:hover, .desk-icon.grabbed {
-      background: rgba(255, 208, 74, 0.12);
-      outline: 1px solid rgba(255, 208, 74, 0.35);
-    }
-    .desk-icon.grabbed { cursor: grabbing; }
-    .desk-icon .ico { font-size: 46px; line-height: 1; filter: drop-shadow(0 8px 16px rgba(0,0,0,0.55)); pointer-events: none; }
-    .desk-icon .lbl {
-      margin-top: 7px; font: 600 11px/1.3 system-ui;
-      color: #ffe9a3; text-shadow: 0 2px 8px rgba(0,0,0,0.9);
-      word-break: break-word; pointer-events: none;
-    }
-    .folder-list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; max-height: 100%; }
-    .folder-list li {
-      padding: 7px 12px; border-radius: 8px; cursor: pointer;
-      font: 500 13px/1.4 system-ui; color: #ffe9a3;
-      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    }
-    .folder-list li:hover { background: rgba(255, 208, 74, 0.14); }
     /* ═════════════════════════════════════════════════════════════════════════
        GOLD GLASS — the look, on every surface.
        The tokens, the rounded face and the shared pane live in
@@ -1080,9 +772,6 @@
     /* The sand-blast grit. Every pane is blasted glass, never a clear sheet. */
     .glass-window::after,
     #hud-header::after,
-    #jarvis-dock::after,
-    #spatial-status-hud::after,
-    .cam-helper-banner::after,
     #hud-toast::after {
       content: ''; position: absolute; inset: 0; border-radius: inherit;
       background-image: var(--jg-grit); background-size: 120px 120px;
@@ -1128,12 +817,8 @@
       border-color: var(--jg-line);
     }
 
-    /* ── The HUD, the dock and the small readouts: the panel glass ── */
+    /* ── The HUD and small surfaces: the shared panel glass ── */
     #hud-header,
-    #jarvis-dock,
-    #spatial-status-hud,
-    .status-pill,
-    .cam-helper-banner,
     #hud-toast {
       --jg-sand: var(--jg-panel-sand);
       background-color: rgba(18, 20, 24, var(--jg-panel-alpha));
@@ -1148,8 +833,7 @@
         0 18px 40px -18px rgba(0, 0, 0, 0.85);
     }
     #hud-header { border-bottom: var(--jg-line-width) solid var(--jg-line); }
-    #jarvis-dock { border-right: var(--jg-line-width) solid var(--jg-line); }
-    #dock-top, #dock-chat, #hud-header, #jarvis-dock { border-radius: 0; }
+    #hud-header { border-radius: 0; }
 
     /* ── The chrome inside a window, in gold and glass ── */
     .window-header {
@@ -1226,8 +910,32 @@
     .code-block { border: var(--jg-line-width) solid var(--jg-line-soft); color: var(--jg-gold-bright); }
 
     /* Depth: every floating thing drops a long, soft shadow. */
-    .desk-icon { text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9); }
 
+    @media (max-width: 680px) {
+      :root { --header-h: 52px; }
+      #hud-header { padding: 0 8px; gap: 8px; }
+      .brand-symbol { width: 30px; height: 30px; font-size: 14px; }
+      .brand-title { font-size: 12px; letter-spacing: 1px; }
+      .brand-sub { display: none; }
+      .hud-center-controls { gap: 4px; margin-left: auto; }
+      .hud-toggle-btn { gap: 4px; padding: 7px 8px; font-size: 10px; }
+      .hud-toggle-btn > span:not(.btn-icon) { display: none; }
+      #chat-workspace { padding: 8px; }
+      #chat-content .chat-feed { padding: 16px 12px; gap: 10px; }
+      #chat-content .chat-bubble { max-width: 94%; padding: 12px 14px; font-size: 14px; }
+      #chat-content .chat-footer { padding: 10px 10px 12px; gap: 8px; }
+      #chat-content .chat-input { padding: 11px 12px; }
+      #chat-content .chat-btn { padding: 11px 12px; }
+      #win-settings {
+        width: calc(100vw - 16px) !important;
+        max-height: calc(100vh - var(--header-h) - 16px);
+        left: 8px !important; top: calc(var(--header-h) + 8px) !important;
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #win-rooms { transition: none !important; }
+      .chat-bubble { animation: none; }
+    }
   </style>
 </head>
 <body data-theme="stark">
@@ -1249,140 +957,38 @@
     </svg>
   </div>
 
-  <!-- HUD NAVIGATION HEADER -->
+  <!-- Compact controls stay out of the conversation. -->
   <header id="hud-header">
-    <!-- The top row: the always-there buttons, the same in every room. -->
-    <div class="hud-center-controls">
-      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleMyHandsTracking()" title="Toggle Hand Gesture Tracking (My Hands)">
-        <span class="btn-icon">🖐️</span>
-        <span>My Hands</span>
-      </button>
-
-      <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle Camera Video Feed">
-        <span class="btn-icon">📷</span>
-        <span id="txt-btn-cam">Camera</span>
-      </button>
-
-      <button class="hud-toggle-btn" onclick="toggleRooms()" title="Sweep the rooms in or away (or just sweep a flat hand)">
-        <span class="btn-icon">🪟</span>
-        <span>Rooms</span>
-      </button>
-
-      <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace Settings">
-        <span class="btn-icon">⚙️</span>
-        <span>Settings</span>
-      </button>
-
-      <!-- Kept for the V shortcut and tests; not part of the daily top row. -->
-      <button class="hud-toggle-btn" id="btn-toggle-sim" onclick="toggleVirtualHandSimulator()" title="Toggle Virtual Hand Simulator (Shortcut: V)" style="display:none;">
-        <span class="btn-icon">🎮</span>
-        <span>Hand <small style="opacity:0.6">[V]</small></span>
-      </button>
-      <button class="hud-toggle-btn" id="btn-toggle-tree" onclick="toggleWindow('win-tree')" title="Show/Hide PC File Tree" style="display:none;">
-        <span class="btn-icon">📂</span>
-        <span>Files</span>
-      </button>
-      <button class="hud-toggle-btn" id="btn-toggle-chat" style="display:none;">
-        <span class="btn-icon">💬</span>
-        <span>Directives</span>
-      </button>
+    <div class="hud-brand" aria-label="JARVIS personal assistant">
+      <span class="brand-symbol" aria-hidden="true">J</span>
+      <span class="brand-text">
+        <span class="brand-title">__ASSISTANT_NAME__</span>
+        <span class="brand-sub">Personal assistant</span>
+      </span>
     </div>
-
-    <div class="hud-status-group">
-      <div class="status-pill online" id="status-pill">
-        <span class="status-dot"></span>
-        <span id="status-txt">Online</span>
-      </div>
-    </div>
+    <nav class="hud-center-controls" aria-label="JARVIS tools">
+      <button class="hud-toggle-btn" id="btn-toggle-hands" onclick="toggleMyHandsTracking()" title="Toggle My Hands hand tracking" aria-label="Toggle My Hands hand tracking">
+        <span class="btn-icon" aria-hidden="true">🖐️</span><span>My Hands</span>
+      </button>
+      <button class="hud-toggle-btn" id="btn-toggle-cam" onclick="toggleCameraBackground()" title="Toggle camera background" aria-label="Toggle camera background">
+        <span class="btn-icon" aria-hidden="true">📷</span><span id="txt-btn-cam">Camera</span>
+      </button>
+      <button class="hud-toggle-btn" id="btn-toggle-rooms" onclick="toggleRooms()" title="Open or close Rooms" aria-label="Open or close Rooms">
+        <span class="btn-icon" aria-hidden="true">🪟</span><span>Rooms</span>
+      </button>
+      <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace settings" aria-label="Workspace settings">
+        <span class="btn-icon" aria-hidden="true">⚙️</span><span>Settings</span>
+      </button>
+    </nav>
   </header>
 
-  <!-- OFFLINE BANNER: the app is offline (Google's quota spent, no key, or the
-       owner's own switch). It is a WARNING, not a block — the chat and every
-       local feature keep working, and this says so instead of leaving the
-       owner to guess why answers are coming from this computer. -->
-  <div id="offline-banner" role="status">
-    <span class="offline-icon">📴</span>
-    <div>
-      <div><b>OFFLINE — local only.</b> <span id="offline-banner-why"></span></div>
-      <div id="offline-banner-detail"></div>
-    </div>
-    <div class="offline-actions">
-      <button id="offline-banner-toggle" onclick="toggleOfflineMode()">Come back online</button>
-    </div>
-  </div>
-
-  <!-- WORKSPACE DESKTOP STAGE -->
+  <!-- Overlay layer for user-opened workspace tools -->
   <div id="workspace-stage">
 
-    <!-- CAMERA DIAGNOSTICS & HELPER BANNER -->
-    <div id="cam-helper-banner" class="cam-helper-banner">
-      <div class="cam-helper-left">
-        <div class="cam-helper-icon">📷</div>
-        <div>
-          <div class="cam-helper-title" id="cam-banner-title">Camera Feed Notice</div>
-          <div class="cam-helper-desc" id="cam-banner-desc">Webcam access may be blocked inside the preview iframe. Click "Open in New Tab" for direct hardware permission, or use "Mouse Hand" to test all gestures instantly!</div>
-        </div>
-      </div>
-      <div class="cam-helper-actions">
-        <button class="cam-banner-btn primary" onclick="openStandaloneTab()">↗️ Open in New Tab</button>
-        <button class="cam-banner-btn secondary" onclick="enableMouseHand()">🖐️ Mouse Hand</button>
-        <button class="cam-banner-btn secondary" onclick="enableCyberStageFeed()">🎥 Stage Simulation</button>
-        <button class="cam-banner-close" onclick="closeCamHelper()">✕</button>
-      </div>
-    </div>
-
-    <!-- PANEL 1: JARVIS CORE TELEMETRY -->
-    <div class="glass-window" id="win-telemetry" style="top: 24px; left: 24px;">
-      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-telemetry')">
-        <div class="window-title-group">
-          <span class="window-icon">⚛️</span>
-          <span>Core Telemetry</span>
-        </div>
-        <div class="window-actions">
-          <button class="win-btn" onclick="toggleMinimize('win-telemetry')">_</button>
-        </div>
-      </div>
-      <div class="window-body telemetry-content">
-        <div class="reactor-pod">
-          <div class="reactor-disc">
-            <div class="reactor-core"></div>
-          </div>
-          <div class="reactor-state-tag" id="reactor-status">__ASSISTANT_NAME__ ACTIVE</div>
-        </div>
-
-        <div class="metric-grid">
-          <div class="metric-card">
-            <div class="metric-lbl">Memory (RSS)</div>
-            <div class="metric-val" id="met-ram">-- MB</div>
-            <div class="metric-sub">Heap: <span id="met-heap">--</span> MB</div>
-          </div>
-          <div class="metric-card">
-            <div class="metric-lbl">Uptime</div>
-            <div class="metric-val" id="met-uptime">-- s</div>
-            <div class="metric-sub">Sockets: <span id="met-sockets">1</span></div>
-          </div>
-        </div>
-
-        <!-- No wake and no diagnostics buttons: the round JARVIS speaks for
-             itself, and both are still there by voice ("wake up", "status"). -->
-      </div>
-      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-telemetry')" title="Tactile Glass Grab Handle"></div>
-      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-telemetry')" title="Drag to Resize Glass Window"></div>
-    </div>
-
-    <!-- PANEL 2: SPATIAL DIRECTIVES & CHAT STREAM -->
-    <div class="glass-window" id="win-chat" style="top: 24px; left: 364px;">
-      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-chat')">
-        <div class="window-title-group">
-          <span class="window-icon">💬</span>
-          <span>Command & Dialogue</span>
-        </div>
-        <div class="window-actions">
-          <button class="win-btn" onclick="toggleMinimize('win-chat')">_</button>
-        </div>
-      </div>
+    <!-- Primary conversation; mounted into the main workspace below. -->
+    <div class="glass-window" id="win-chat">
       <div class="window-body chat-container">
-        <div class="chat-feed" id="chat-feed"></div>
+        <div class="chat-feed" id="chat-feed" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></div>
 
         <!-- THE EARS: always visible while the microphone is on. It says what the
              microphone is doing and mutes/unmutes it with one press. -->
@@ -1396,17 +1002,15 @@
           <!-- The typing row is for typing. Files and documents are imported in
                the Files window (📂 PC Environment & Files → ⬆ Import, or drag
                them onto it) — that is the place that shows what came in. -->
-          <input class="chat-input" id="chat-input" placeholder="Give JARVIS a directive or ask a question…" autocomplete="off">
+          <input class="chat-input" id="chat-input" aria-label="Message JARVIS" placeholder="Message JARVIS…" autocomplete="off">
 
-          <button class="chat-btn chat-btn-send" onclick="doSend()">Send</button>
+          <button class="chat-btn chat-btn-send" type="button" onclick="doSend()" aria-label="Send message">Send</button>
         </div>
       </div>
-      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-chat')" title="Tactile Glass Grab Handle"></div>
-      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-chat')" title="Drag to Resize Glass Window"></div>
     </div>
 
     <!-- PANEL 3: PC FILE ENVIRONMENT TREE -->
-    <div class="glass-window" id="win-tree" style="top: 24px; left: 864px;">
+    <div class="glass-window" id="win-tree" style="top: 24px; left: 864px; display: none;">
       <div class="window-header" onpointerdown="startWindowDrag(event, 'win-tree')">
         <div class="window-title-group">
           <span class="window-icon">📂</span>
@@ -1474,33 +1078,17 @@
         </div>
       </div>
       <div class="window-body settings-body">
-        <!-- THE BRAIN: the owner's Gemini key. Saved into config/api_keys.json —
-             the file the desktop app and every action read (./.env is updated too
-             when it holds the key, and both are git-ignored) — and live at once:
-             the server re-reads the settings, so no restart. -->
+        <!-- This optional key is only for online text answers. -->
         <div>
-          <div class="settings-section-title">The Brain — Gemini API keys</div>
+          <div class="settings-section-title">Optional Gemini access</div>
           <div class="settings-row" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-            <span class="settings-desc">Paste your Gemini API key. It is saved to config/api_keys.json (the file the desktop app and every action read; ./.env is updated as well when it holds the key) and is used immediately — no restart. Below: where the key in use comes from, and the model in use.</span>
+            <span class="settings-desc">Only needed for online text answers. Local commands and saved knowledge continue to work without a key.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
-              <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="AIza… (your Gemini API key)"
+              <input type="password" id="gemini-key-input" autocomplete="off" spellcheck="false" placeholder="Optional Gemini API key"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey(1)">Save</button>
+              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey()">Save</button>
             </div>
-            <span class="settings-desc" id="gemini-key-status">Checking…</span>
-
-            <!-- THE SECOND KEY: optional. Every call goes out on the first key;
-                 only when Google refuses the first key with a 429 (its quota) or
-                 rejects it does the second one take over, for the rest of the
-                 local day. Saved as gemini_api_key_2 in the same file. -->
-            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after midnight Pacific (Google's own quota reset). <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
-            <div style="display: flex; gap: 8px; width: 100%;">
-              <input type="password" id="gemini-key2-input" autocomplete="off" spellcheck="false" placeholder="AIza… (second key, from another Google account/project)"
-                     style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="saveGeminiKey(2)">Save</button>
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="clearGeminiKey2()" title="Remove the second key">Remove</button>
-            </div>
-            <span class="settings-desc" id="gemini-key2-status">Checking…</span>
+            <span class="settings-desc" id="gemini-key-status"></span>
 
             <!-- THE SUPPLIER REGISTRY. Every row here is drawn from the
                  registry on the server (GET /api/web/sources), so adding a
@@ -1553,30 +1141,6 @@
             </details>
             <span class="settings-desc" id="image-keys-status">Checking…</span>
 
-            <!-- THE COUNT: this app counts and warns; it never blocks. Only a
-                 real 429 from Google stops calls, and only until midnight Pacific (Google's own quota reset). -->
-            <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
-            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until midnight Pacific (Google's own quota reset), and the message then says plainly that Google stopped us.</span>
-
-            <!-- OFFLINE MODE: when Google's quota is spent the app does not stop,
-                 it goes offline and answers from this computer. The switch here
-                 lets the owner choose that deliberately (or come back early). -->
-            <span class="settings-desc" id="offline-status" style="margin-top: 6px;">Checking the connection…</span>
-            <div style="display: flex; gap: 8px; width: 100%;">
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(true)">📴 Go offline (local only)</button>
-              <button class="preset-btn" style="padding: 6px 14px; margin: 0;" onclick="setOfflineSwitch(null)">🔄 Automatic</button>
-            </div>
-            <span class="settings-desc">Offline is a <b>mode, not an error</b>: Google's 429 is only a warning, and the chat never stops. While offline everything on this computer still works (chat, the knowledge base, memory, notes and reminders, the drafting desk, time and arithmetic, diagnostics, the rooms, the files, My Hands, the local voice) and <b>nothing is fetched from the internet</b>. “Automatic” lets Google's own state decide: online while a key is accepted, offline from the moment every key is refused until midnight Pacific (Google's quota reset). <code>SUPPER_OFFLINE=1</code> does the same from the environment.</span>
-          </div>
-        </div>
-
-        <div>
-          <div class="settings-section-title">Spatial Interaction Presets</div>
-          <div class="preset-grid">
-            <button class="preset-btn" onclick="applyPreset('balanced')">📐 Balanced HUD</button>
-            <button class="preset-btn" onclick="applyPreset('dev')">💻 Code & Files Focus</button>
-            <button class="preset-btn" onclick="applyPreset('spatial')">🖐️ My Hands Stage</button>
-            <button class="preset-btn" onclick="resetLayout()">🔄 Reset Positions</button>
           </div>
         </div>
 
@@ -1660,49 +1224,34 @@
         <div>
           <div class="settings-section-title">Voice — Microphone & Speakers</div>
 
-          <!-- Which engine. The two are genuinely different machines: this
-               browser's voice/ear run on the computer the page is open on, the
-               server's run on the computer JARVIS is installed on. Auto is
-               right unless you know you want the other one. -->
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
-            <span class="settings-label">Voice engine</span>
-            <span class="settings-desc" id="voice-engine-desc">JARVIS speaks and listens with this browser — free, offline, and on the machine you are actually sitting at.</span>
-            <select id="sel-voice-engine" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setVoiceEngine(this.value)">
-              <option value="auto">Auto — this browser first, this computer as the fallback</option>
-              <option value="server">This computer (the server's own voice &amp; ears only)</option>
-            </select>
+            <span class="settings-label">Local voice — automatic</span>
+            <span class="settings-desc" id="voice-engine-desc">Voice starts enabled. The app's Kokoro generator speaks first; an installed local browser voice is only the fallback. Hearing uses the app's faster-whisper model; no cloud speech services are used.</span>
           </div>
 
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 6px;">
-            <span class="settings-label">Speaking voice (this browser)</span>
+            <span class="settings-label">Installed local browser voice (optional)</span>
             <select id="sel-browser-voice" style="width:100%; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:6px 10px; font-size:12px;" onchange="setBrowserVoice(this.value)">
-              <option value="">Choose the best voice automatically</option>
+              <option value="">Choose the best installed local voice automatically</option>
             </select>
           </div>
 
-          <div class="voice-report" id="voice-engine-report">Checking what this browser can do…</div>
+          <div class="voice-report" id="voice-engine-report">Checking local voice…</div>
 
           <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 8px;">
             <div style="display: flex; gap: 8px; width: 100%;">
               <button class="preset-btn" style="flex:1; margin: 0;" onclick="testMicNow()">🎤 Test Mic</button>
               <button class="preset-btn" style="flex:1; margin: 0;" onclick="testSpeakersNow()">🔊 Test Speakers</button>
             </div>
-            <div class="voice-report" id="voice-test-report">Not tested yet. "Test Mic" opens the microphone and draws the live level; "Test Speakers" makes JARVIS speak one line.</div>
-          </div>
-
-          <div class="settings-row" style="margin-top: 8px; flex-direction: column; align-items: flex-start; gap: 8px;">
-            <div style="display: flex; gap: 8px; width: 100%;">
-            </div>
-            <div style="display: flex; gap: 8px; width: 100%;">
-              <button class="preset-btn" id="btn-mute" style="flex:1; margin: 0;" onclick="toggleMute()">🔇 Mute listening</button>
-            </div>
-            <div style="display: flex; gap: 8px; width: 100%;">
-            </div>
-            <span class="settings-desc">JARVIS listens all the time: just talk. Your words are turned into text on this computer (faster-whisper), and every reply is spoken on this computer by the local voice (Kokoro). Gemini is not used for voice. 🔇 Mute is the only switch.</span>
+            <div class="voice-report" id="voice-test-report">Test the microphone or the automatic local voice path.</div>
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-always-on-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
+            <span class="settings-desc">Listening starts automatically with the app-local faster-whisper ear. Browser speech recognition is not used; mute is available in the chat bar.</span>
+          </div>
+
+          <div class="settings-row" style="margin-top: 8px;">
+            <span class="settings-desc" id="jarvis-build-line">Build status and app-local voice readiness.</span>
           </div>
         </div>
 
@@ -1727,17 +1276,17 @@
               <input type="range" class="range-input" min="0" max="100" value="8" id="rng-win-sand" oninput="updateGlass('win','sand',this.value)">
             </div>
 
-            <!-- The HUD and the dock -->
+            <!-- The header and chat use the shared panel-glass controls. -->
             <div class="range-wrap" style="width: 100%;">
               <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span>🧭 HUD &amp; dock — transparency</span>
+                <span>🧭 HUD &amp; chat — transparency</span>
                 <span class="settings-desc" id="lbl-panel-alpha" style="font-weight: 700; color: var(--jg-gold);">34%</span>
               </div>
               <input type="range" class="range-input" min="0" max="90" value="34" id="rng-panel-alpha" oninput="updateGlass('panel','alpha',this.value)">
             </div>
             <div class="range-wrap" style="width: 100%;">
               <div style="display: flex; justify-content: space-between; font-size: 12px;">
-                <span>🧭 HUD &amp; dock — sand-blast</span>
+                <span>🧭 HUD &amp; chat — sand-blast</span>
                 <span class="settings-desc" id="lbl-panel-sand" style="font-weight: 700; color: var(--jg-gold);">6%</span>
               </div>
               <input type="range" class="range-input" min="0" max="100" value="6" id="rng-panel-sand" oninput="updateGlass('panel','sand',this.value)">
@@ -1791,7 +1340,7 @@
       <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-settings')" title="Drag to Resize Glass Window"></div>
     </div>
 
-    <!-- SPATIAL STATUS TELEMETRY HUD (Bottom-Right) -->
+    <!-- Hidden camera/gesture status hooks retained for existing logic. -->
     <div id="spatial-status-hud">
       <div class="spatial-badge">
         <span class="spatial-dot" id="dot-cam"></span>
@@ -1808,21 +1357,13 @@
 
   </div>
 
-  <!-- THE JARVIS DOCK: always on the left — the visualiser up tight in the
-       corner, the chats below it. Small, permanent, the same in every room. -->
-  <aside id="jarvis-dock">
-    <!-- Section 1: the ORIGINAL JARVIS window — the round reactor, its
-         readings and the wake buttons — moved in here at boot, permanent. -->
-    <div id="dock-top"></div>
-    <!-- Section 2: the chat window, underneath it. -->
-    <div id="dock-chat"></div>
-  </aside>
+  <!-- The conversation occupies the main workspace. -->
+  <main id="chat-workspace" aria-label="JARVIS chat">
+    <div id="chat-content"></div>
+  </main>
 
-  <!-- ROOMS: the open area becomes a full workspace (Coding · 3D Design · Flat
-       · Studio · Files) that SWEEPS IN from the side. The top row and the dock
-       stay visible — they are the same in every room. A hand sweep, a voice
-       command or Esc moves the rooms; there is no chrome and no close button. -->
-  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:260px; right:0; bottom:0;
+  <!-- Full-screen workspaces are available on request; the chat returns on close. -->
+  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:0; right:0; bottom:0;
        z-index:900; background:transparent;
        border:1px solid var(--jg-line); border-right:none;
        box-shadow:0 0 var(--jg-glow-size) var(--jg-glow);
@@ -1839,12 +1380,12 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-open-web-1';
+    const JARVIS_BUILD = '2026-10-14-chat-first-local-voice-3';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
     // assistant_name / user_name). The server fills the tokens in when it serves
-    // this page, and refreshGeminiKeyStatus() keeps them current afterwards.
+    // this page, and the optional-key settings refresh keeps them current afterwards.
     let _assistantName = '__ASSISTANT_NAME__';
     let _userName = '__USER_NAME__';
 
@@ -1878,290 +1419,78 @@
     }
     const _encReady = _initCrypto(_sessionKey);
 
-    // ── THE BRAIN: the Gemini key, typed into Settings ─────────────────────
-    // The key travels straight to the server, which resolves settings exactly
-    // the way the desktop app does (./config.ts) and saves to the file the app
-    // reads: config/api_keys.json.
-    function keySourceLine(info) {
-      if (info.source === 'config/api_keys.json') return 'config/api_keys.json';
-      if (info.source === '.env') return './.env (GEMINI_API_KEY)';
-      if (info.source === 'environment') return 'the environment (GEMINI_API_KEY, outside ./.env)';
-      return 'nowhere yet';
-    }
-
+    // ── Optional Gemini setting ───────────────────────────────────────────
+    // The key travels straight to the server and is saved to config/api_keys.json.
     function refreshBuildLine(info) {
       const el = document.getElementById('jarvis-build-line');
       if (!el) return;
-      const model = info && info.model ? `${info.model}${info.modelSource ? ` (from ${info.modelSource})` : ''}` : 'not measured yet';
-      // The mouth has its own model, separate from the brain's — named here so a
-      // retired voice name can never be a mystery.
-      const voice = info && info.voiceModel ? `${info.voiceModel}${info.voiceModelSource ? ` (from ${info.voiceModelSource})` : ''}` : 'not measured yet';
-      const voiceNote = info && info.voiceModelNote ? ` · ${String(info.voiceModelNote).trim()}` : '';
-      const key = info && info.present ? keySourceLine(info) : 'no key set';
-      const quota = info && info.quota ? quotaLine(info.quota) : 'count not measured';
-      const owner = _userName ? `, for ${_userName}` : '';
-      // The server's own marker against this page's. When they differ the
-      // browser is holding a different build than the process answering it —
-      // and that is the one honest explanation for "the settings say a key is
-      // saved but JARVIS says there is none".
-      let builds = `page ${JARVIS_BUILD}`;
-      if (info && info.build) {
-        builds = info.build === JARVIS_BUILD
-          ? `page and server both ${JARVIS_BUILD}`
-          : `page ${JARVIS_BUILD} — BUT THE SERVER IS ${info.build}: this page is stale, press Ctrl/Cmd+Shift+R (or restart the server if it is the older one)`;
+      let build = `page ${JARVIS_BUILD}`;
+      if (info && info.build && info.build !== JARVIS_BUILD) {
+        build = `page ${JARVIS_BUILD} / server ${info.build} — reload JARVIS`;
       }
-      const root = info && info.configRoot ? ` · settings read from ${info.configRoot}` : '';
-      // The connectivity state belongs on this line too: an owner reading only
-      // the build line must still be able to see that the app is offline.
-      const offline = info && info.offline
-        ? (info.offline.offline ? ` · OFFLINE — local only (${info.offline.why})` : ' · online')
-        : '';
-      el.textContent = `Build ${builds} · assistant: ${_assistantName}${owner} · model: ${model} · voice model: ${voice} · key from: ${key} · ${quota}${offline}${root}${voiceNote}`;
-      el.style.color = (info && info.build && info.build !== JARVIS_BUILD) ? '#ffb86b' : (info && info.offline && info.offline.offline) ? '#ffb86b' : '';
+      const local = info && info.voiceLocal;
+      const speakReady = local && (typeof local.speakReady === 'boolean' ? local.speakReady : local.ready);
+      const voice = !local ? 'app-local voice status checking'
+        : speakReady ? 'app-local voice ready'
+          : `app-local voice unavailable${local.speakMessage || local.message ? `: ${local.speakMessage || local.message}` : ''}`;
+      el.textContent = `Build ${build} · ${voice}`;
+      el.style.color = info && info.build && info.build !== JARVIS_BUILD ? '#ffb86b' : '';
     }
-
-    /** The day's count in one short line: total, per key, warning level, and who is answering. */
-    function quotaLine(q) {
-      if (!q) return 'count not measured';
-      if (typeof q.summary === 'string' && q.summary) return q.summary;
-      return `${q.used} Gemini calls today`;
-    }
-
-    /** Where a key came from, for either slot. */
-    function keySourceOf(k, envName, fieldName) {
-      if (!k) return 'nowhere yet';
-      if (k.source === 'config/api_keys.json') return `config/api_keys.json (${fieldName})`;
-      if (k.source === '.env') return `./.env (${envName})`;
-      if (k.source === 'environment') return `the environment (${envName}, set outside ./.env)`;
-      return 'nowhere yet';
-    }
-
-    /* ── OFFLINE MODE: the banner, the switch, and the truth about it ────────
-       Google's quota running out is not a broken app, it is a mode: the chat
-       keeps working from this computer and nothing is fetched from the
-       internet. The banner says which it is, and holds the switch back. */
-    let _offlineState = null;
-
-    async function refreshOfflineBanner() {
-      const banner = document.getElementById('offline-banner');
-      if (!banner) return;
-      let state = _offlineState;
-      try {
-        const res = await _authFetch('/api/offline');
-        if (res.ok) state = await res.json();
-      } catch (err) { /* the server is unreachable: the socket pill says so */ }
-      if (!state) { banner.classList.remove('shown'); return; }
-      _offlineState = state;
-      const pill = document.getElementById('status-pill');
-      const pillTxt = document.getElementById('status-txt');
-      const socketUp = typeof ws !== 'undefined' && ws && ws.readyState === 1;
-      if (state.offline) {
-        banner.classList.add('shown');
-        document.getElementById('offline-banner-why').textContent = `${state.why}.`;
-        document.getElementById('offline-banner-detail').textContent =
-          `The chat keeps working from this computer — ${(state.works || []).slice(0, 4).join(', ')}. ` +
-          `Not available while offline: ${(state.refused || []).slice(0, 3).join(', ')}. ` +
-          (state.reason === 'google-stopped' ? 'Calls resume at midnight Pacific (Google\'s own quota reset).' : '');
-        const toggle = document.getElementById('offline-banner-toggle');
-        // Only the owner's own switch can be switched back from here: when Google
-        // is what stopped us, the honest button opens Settings to add a key.
-        if (toggle) {
-          toggle.textContent = state.forced ? 'Come back online' : 'Settings → The Brain';
-          toggle.title = state.forced
-            ? "Let Google's own state decide again"
-            : 'Google stopped the keys; add one from another account/project to carry on now';
-        }
-        if (pill && socketUp) { pill.className = 'status-pill offline'; pillTxt.textContent = 'Local only'; }
-      } else {
-        banner.classList.remove('shown');
-        if (pill && socketUp) { pill.className = 'status-pill online'; pillTxt.textContent = 'Active'; }
-      }
-      return state;
-    }
-    window.refreshOfflineBanner = refreshOfflineBanner;
-
-    async function toggleOfflineMode() {
-      const state = _offlineState || {};
-      if (!state.forced) { toggleWindow('win-settings'); refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); refreshCustomSuppliers(); return; }
-      try {
-        const res = await _authFetch('/api/offline', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: null }),
-        });
-        const body = await res.json();
-        _offlineState = body;
-        toast(body.offline ? 'Still offline — see the banner' : 'Back online');
-        refreshOfflineBanner();
-      } catch (err) { toast(`Could not change the offline switch: ${err.message}`); }
-    }
-    window.toggleOfflineMode = toggleOfflineMode;
-
-    /** The Settings switch: true = stay offline, null = let Google's state decide. */
-    async function setOfflineSwitch(on) {
-      try {
-        const res = await _authFetch('/api/offline', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }),
-        });
-        const body = await res.json();
-        _offlineState = body;
-        toast(body.offline ? `Offline — ${body.why}` : 'Back to automatic — online');
-        refreshOfflineBanner();
-        refreshGeminiKeyStatus();
-      } catch (err) { toast(`Could not change the offline switch: ${err.message}`); }
-    }
-    window.setOfflineSwitch = setOfflineSwitch;
-    // NOTE: the first refresh is started down by initWebSocket(), because this
-    // reads the socket's state and that variable is declared further down.
 
     async function refreshGeminiKeyStatus() {
       const el = document.getElementById('gemini-key-status');
       if (!el) return;
-      const el2 = document.getElementById('gemini-key2-status');
-      const calls = document.getElementById('gemini-calls-status');
-      el.textContent = 'Checking…';
-      el.style.color = '';
       try {
         const res = await _authFetch('/api/settings/gemini-key');
-        if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const info = await res.json();
         if (info.assistantName) {
           _assistantName = info.assistantName;
           _userName = info.userName || '';
-          document.title = `${_assistantName} — Autonomous Workspace & Spatial Interface`;
+          document.title = `${_assistantName} — Chat`;
         }
-        const active = info.activeKey || {};
-        if (info.present) {
-          const nowAnswering = active.slot === 1 ? ' — answering now' : active.slot === 2 ? ' — stopped by Google today, key 2 is answering' : '';
-          el.textContent = `● key 1 ending in …${info.tail}${nowAnswering} — source: ${keySourceLine(info)}; model in use: ${info.model} (from ${info.modelSource})`;
-          el.style.color = active.slot === 1 ? 'var(--emerald)' : '#ffb86b';
-        } else {
-          el.textContent = `○ no key set — checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key). Paste a key and press Save.`;
-          el.style.color = '#ffb86b';
-        }
-        if (el2) {
-          const k2 = info.key2 || {};
-          if (k2.present) {
-            const state = active.slot === 2 ? ' — answering now (Google stopped key 1 today)' : (info.quota && info.quota.googleStopped && info.quota.googleStopped[2]) ? ' — stopped by Google today' : ' — standing by';
-            el2.textContent = `● second key ending in …${k2.tail}${state} — source: ${keySourceOf(k2, 'GEMINI_API_KEY_2', 'gemini_api_key_2')}`;
-            el2.style.color = active.slot === 2 ? 'var(--emerald)' : '';
-          } else {
-            el2.textContent = '○ no second key set (optional) — checked the environment (GEMINI_API_KEY_2, including ./.env) and config/api_keys.json (gemini_api_key_2).';
-            el2.style.color = '';
-          }
-        }
-        if (calls && info.quota) {
-          const q = info.quota;
-          const who = active.slot ? `Active key: ${active.slot}${active.tail ? ` (…${active.tail})` : ''} — ${active.reason || ''}` : 'Active key: none';
-          const stops = [1, 2].filter((s) => q.googleStopped && q.googleStopped[s]).map((s) => {
-            const st = q.googleStopped[s];
-            const when = new Date(st.at);
-            const hhmm = isNaN(when.getTime()) ? st.at : `${String(when.getHours()).padStart(2, '0')}:${String(when.getMinutes()).padStart(2, '0')}`;
-            return `key ${s} stopped by Google at ${hhmm} (${st.reason === 'quota' ? 'a real 429, its quota' : 'it rejected the key'})`;
-          });
-          const googleLine = q.stoppedByGoogle
-            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at midnight Pacific (Google\'s own quota reset).'
-            : stops.length ? stops.join('; ') : 'Google has not stopped any key today.';
-          const warnLine = q.warnAt > 0
-            ? (q.pastWarn ? `⚠ at or past your warning level of ${q.warnAt} (${q.warnSource}) — only a warning, nothing is blocked.` : `Warning level ${q.warnAt} (${q.warnSource}).`)
-            : 'No warning level set.';
-          const fileLine = q.unreadable ? ' ⚠ runtime/quota.json could not be read — counting in memory since the server started; nothing is blocked.' : '';
-          calls.textContent = `${who}. Calls today: ${q.used} (key 1: ${q.perKey ? q.perKey[1] : '?'}, key 2: ${q.perKey ? q.perKey[2] : '?'}). ${warnLine} ${googleLine}${fileLine}`;
-          calls.style.color = q.stoppedByGoogle ? '#ff6b6b' : (q.pastWarn || q.unreadable || stops.length) ? '#ffb86b' : '';
-        }
-        // The connectivity line: offline is a mode the owner can see and change.
-        const offlineEl = document.getElementById('offline-status');
-        if (offlineEl) {
-          const o = info.offline;
-          if (!o) { offlineEl.textContent = 'Connectivity not reported by this server build.'; offlineEl.style.color = ''; }
-          else if (o.offline) {
-            offlineEl.textContent = `● OFFLINE — local only (${o.why}). The chat keeps working and nothing is fetched from the internet. ` +
-              `Still working: ${(o.works || []).slice(0, 5).join('; ')}. Refused while offline: ${(o.refused || []).slice(0, 3).join('; ')}.` +
-              (o.forced ? ' This is YOUR switch — press “Automatic” to hand it back to Google.' : '');
-            offlineEl.style.color = '#ffb86b';
-          } else {
-            offlineEl.textContent = `● Online — ${o.override === false ? 'held online by your own switch (Google’s 429 will be ignored until you press “Automatic”)' : 'automatic'}. Local answers are tried first, so most work never spends a call.`;
-            offlineEl.style.color = 'var(--emerald)';
-          }
-          _offlineState = o;
-        }
-        refreshBuildLine(info);
-      } catch (err) {
-        el.textContent = `Could not ask the server: ${err.message} — is it running on port 3000?`;
-        el.style.color = '#ff6b6b';
-        if (el2) el2.textContent = '';
-        if (calls) calls.textContent = '';
-        refreshBuildLine(null);
+        el.textContent = info.present
+          ? 'Optional Gemini key saved.'
+          : 'No Gemini key saved. Local commands and saved knowledge remain available.';
+        el.style.color = '';
+      } catch (_) {
+        el.textContent = 'Gemini key status unavailable; local features are unaffected.';
+        el.style.color = '';
       }
     }
 
-    async function saveGeminiKey(slot) {
-      slot = Number(slot) === 2 ? 2 : 1;
-      const input = document.getElementById(slot === 2 ? 'gemini-key2-input' : 'gemini-key-input');
-      const el = document.getElementById(slot === 2 ? 'gemini-key2-status' : 'gemini-key-status');
-      const label = slot === 2 ? 'Second key' : 'Gemini key';
-      const key = ((input && input.value) || '').trim();
+    async function saveGeminiKey() {
+      const input = document.getElementById('gemini-key-input');
+      const el = document.getElementById('gemini-key-status');
+      if (!input || !el) return;
+      const key = input.value.trim();
       if (key.length < 10) {
-        el.textContent = 'That key is too short — a Gemini API key is at least 10 characters.';
-        el.style.color = '#ff6b6b';
+        el.textContent = 'Enter a Gemini key with at least 10 characters, or leave it empty.';
         return;
       }
-      el.textContent = 'Saving…';
-      el.style.color = '';
+      el.textContent = 'Saving optional Gemini key…';
       try {
         const res = await _authFetch('/api/settings/gemini-key', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key, slot })
+          body: JSON.stringify({ key }),
         });
         const info = await res.json().catch(() => ({}));
         if (!res.ok) {
-          el.textContent = `Save failed: ${info.error || `the server answered HTTP ${res.status}`}`;
-          el.style.color = '#ff6b6b';
+          el.textContent = `Could not save the key: ${info.error || `HTTP ${res.status}`}`;
           return;
         }
-        if (input) input.value = '';
-        const where = Array.isArray(info.savedTo) && info.savedTo.length ? info.savedTo.join(' and ') : 'the app\'s settings';
-        if (info.warning) {
-          // Saved, but NOT in force: an older key already in the environment
-          // is read first. Say so in the status line AND the toast — never
-          // claim "the brain is live" for a key that is not being used.
-          el.textContent = `⚠ ${info.warning}`;
-          el.style.color = '#ffb86b';
-          toast(`⚠ ${label} saved, but an older key in the environment is still the one in use — see Settings → The Brain`);
-          return;
-        }
-        toast(slot === 2
-          ? `Second key saved to ${where} (ends in …${info.tail}) — it takes over if Google stops the first key`
-          : `Gemini key saved to ${where} (ends in …${info.tail}) — the brain is live now`);
-      } catch (err) {
-        el.textContent = `Save failed: ${err.message} — is the server running on port 3000?`;
-        el.style.color = '#ff6b6b';
+        input.value = '';
+        el.textContent = info.warning
+          ? 'Saved, but an existing environment key takes precedence.'
+          : 'Optional Gemini key saved.';
+        toast('Optional Gemini key saved.');
+      } catch (_) {
+        el.textContent = 'Could not save the key. Local features remain available.';
         return;
       }
       refreshGeminiKeyStatus();
     }
-
-    async function clearGeminiKey2() {
-      const el = document.getElementById('gemini-key2-status');
-      if (el) { el.textContent = 'Removing…'; el.style.color = ''; }
-      try {
-        const res = await _authFetch('/api/settings/gemini-key', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ slot: 2, clear: true })
-        });
-        const info = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          if (el) { el.textContent = `Remove failed: ${info.error || `the server answered HTTP ${res.status}`}`; el.style.color = '#ff6b6b'; }
-          return;
-        }
-        toast(info.stillPresent ? '⚠ Removed from the files, but a GEMINI_API_KEY_2 in the environment still holds a second key' : 'Second key removed');
-      } catch (err) {
-        if (el) { el.textContent = `Remove failed: ${err.message}`; el.style.color = '#ff6b6b'; }
-        return;
-      }
-      refreshGeminiKeyStatus();
-    }
-    window.clearGeminiKey2 = clearGeminiKey2;
 
     // ── Supplier keys ────────────────────────────────────────────────────────
     // None of these have anything to do with Gemini and none spend quota. All of
@@ -2468,33 +1797,13 @@
 
     // ── WebSocket Relay ───────────────────────────────────────────────────────
     const chatFeed   = document.getElementById('chat-feed');
-    const statusPill = document.getElementById('status-pill');
-    const statusTxt  = document.getElementById('status-txt');
-    const reactorTag = document.getElementById('reactor-status');
-
     const _wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
     const _wsUrl   = `${_wsProto}://${location.host}/ws?token=${encodeURIComponent(_authToken)}`;
     let ws;
 
     function initWebSocket() {
       ws = new WebSocket(_wsUrl);
-      ws.onopen = () => {
-        statusPill.className = 'status-pill online';
-        statusTxt.textContent = 'Active';
-        toast('Connected to JARVIS');
-      };
-      ws.onclose = () => {
-        statusPill.className = 'status-pill';
-        // "Offline" here would collide with the app's own OFFLINE mode (no
-        // internet / quota spent), which the banner reports: this pill is only
-        // about the page's socket to the server.
-        statusTxt.textContent = 'Disconnected';
-        setTimeout(initWebSocket, 3000);
-      };
-      ws.onerror = () => {
-        statusPill.className = 'status-pill';
-        statusTxt.textContent = 'Error';
-      };
+      ws.onclose = () => { setTimeout(initWebSocket, 3000); };
       ws.onmessage = (e) => {
         try {
           const m = JSON.parse(e.data);
@@ -2503,12 +1812,6 @@
       };
     }
     initWebSocket();
-
-    // The offline banner is filled in as soon as the page opens, and kept
-    // current: the server pushes an 'offline' frame on every change, and this
-    // timer catches a change made elsewhere (another tab, a restart, a 429).
-    refreshOfflineBanner();
-    setInterval(refreshOfflineBanner, 30000);
 
     /* Every frame the server pushes is handled here — and only here, so the
        headless tests can feed frames in without a socket (window.__jarvisWs). */
@@ -2556,24 +1859,13 @@
             }
             }
           }
-          if (m.type === 'status') {
-            reactorTag.textContent = m.state === 'active' ? `${_assistantName} ACTIVE` : `${_assistantName} SLEEPING`;
-          }
-          if (m.type === 'offline') {
-            // The server crossed into or out of offline mode: refresh the banner
-            // at once instead of waiting for the next settings poll.
-            refreshOfflineBanner();
-          }
           if (m.type === 'brain_topic') {
             window.dispatchEvent(new CustomEvent('jarvis:brain-topic', { detail: m }));
           }
           if (m.type === 'log' && m.speaker === 'jarvis' && m.replay !== true) {
             window.dispatchEvent(new CustomEvent('jarvis:brain-refresh'));
           }
-          if (m.type === 'wake') {
-            toast('Systems awake and responsive');
-            reactorTag.textContent = `${_assistantName} ACTIVE`;
-          }
+          if (m.type === 'wake') toast('Systems awake and responsive');
           if (m.type === 'myhands_control') {
             if (m.active && !handTrackingActive) {
               toggleMyHandsTracking();
@@ -2783,122 +2075,20 @@
       toast('Sending wake directive…');
     }
 
-    // ── Voice check: Jarvis inspects his own mouth and ears ────────────────
-    // Reports exactly WHY sound or mic fails in this browser — permissions,
-    // iframes, missing APIs — so a failed test is never a mystery.
+    // Local voice check: inspect and exercise the active on-device paths only.
     async function runVoiceCheck() {
-      const lines = [];
-      lines.push(`Secure page (needed for mic): ${window.isSecureContext ? 'yes' : 'NO — mic is blocked on insecure pages'}`);
-      lines.push(`Running inside a frame: ${window.top !== window.self ? 'yes — frames often lose mic/speaker rights' : 'no'}`);
-      // The voice: two engines, and which one this page is really using.
-      const speaking = (Voice.engine === 'auto' && browserCanSpeak()) ? 'browser' : browserCanSpeak() && Voice.engine !== 'server' ? 'browser' : 'server';
-      lines.push(`Voice engine setting: ${Voice.engine === 'server' ? 'this computer (the server)' : 'auto'}`);
-      lines.push(speaking === 'browser'
-        ? `Mouth: this browser's own voice${Voice.voice ? ` — ${Voice.voice.name} (${Voice.voice.lang})` : ' (no voice listed yet)'}${Voice.synthProblem ? ` — problem: ${Voice.synthProblem}` : ''}`
-        : `Mouth: the computer running JARVIS (Kokoro). This browser: ${Voice.synthProblem || 'no voice listed'}`);
-      const earsNow = hearEngine();
-      lines.push(earsNow === 'browser'
-        ? `Ears: this browser's own recogniser${Listen.active ? ' (open)' : ''}${Voice.recogProblem ? ` — problem: ${Voice.recogProblem}` : ''}`
-        : `Ears: the JARVIS server (faster-whisper)${Voice.recogProblem ? ` — the browser's recogniser said: ${Voice.recogProblem}` : ''}`);
-      lines.push(Voice.recogClass ? 'Browser recogniser: available' : 'Browser recogniser: not available in this browser (Firefox has none)');
-      lines.push(`Microphone: ${Ear.ready ? 'open (server ear)' : Listen.active ? 'open (browser ear)' : 'not open yet'}; ${_muted ? 'MUTED by you' : 'always listening'}; sentences waiting for the server: ${Ear.queue.length}`);
-      lines.push(`Speaking now: ${Speech.busy ? 'yes' : 'no'}; replies waiting to be spoken: ${Speech.queue.length}`);
-      lines.push(`Voice problem on screen: ${Ear.problem || 'none'}`);
-      lines.push(`Mic API: ${navigator.mediaDevices && navigator.mediaDevices.getUserMedia ? 'available' : 'MISSING'}`);
-      const micPolicy = (typeof micPolicyAllows === 'function') ? micPolicyAllows() : null;
-      if (micPolicy === false) lines.push('Microphone policy: BLOCKED BY THIS FRAME — open JARVIS in its own tab and the mic works');
-      else if (micPolicy === true) lines.push('Microphone policy: the page itself is allowed to ask');
-      if (navigator.permissions && navigator.permissions.query) {
-        try {
-          const p = await navigator.permissions.query({ name: 'microphone' });
-          lines.push(`Mic permission: ${p.state}`);
-        } catch (_) { /* some browsers refuse the query */ }
-      }
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        stream.getTracks().forEach((t) => t.stop());
-        lines.push('Mic open test: OK — the microphone itself works');
-      } catch (err) {
-        lines.push(`Mic open test: FAILED — ${err.name}: ${err.message}`);
-      }
-
-      let _voiceInfo = null;
-      // ── The senses around the browser: server, brain, replies channel, cameras ──
-      // "voice test" checks the whole body, not just the mouth and ears, and every
-      // line says what the reading MEANS — a failure is never a mystery.
-      try {
-        const res = await _authFetch('/api/system-status');
-        if (res.ok) {
-          lines.push('JARVIS server: reachable — commands, files and telemetry are live');
-        } else {
-          lines.push(`JARVIS server: answered HTTP ${res.status} — the page is open but its API is refusing; restart the server with npm run dev`);
-        }
-      } catch (err) {
-        lines.push('JARVIS server: UNREACHABLE — the page is running without its server, so no command, file or AI feature can work. Start it with npm run dev (or the launcher)');
-      }
-      try {
-        const res = await _authFetch('/api/settings/gemini-key');
-        const info = await res.json();
-        const source = info.source === 'config/api_keys.json' ? 'config/api_keys.json (gemini_api_key)'
-          : info.source === '.env' ? './.env (GEMINI_API_KEY)'
-          : info.source === 'environment' ? 'the environment (GEMINI_API_KEY)'
-          : 'nowhere';
-        _voiceInfo = { model: info.voiceModel || 'not reported', source: info.voiceModelSource || 'unknown', note: String(info.voiceModelNote || '').trim() };
-        if (info.present) {
-          const k2 = info.key2 && info.key2.present ? `; second key (fallback) ending in …${info.key2.tail} from ${keySourceOf(info.key2, 'GEMINI_API_KEY_2', 'gemini_api_key_2')}` : '; no second key set (optional)';
-          const active = info.activeKey && info.activeKey.slot ? `; answering on key ${info.activeKey.slot}` : '';
-          lines.push(`Brain key: set, ending in …${info.tail} — from ${source}${k2}${active}; model in use: ${info.model} (from ${info.modelSource})`);
-        } else {
-          lines.push('Brain key: NO KEY — my reasoning is offline. I checked the environment (GEMINI_API_KEY, including ./.env) and config/api_keys.json (gemini_api_key); open Settings (the gear button) and paste the key under "The Brain"');
-        }
-      } catch (err) {
-        lines.push(`Brain key: could not ask the server (${err.message}) — treat the brain as offline until the server answers`);
-      }
-      // The proof, not a status light: one real call, and the line names the model
-      // that answered. A 404 here means the model name was withdrawn (the key is
-      // fine) — the line says so, instead of blaming the connection or the key.
-      try {
-        const res = await _authFetch('/api/brain-check');
-        const info = await res.json().catch(() => ({}));
-        if (info.ok) {
-          // Name the version that ACTUALLY answered, not just the alias that was
-          // asked for — "gemini-flash-latest" reads the same whichever
-          // generation Google points it at.
-          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
-          lines.push(`Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key ${info.keySlot || '?'} from ${info.keySource}; ${quotaLine(info.quota)}`);
-        } else {
-          lines.push(`Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
-        }
-      } catch (err) {
-        lines.push(`Brain call: could not reach the server (${err.message}) — the brain is unmeasured until it answers`);
-      }
-      if (typeof ws !== 'undefined' && ws && ws.readyState === WebSocket.OPEN) {
-        lines.push('Replies channel (websocket): OPEN — JARVIS can push replies into this window');
-      } else {
-        lines.push('Replies channel (websocket): NOT OPEN — replies cannot arrive; wait for it to reconnect (or reload the page) before expecting answers');
-      }
-      try {
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const cams = devices.filter((d) => d.kind === 'videoinput').length;
-        if (cams > 0) {
-          lines.push(`Cameras found: ${cams} — My Hands gesture tracking can see you`);
-        } else {
-          lines.push('Cameras found: NONE — My Hands has no eye; use Mouse Hand (press V) and everything still works by mouse');
-        }
-      } catch (err) {
-        lines.push(`Cameras found: could not list devices (${err.message}) — if My Hands cannot see a camera, use Mouse Hand (press V)`);
-      }
-
-      appendChat('system', 'Senses check:\n' + lines.join('\n'));
-      // Finally, the proof: speak one line out loud — through the engine that is
-      try {
-        appendChat('system', speaking === 'browser'
-          ? 'I am speaking a test line with this browser’s own voice — it comes out of the speakers of the computer you are sitting at. If you did not hear it, press 🔊 Test Speakers in Settings → Voice.'
-          : 'I am speaking a test line through the voice of the computer running JARVIS — you hear it only when that is the machine you are sitting at. If you did not hear it, press 🔊 Test Speakers in Settings → Voice, or set Voice engine to Auto.');
-        speakReply('Voice check. If you hear this, my speakers work.');
-      } catch (err) {
-        appendChat('system', `Could not even try to speak: ${err.message}`);
-      }
+      const local = _voiceServerInfo && _voiceServerInfo.voiceLocal;
+      const browserVoice = browserCanSpeak() && Voice.voice;
+      const output = `app-local Kokoro${local ? (local.speakReady ? ' (ready)' : ' (not ready)') : ''}`
+        + (browserVoice ? `; browser-local fallback (${Voice.voice.name}, ${Voice.voice.lang})` : '');
+      const input = 'app-local faster-whisper';
+      const notes = [];
+      if (_muted) notes.push('microphone is muted');
+      if (!window.isSecureContext) notes.push('microphone access requires HTTPS or localhost');
+      if (Ear.problem) notes.push(Ear.problem);
+      appendChat('system', `Voice check — output: ${output}; input: ${input}${notes.length ? `; ${notes.join('; ')}` : ''}.`);
+      try { await speakOne('Voice check. If you hear this, the local voice is working.', Speech.generation); }
+      catch (err) { console.warn('[voice] local voice check failed:', err); }
     }
     window.runVoiceCheck = runVoiceCheck;
 
@@ -2970,52 +2160,12 @@
       if (e.key === 'Escape') closeRooms();
     });
 
-    function requestSystemDiagnostics() {
-      sendSuggestion('Report core telemetry and system health');
-      measureBrain();
-    }
-
-    // The Diagnostics button and "voice test" both MEASURE the brain: one real
-    // call, and the line names the model that answered. That call costs one unit
-    // of the day's budget, which is why it happens on a button press, not on a poll.
-    async function measureBrain() {
-      try {
-        const res = await _authFetch('/api/brain-check');
-        const info = await res.json().catch(() => ({}));
-        if (info.ok) {
-          const served = info.modelVersion && info.modelVersion !== info.model ? ` — served as ${info.modelVersion}` : '';
-          appendChat('system', `Brain call: OK — ${info.model} (${info.modelSource})${served} answered in ${info.latencyMs} ms; key ${info.keySlot || '?'} from ${info.keySource}; ${quotaLine(info.quota)}.`);
-        } else {
-          appendChat('system', `Brain call: FAILED — ${info.error || 'no answer from the server'}${info.code ? ` [${info.code}]` : ''}`);
-        }
-      } catch (err) {
-        appendChat('system', `Brain call: could not reach the server (${err.message}) — the brain is unmeasured until it answers.`);
-      }
-    }
-    window.measureBrain = measureBrain;
-
     document.getElementById('chat-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         doSend();
       }
     });
-
-    // ── Telemetry Polling ─────────────────────────────────────────────────────
-    async function updateTelemetry() {
-      try {
-        const res = await _authFetch('/api/system-status');
-        if (res.ok) {
-          const data = await res.json();
-          document.getElementById('met-ram').textContent = `${data.memory.rssMB} MB`;
-          document.getElementById('met-heap').textContent = `${data.memory.heapUsedMB}`;
-          document.getElementById('met-uptime').textContent = `${data.uptime}s`;
-          document.getElementById('met-sockets').textContent = `${data.activeSockets}`;
-        }
-      } catch {}
-    }
-    setInterval(updateTelemetry, 5000);
-    updateTelemetry();
 
     // ── PC ENVIRONMENT FILE TREE ──────────────────────────────────────────────
     let rawTreeData = [];
@@ -3252,7 +2402,7 @@
       if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('.tree-search') || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
       const win = document.getElementById(winId);
       if (!win) return;
-      if (win.classList.contains('docked')) return; // pinned in the left panel
+      if (win.classList.contains('primary-chat')) return; // fixed as the main conversation
 
       bringToFront(win);
       activeDragWin = win;
@@ -3357,8 +2507,7 @@
         win.style.display = 'flex';
         bringToFront(win);
         FoleyAudio.grab();
-        // Settings must show the truth about the brain key and the build every
-        // time it opens.
+        // Optional provider settings load only when the owner opens Settings.
         if (winId === 'win-settings') { refreshGeminiKeyStatus(); refreshImageKeyStatus(); refreshSupplierRegistry(); refreshCustomSuppliers(); }
       } else {
         win.style.display = 'none';
@@ -3370,45 +2519,6 @@
       glassDragAnywhere = !glassDragAnywhere;
       document.getElementById('sw-glass-drag').classList.toggle('on', glassDragAnywhere);
       toast(glassDragAnywhere ? 'Glass drag-anywhere enabled' : 'Header grab only');
-    }
-
-    // ── LAYOUT PRESETS ──
-    function resetLayout() {
-      // The OS layout: dock left, buttons top, open desktop. A reset clears
-      // stray windows and remembered icon positions — nothing else moves.
-      document.querySelectorAll('[id^="win-folder-"]').forEach((w) => w.remove());
-      localStorage.removeItem(DESK_POS_KEY);
-      document.querySelectorAll('.desk-icon').forEach((icon, i) => {
-        icon.style.left = '292px';
-        icon.style.top = (96 + i * 128) + 'px';
-      });
-      FoleyAudio.place();
-      toast('Desktop reset');
-    }
-
-    function applyPreset(mode) {
-      if (mode === 'balanced') {
-        resetLayout();
-      } else if (mode === 'dev') {
-        const c = document.getElementById('win-chat');
-        const tr = document.getElementById('win-tree');
-        const insp = document.getElementById('win-inspector');
-        if (tr) { tr.style.display = 'flex'; tr.style.left = '24px'; tr.style.top = '24px'; tr.style.width = '320px'; tr.style.height = 'calc(100vh - 110px)'; }
-        if (insp) { insp.style.display = 'flex'; insp.style.left = '364px'; insp.style.top = '24px'; insp.style.width = '520px'; insp.style.height = 'calc(100vh - 110px)'; }
-        if (c) { c.style.display = 'flex'; c.style.left = '904px'; c.style.top = '24px'; c.style.width = '420px'; c.style.height = 'calc(100vh - 110px)'; }
-        FoleyAudio.place();
-        toast('Code & Files layout applied');
-      } else if (mode === 'spatial') {
-        enableCameraBackground();
-        const t = document.getElementById('win-telemetry');
-        const c = document.getElementById('win-chat');
-        const tr = document.getElementById('win-tree');
-        if (t) { t.style.display = 'flex'; t.style.left = '40px'; t.style.top = '70px'; t.style.width = '300px'; }
-        if (c) { c.style.display = 'flex'; c.style.left = '360px'; c.style.top = '70px'; t.style.width = '440px'; }
-        if (tr) { tr.style.display = 'flex'; tr.style.left = '820px'; tr.style.top = '70px'; }
-        FoleyAudio.place();
-        toast('My Hands Spatial Stage applied');
-      }
     }
 
     // ── ONE CAMERA, EVERYWHERE ─────────────────────────────────────────────
@@ -3485,17 +2595,6 @@
       window.open(window.location.href, '_blank');
     }
 
-    function showCamHelperBanner(title, desc) {
-      const banner = document.getElementById('cam-helper-banner');
-      if (title) document.getElementById('cam-banner-title').textContent = title;
-      if (desc) document.getElementById('cam-banner-desc').textContent = desc;
-      banner.style.display = 'flex';
-    }
-
-    function closeCamHelper() {
-      document.getElementById('cam-helper-banner').style.display = 'none';
-    }
-
     async function populateCameraDevices() {
       try {
         if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
@@ -3514,12 +2613,28 @@
 
     async function switchCameraDevice(devId) {
       currentCameraId = devId;
-      if (cameraStream) {
-        disableCameraBackground();
-        await enableCameraBackground(devId);
+      if (!cameraStream) return;
+      const resumeTracking = handTrackingActive;
+      if (resumeTracking) {
+        handTrackingActive = false;
+        stopHandTrackingLoop();
+        publishHandsLost();
+      }
+      disableCameraBackground();
+      await enableCameraBackground(devId);
+      if (resumeTracking && cameraStream) {
+        handTrackingActive = true;
+        startHandTrackingLoop();
+      } else if (resumeTracking) {
+        btnHands.classList.remove('active');
+        if (swHands) swHands.classList.remove('on');
+        dotHands.classList.remove('active');
+        txtHandsStatus.textContent = 'My Hands: Camera needed';
+        handCursor.style.display = 'none';
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        document.body.classList.remove('myhands-engaged');
       }
     }
-
     async function cycleCamera() {
       try {
         const devices = await navigator.mediaDevices.enumerateDevices();
@@ -3547,10 +2662,69 @@
       }
     }
 
+    function waitForCameraVideo(timeoutMs = 3000) {
+      if (bgCam.videoWidth > 0) return Promise.resolve(true);
+      return new Promise((resolve) => {
+        let timer = 0;
+        const cleanup = () => {
+          clearTimeout(timer);
+          ['loadedmetadata', 'loadeddata', 'canplay', 'playing'].forEach((name) => bgCam.removeEventListener(name, check));
+        };
+        const check = () => {
+          if (bgCam.videoWidth <= 0) return;
+          cleanup();
+          resolve(true);
+        };
+        ['loadedmetadata', 'loadeddata', 'canplay', 'playing'].forEach((name) => bgCam.addEventListener(name, check));
+        timer = setTimeout(() => { cleanup(); resolve(bgCam.videoWidth > 0); }, timeoutMs);
+      });
+    }
+
+    async function attachCameraStream(stream, status = 'Cam: Active') {
+      cameraStream = stream;
+      bgCam.srcObject = stream;
+      if (typeof bgCam.play === 'function') {
+        try { await bgCam.play(); }
+        catch (err) { console.warn('Camera stream is open but video playback has not started:', err); }
+      }
+      if (!await waitForCameraVideo()) {
+        stream.getTracks().forEach((track) => { try { track.stop(); } catch (_) {} });
+        cameraStream = null;
+        bgCam.srcObject = null;
+        throw new Error('the camera opened but did not produce video frames');
+      }
+      bgCam.classList.add('active');
+      btnCam.classList.add('active');
+      document.getElementById('txt-btn-cam').textContent = 'Camera On';
+      dotCam.classList.add('active');
+      txtCamStatus.textContent = status;
+      document.body.classList.add('myhands-engaged');
+      document.body.classList.add('jg-cam-on');
+      sendCameraToRooms();
+      populateCameraDevices();
+    }
+
+    function reportCameraStartFailure(err) {
+      console.warn('Camera access failed:', err);
+      cameraStream = null;
+      bgCam.srcObject = null;
+      bgCam.classList.remove('active');
+      btnCam.classList.remove('active');
+      document.getElementById('txt-btn-cam').textContent = 'Camera';
+      dotCam.classList.remove('active');
+      document.body.classList.remove('jg-cam-on');
+      document.body.classList.remove('myhands-engaged');
+      txtCamStatus.textContent = 'Cam: Blocked';
+      const reason = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError')
+        ? 'Allow camera access for JARVIS in the browser, then try again.'
+        : 'Check that a camera is connected and not in use by another app, then try again.';
+      appendChat('system', `Camera could not start. ${reason}`);
+    }
+
     async function enableCameraBackground(prefId) {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        showCamHelperBanner('Webcam API Unavailable', 'Your browser does not support mediaDevices in this context. Use Mouse Hand mode or Pop Out.');
-        enableCyberStageFeed();
+        txtCamStatus.textContent = 'Cam: Unavailable';
+        appendChat('system', 'Camera access is unavailable here. Open JARVIS at localhost in a major browser and allow camera access.');
         return;
       }
 
@@ -3558,55 +2732,33 @@
         video: {
           width: { ideal: 1280 },
           height: { ideal: 720 },
-          frameRate: { ideal: 60 }, // fresher frames = a faster hand
-          facingMode: 'user'
-        }
+          frameRate: { ideal: 60 },
+          facingMode: 'user',
+        },
       };
 
       try {
-        cameraStream = await navigator.mediaDevices.getUserMedia(constraints);
-        bgCam.srcObject = cameraStream;
-        bgCam.classList.add('active');
-        btnCam.classList.add('active');
-        document.getElementById('txt-btn-cam').textContent = 'Camera On';
-        dotCam.classList.add('active');
-        txtCamStatus.textContent = 'Cam: Active';
-        document.body.classList.add('myhands-engaged');
-        document.body.classList.add('jg-cam-on');
-        closeCamHelper();
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        await attachCameraStream(stream);
         toast('Camera background active');
-        sendCameraToRooms();        // his picture becomes the glass in the rooms too
-        populateCameraDevices();
       } catch (primaryErr) {
-        console.warn('Primary camera stream request failed, trying fallback constraints:', primaryErr);
+        if (primaryErr && (primaryErr.name === 'NotAllowedError' || primaryErr.name === 'SecurityError')) {
+          reportCameraStartFailure(primaryErr);
+          return;
+        }
+        console.info('Preferred camera constraints failed; trying the default camera:', primaryErr);
         try {
-          cameraStream = await navigator.mediaDevices.getUserMedia({ video: true });
-          bgCam.srcObject = cameraStream;
-          bgCam.classList.add('active');
-          btnCam.classList.add('active');
-          document.getElementById('txt-btn-cam').textContent = 'Camera On';
-          dotCam.classList.add('active');
-          txtCamStatus.textContent = 'Cam: Fallback';
-          document.body.classList.add('myhands-engaged');
-          document.body.classList.add('jg-cam-on');
-          closeCamHelper();
-          toast('Camera background connected');
-          sendCameraToRooms();
-          populateCameraDevices();
+          const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+          await attachCameraStream(stream, 'Cam: Active');
+          toast('Camera background active');
         } catch (fallbackErr) {
-          console.error('Camera access blocked/failed:', fallbackErr);
-          dotCam.classList.remove('active');
-          txtCamStatus.textContent = 'Cam: Blocked';
-          showCamHelperBanner(
-            'Camera Access Restricted in Iframe',
-            'Webcam permissions are locked by the browser inside this preview container. Pop out to a new tab for direct access, or enable Mouse Hand to test all spatial gestures right now!'
-          );
-          enableCyberStageFeed();
+          reportCameraStartFailure(fallbackErr);
         }
       }
     }
 
     function disableCameraBackground() {
+      if (handTrackingActive) void toggleMyHandsTracking();
       if (cameraStream) {
         cameraStream.getTracks().forEach(t => t.stop());
         cameraStream = null;
@@ -3625,85 +2777,8 @@
       toast('Camera background disabled');
     }
 
-    // Dynamic Cyber Stage Feed (renders simulated spatial stage if webcam is locked)
-    let cyberStageActive = false;
-    let cyberCanvas = null;
-    let cyberCtx = null;
-    let cyberAnimId = null;
-
-    function enableCyberStageFeed() {
-      if (cameraStream) return;
-      cyberStageActive = true;
-      if (!cyberCanvas) {
-        cyberCanvas = document.createElement('canvas');
-        cyberCanvas.id = 'cyber-stage-canvas';
-        cyberCanvas.style.cssText = 'position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0.35; z-index:1; pointer-events:none;';
-        document.getElementById('stage-container').appendChild(cyberCanvas);
-        cyberCtx = cyberCanvas.getContext('2d');
-      }
-
-      function resizeCyber() {
-        if (!cyberCanvas) return;
-        cyberCanvas.width = window.innerWidth;
-        cyberCanvas.height = window.innerHeight;
-      }
-      window.addEventListener('resize', resizeCyber);
-      resizeCyber();
-
-      let t = 0;
-      function renderCyberStage() {
-        if (!cyberStageActive || cameraStream) {
-          if (cyberCanvas) cyberCanvas.style.display = 'none';
-          return;
-        }
-        cyberCanvas.style.display = 'block';
-        const w = cyberCanvas.width;
-        const h = cyberCanvas.height;
-        cyberCtx.clearRect(0, 0, w, h);
-
-        // Ambient perspective grid
-        cyberCtx.strokeStyle = 'rgba(255, 214, 10, 0.12)';
-        cyberCtx.lineWidth = 1;
-        const gridStep = 60;
-        const offset = (t * 15) % gridStep;
-        for (let x = 0; x < w; x += gridStep) {
-          cyberCtx.beginPath();
-          cyberCtx.moveTo(x, 0);
-          cyberCtx.lineTo(x, h);
-          cyberCtx.stroke();
-        }
-        for (let y = offset; y < h; y += gridStep) {
-          cyberCtx.beginPath();
-          cyberCtx.moveTo(0, y);
-          cyberCtx.lineTo(w, y);
-          cyberCtx.stroke();
-        }
-
-        // Concentric HUD radar rings
-        const cx = w / 2, cy = h / 2;
-        cyberCtx.save();
-        cyberCtx.translate(cx, cy);
-        cyberCtx.rotate(t * 0.08);
-        cyberCtx.strokeStyle = 'rgba(255, 208, 74, 0.2)';
-        cyberCtx.beginPath();
-        cyberCtx.arc(0, 0, 240, 0, Math.PI * 1.5);
-        cyberCtx.stroke();
-        cyberCtx.strokeStyle = 'rgba(16, 185, 129, 0.15)';
-        cyberCtx.beginPath();
-        cyberCtx.arc(0, 0, 360, Math.PI * 0.4, Math.PI * 1.8);
-        cyberCtx.stroke();
-        cyberCtx.restore();
-
-        t += 0.016;
-        cyberAnimId = requestAnimationFrame(renderCyberStage);
-      }
-      renderCyberStage();
-      toast('Synthesized Cyber Stage active');
-    }
-
     // ── MY HANDS GESTURE ENGINE & TUNING ──
     let handTrackingActive = false;
-    let handTrackerLoaded = false;
     let pinchThreshold = 0.30;
     let fistGrabEnabled = true;
     let dwellGrabEnabled = true;
@@ -3774,8 +2849,8 @@
     window.toggleHandDiagnostics = toggleHandDiagnostics;
 
     function sampleHandPose() {
-      if (!handTrackingActive && !mouseHandActive) {
-        toast('Turn on My Hands or Mouse Hand before sampling');
+      if (!handTrackingActive) {
+        toast('Turn on My Hands before sampling');
         return;
       }
       const panel = ensureHandDiagnosticsPanel();
@@ -3890,6 +2965,7 @@
     async function toggleMyHandsTracking() {
       if (handTrackingActive) {
         handTrackingActive = false;
+        stopHandTrackingLoop();
         btnHands.classList.remove('active');
         if (swHands) swHands.classList.remove('on');
         dotHands.classList.remove('active');
@@ -3905,12 +2981,9 @@
         if (!cameraStream) {
           await enableCameraBackground();
         }
-        // No camera? The Mouse Hand is the honest fallback: it feeds the same
-        // synthetic landmarks through processHandLandmarks, so sweeps, rooms and
-        // drawing all keep working — and we never start a camera loop with no camera.
+        // Tracking requires a real camera; do not substitute synthetic landmarks.
         if (!cameraStream) {
-          enableMouseHand();
-          toast('No camera — Mouse Hand active: move the mouse, click = pinch, Shift+click = fist, V to toggle');
+          txtHandsStatus.textContent = 'My Hands: Camera needed';
           return;
         }
         handTrackingActive = true;
@@ -4002,10 +3075,6 @@
       gest.present = gest.pinch = gest.fist = gest.scaling = gest.pulling = false;
       if (handGrabbedWin) {
         handGrabbedWin.classList.remove('grabbed');
-        if (handGrabbedWin.classList.contains('desk-icon')) {
-          const label = handGrabbedWin.querySelector('.lbl');
-          if (label) deskSavePos(label.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
-        }
         FoleyAudio.place();
         handGrabbedWin = null;
       }
@@ -4068,91 +3137,139 @@
 
     async function loadHandTracker() {
       if (landmarker) return landmarker;
+      if (!window.JarvisHandGestures) {
+        throw new Error('the dashboard hand-gesture script did not load');
+      }
       if (!handTrackerLoading) {
         handTrackerLoading = (async () => {
           const { FilesetResolver, HandLandmarker } = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs");
           const vision = await FilesetResolver.forVisionTasks("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
-          landmarker = await HandLandmarker.createFromOptions(vision, {
+          const options = {
             baseOptions: {
               modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-              delegate: "GPU"
             },
             numHands: 2,
             runningMode: "VIDEO",
-            // Match My Hands' measured fresh-detection confidence: this
-            // reduces low-confidence finger jitter/phantom hands in clutter.
             minHandDetectionConfidence: 0.7,
             minHandPresenceConfidence: 0.5,
-            minTrackingConfidence: 0.5
-          });
-          handTrackerLoaded = true;
+            minTrackingConfidence: 0.5,
+          };
+          try {
+            landmarker = await HandLandmarker.createFromOptions(vision, {
+              ...options,
+              baseOptions: { ...options.baseOptions, delegate: "GPU" },
+            });
+          } catch (gpuError) {
+            console.info('My Hands GPU delegate is unavailable; using the cross-browser CPU delegate.', gpuError);
+            landmarker = await HandLandmarker.createFromOptions(vision, {
+              ...options,
+              baseOptions: { ...options.baseOptions, delegate: "CPU" },
+            });
+          }
           return landmarker;
         })();
       }
       try { return await handTrackerLoading; }
-      catch (err) { handTrackerLoading = null; throw err; }
+      catch (err) { handTrackerLoading = null; landmarker = null; throw err; }
+    }
+
+    let handFrameCallbackId = null;
+    let handRafId = null;
+    let handLoopGeneration = 0;
+
+    function stopHandTrackingLoop() {
+      handLoopGeneration++;
+      if (handFrameCallbackId !== null && bgCam && typeof bgCam.cancelVideoFrameCallback === 'function') {
+        try { bgCam.cancelVideoFrameCallback(handFrameCallbackId); } catch (_) {}
+      }
+      if (handRafId !== null) cancelAnimationFrame(handRafId);
+      handFrameCallbackId = handRafId = null;
+      handLoopStarted = false;
     }
 
     async function startHandTrackingLoop() {
       try {
         await loadHandTracker();
       } catch (e) {
-        console.warn('Could not load MediaPipe landmarker, falling back to simulated hand:', e);
-        txtHandsStatus.textContent = 'Mouse Hand: Active (camera tracker unavailable)';
-        enableMouseHand();
+        console.warn('Could not load the My Hands tracker:', e);
+        handTrackingActive = false;
+        stopHandTrackingLoop();
+        btnHands.classList.remove('active');
+        if (swHands) swHands.classList.remove('on');
+        dotHands.classList.remove('active');
+        txtHandsStatus.textContent = 'My Hands: Tracker unavailable';
+        handCursor.style.display = 'none';
+        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+        document.body.classList.remove('myhands-engaged');
+        publishHandsLost();
+        appendChat('system', 'My Hands could not start its camera tracker. Check camera access and reload JARVIS.');
         return;
       }
       if (!handTrackingActive || handLoopStarted) return;
       handLoopStarted = true;
+      const loopGeneration = handLoopGeneration;
       txtHandsStatus.textContent = 'My Hands: Active';
-
       let lastVideoTime = -1;
 
+      let consecutiveFrameErrors = 0;
       function processNow(now) {
         if (!landmarker || !bgCam || bgCam.currentTime === lastVideoTime || bgCam.videoWidth <= 0) return;
         lastVideoTime = bgCam.currentTime;
-        const res = landmarker.detectForVideo(bgCam, now);
-        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-        const landmarks = (res.landmarks || []).slice(0, 2);
-        if (!landmarks.length) {
+        try {
+          const res = landmarker.detectForVideo(bgCam, now);
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          const landmarks = (res.landmarks || []).slice(0, 2);
+          if (!landmarks.length) {
+            handCursor.style.display = 'none';
+            resetDwell();
+            resetHandFilter();
+            publishHandsLost();
+            consecutiveFrameErrors = 0;
+            return;
+          }
+          const frames = landmarks.map((lms) => window.JarvisHandGestures.summarizeHand(lms));
+          for (const lms of landmarks) drawHandSkeleton(lms, screenPointForCameraLandmark);
+          publishTwoHands(frames);
+          processHandLandmarks(landmarks[0], frames[0], false, screenPointForCameraLandmark);
+          consecutiveFrameErrors = 0;
+        } catch (err) {
+          consecutiveFrameErrors++;
+          console.warn('My Hands frame processing failed:', err);
+          if (consecutiveFrameErrors < 3) return;
+          handTrackingActive = false;
+          stopHandTrackingLoop();
+          btnHands.classList.remove('active');
+          if (swHands) swHands.classList.remove('on');
+          dotHands.classList.remove('active');
+          txtHandsStatus.textContent = 'My Hands: Tracker failed';
           handCursor.style.display = 'none';
-          resetDwell();
-          resetHandFilter();
+          overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+          document.body.classList.remove('myhands-engaged');
           publishHandsLost();
-          return;
+          appendChat('system', 'My Hands tracking stopped because the camera tracker failed. Check camera access and reload JARVIS.');
         }
-
-        const frames = landmarks.map((lms) => window.JarvisHandGestures.summarizeHand(lms));
-        for (const lms of landmarks) drawHandSkeleton(lms, screenPointForCameraLandmark);
-        publishTwoHands(frames);
-        processHandLandmarks(landmarks[0], frames[0], false, screenPointForCameraLandmark);
       }
 
-      // The fast path runs on each delivered camera frame rather than waiting
-      // for screen paint. Stop rescheduling as soon as My Hands is switched off.
       if (bgCam && typeof bgCam.requestVideoFrameCallback === 'function') {
         const onFrame = (now) => {
-          if (!handTrackingActive) {
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            handLoopStarted = false;
-            return;
-          }
+          if (loopGeneration !== handLoopGeneration) return;
+          handFrameCallbackId = null;
+          if (!handTrackingActive) { handLoopStarted = false; return; }
           processNow(now);
-          bgCam.requestVideoFrameCallback(onFrame);
+          if (handTrackingActive && loopGeneration === handLoopGeneration) handFrameCallbackId = bgCam.requestVideoFrameCallback(onFrame);
+          else handLoopStarted = false;
         };
-        bgCam.requestVideoFrameCallback(onFrame);
+        handFrameCallbackId = bgCam.requestVideoFrameCallback(onFrame);
       } else {
         const trackingFrame = (now) => {
-          if (!handTrackingActive) {
-            overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-            handLoopStarted = false;
-            return;
-          }
+          if (loopGeneration !== handLoopGeneration) return;
+          handRafId = null;
+          if (!handTrackingActive) { handLoopStarted = false; return; }
           processNow(now);
-          requestAnimationFrame(trackingFrame);
+          if (handTrackingActive && loopGeneration === handLoopGeneration) handRafId = requestAnimationFrame(trackingFrame);
+          else handLoopStarted = false;
         };
-        requestAnimationFrame(trackingFrame);
+        handRafId = requestAnimationFrame(trackingFrame);
       }
     }
 
@@ -4193,7 +3310,7 @@
     function resetHandFilter() { euro.x = null; }
 
     // Process a complete 21-point hand; geometry and timed gestures live in
-    // JarvisHandGestures, while this function maps them onto the desktop.
+    // JarvisHandGestures, while this function maps them onto the dashboard.
     function processHandLandmarks(lms, frame = null, drawSkeleton = true, toScreen = screenPointForCameraLandmark) {
       frame = frame || window.JarvisHandGestures.summarizeHand(lms);
       const thmTip = toScreen(lms[4]);
@@ -4258,10 +3375,9 @@
 
         if (!handGrabbedWin) {
           const el = document.elementFromPoint(cursorX, cursorY);
-          // Windows and desktop icons alike: pick up, carry, put down. Docked
-          // controls are part of the interface and are never dragged.
-          let win = el ? el.closest('.desk-icon, .glass-window') : null;
-          if (win && win.classList.contains('docked')) win = null;
+          // Workspace tools can be moved; the primary chat stays fixed.
+          let win = el ? el.closest('.glass-window') : null;
+          if (win && win.classList.contains('primary-chat')) win = null;
           if (win) {
             handGrabbedWin = win;
             bringToFront(win);
@@ -4277,10 +3393,6 @@
       } else {
         if (handGrabbedWin) {
           handGrabbedWin.classList.remove('grabbed');
-          if (handGrabbedWin.classList.contains('desk-icon')) {
-            const label = handGrabbedWin.querySelector('.lbl');
-            if (label) deskSavePos(label.textContent, handGrabbedWin.offsetLeft, handGrabbedWin.offsetTop);
-          }
           FoleyAudio.place();
           handGrabbedWin = null;
         }
@@ -4380,139 +3492,6 @@
         overlayCtx.fill();
       }
       overlayCtx.restore();
-    }
-
-    // ── VIRTUAL HAND SIMULATOR ──
-    let mouseHandActive = false;
-    let simMousePos = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
-    let simPinching = false;
-    let simFist = false;
-
-    function toggleVirtualHandSimulator() {
-      if (mouseHandActive) {
-        disableVirtualHandSimulator();
-      } else {
-        enableMouseHand();
-      }
-    }
-
-    function enableMouseHand() {
-      mouseHandActive = true;
-      document.getElementById('btn-toggle-sim').classList.add('active');
-      handCursor.classList.add('simulated');
-      handCursor.style.display = 'block';
-      dotHands.classList.add('active');
-      txtHandsStatus.textContent = 'Mouse Hand: Active';
-      toast('Virtual Hand Simulator active! Click / Space to Pinch, Shift+Click for Fist');
-      closeCamHelper();
-
-      window.addEventListener('pointermove', onSimPointerMove);
-      window.addEventListener('pointerdown', onSimPointerDown);
-      window.addEventListener('pointerup', onSimPointerUp);
-      window.addEventListener('keydown', onSimKeyDown);
-      window.addEventListener('keyup', onSimKeyUp);
-      requestAnimationFrame(renderHandSimLoop);
-    }
-
-    function disableVirtualHandSimulator() {
-      mouseHandActive = false;
-      document.getElementById('btn-toggle-sim').classList.remove('active');
-      handCursor.classList.remove('simulated');
-      if (!handTrackingActive) {
-        dotHands.classList.remove('active');
-        txtHandsStatus.textContent = 'My Hands: Off';
-        handCursor.style.display = 'none';
-        overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-      }
-      window.removeEventListener('pointermove', onSimPointerMove);
-      window.removeEventListener('pointerdown', onSimPointerDown);
-      window.removeEventListener('pointerup', onSimPointerUp);
-      window.removeEventListener('keydown', onSimKeyDown);
-      window.removeEventListener('keyup', onSimKeyUp);
-      toast('Virtual Hand Simulator off');
-    }
-
-    function onSimPointerMove(e) {
-      if (!mouseHandActive) return;
-      simMousePos = { x: e.clientX, y: e.clientY };
-    }
-
-    function onSimPointerDown(e) {
-      if (!mouseHandActive) return;
-      if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('input') || e.target.closest('button')) return;
-      if (e.shiftKey) {
-        simFist = true;
-      } else {
-        simPinching = true;
-      }
-    }
-
-    function onSimPointerUp() {
-      if (!mouseHandActive) return;
-      simPinching = false;
-      simFist = false;
-    }
-
-    function onSimKeyDown(e) {
-      if (e.key === 'v' || e.key === 'V') {
-        if (!['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
-          toggleVirtualHandSimulator();
-        }
-      }
-      if (!mouseHandActive) return;
-      if (e.code === 'Space' && !['INPUT', 'TEXTAREA'].includes(document.activeElement?.tagName)) {
-        simPinching = true;
-        e.preventDefault();
-      }
-    }
-
-    function onSimKeyUp(e) {
-      if (!mouseHandActive) return;
-      if (e.code === 'Space') {
-        simPinching = false;
-        e.preventDefault();
-      }
-    }
-
-    function renderHandSimLoop() {
-      if (!mouseHandActive) return;
-
-      // Construct a simulated 21-node hand around simMousePos
-      const mx = simMousePos.x, my = simMousePos.y;
-      const pinchSpan = simPinching ? 12 : (simFist ? 20 : 64);
-      
-      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-
-      // Synthesize 21 MediaPipe coordinates
-      const mockLms = [
-        { x: 1 - (mx / window.innerWidth), y: (my + 110) / window.innerHeight }, // 0 Wrist
-        { x: 1 - ((mx - 24) / window.innerWidth), y: (my + 60) / window.innerHeight }, // 1
-        { x: 1 - ((mx - 34) / window.innerWidth), y: (my + 30) / window.innerHeight }, // 2
-        { x: 1 - ((mx - 32) / window.innerWidth), y: (my + 6) / window.innerHeight }, // 3
-        { x: 1 - ((mx - pinchSpan/2) / window.innerWidth), y: (my) / window.innerHeight }, // 4 Thumb tip
-        { x: 1 - ((mx - 12) / window.innerWidth), y: (my + 28) / window.innerHeight }, // 5 Index mcp
-        { x: 1 - ((mx - 8) / window.innerWidth), y: (my - 6) / window.innerHeight }, // 6
-        { x: 1 - ((mx - 4) / window.innerWidth), y: (my - 28) / window.innerHeight }, // 7
-        { x: 1 - ((mx + pinchSpan/2) / window.innerWidth), y: (my) / window.innerHeight }, // 8 Index tip
-        { x: 1 - (mx / window.innerWidth), y: (my + 26) / window.innerHeight }, // 9 Middle mcp
-        { x: 1 - ((mx + 10) / window.innerWidth), y: (my - 10) / window.innerHeight }, // 10
-        { x: 1 - ((mx + 12) / window.innerWidth), y: (my - 34) / window.innerHeight }, // 11
-        { x: 1 - ((mx + 14) / window.innerWidth), y: (simFist ? my + 15 : my - 54) / window.innerHeight }, // 12 Middle tip
-        { x: 1 - ((mx + 18) / window.innerWidth), y: (my + 30) / window.innerHeight }, // 13 Ring mcp
-        { x: 1 - ((mx + 26) / window.innerWidth), y: (my - 6) / window.innerHeight }, // 14
-        { x: 1 - ((mx + 28) / window.innerWidth), y: (my - 26) / window.innerHeight }, // 15
-        { x: 1 - ((mx + 30) / window.innerWidth), y: (simFist ? my + 15 : my - 44) / window.innerHeight }, // 16 Ring tip
-        { x: 1 - ((mx + 32) / window.innerWidth), y: (my + 38) / window.innerHeight }, // 17 Pinky mcp
-        { x: 1 - ((mx + 40) / window.innerWidth), y: (my + 10) / window.innerHeight }, // 18
-        { x: 1 - ((mx + 42) / window.innerWidth), y: (my - 10) / window.innerHeight }, // 19
-        { x: 1 - ((mx + 44) / window.innerWidth), y: (simFist ? my + 18 : my - 28) / window.innerHeight }, // 20 Pinky tip
-      ];
-
-      // Simulator landmarks are authored in viewport coordinates, not camera
-      // coordinates, so keep their own direct mapping instead of camera crop.
-      processHandLandmarks(mockLms, null, true,
-        (lm) => ({ x: (1 - lm.x) * window.innerWidth, y: lm.y * window.innerHeight }));
-      requestAnimationFrame(renderHandSimLoop);
     }
 
     // ── WORKSPACE APPEARANCE CUSTOMIZATION ──
@@ -4724,29 +3703,11 @@
       }
     })();
 
-    /* ══ THE VOICE — two engines, one switch ═════════════════════════════════
-       There are two ways to hear and two ways to speak, and the page uses the
-       one that actually works where the page is open.
-
-         hearing  · THIS BROWSER — the browser's own speech recogniser. Nothing
-                    to install, no model to download, and it hears you whenever
-                    the page is on a machine with a microphone.
-                  · THIS COMPUTER — the microphone's audio is cut into sentences
-                    by loudness and sent to the JARVIS server, which turns it
-                    into words with faster-whisper. This needs the local voice
-                    service: Python packages AND a model file.
-
-         speaking · THIS BROWSER — the browser's own voice (speechSynthesis):
-                    free, offline, no models, and it comes out of the speakers of
-                    the machine you are actually sitting at.
-                  · THIS COMPUTER — Kokoro makes the voice on the server and
-                    plays it through the SERVER's speakers. Correct when the
-                    browser and the server are the same machine; silent when they
-                    are not (a preview or remote page would hear nothing at all).
-
-       Auto (the default) prefers this browser and falls back to this computer.
-       One switch: 🔇 Mute. When the voice fails there is one place to look: the
-       line in the green bar, plus one system line in the chat saying why. */
+    /* ══ LOCAL VOICE — always on, no cloud speech paths ═════════════════════
+       The app's Kokoro service speaks the full reply first; a browser speech
+       voice is a fallback only when its localService flag is true. Listening
+       always uses the app's faster-whisper recogniser; browser SpeechRecognition
+       is deliberately not used because it may send microphone audio to a vendor. */
 
     const EAR_MAX_S     = 15;     // longest single sentence sent to the server
     const EAR_END_MS    = 450;    // this much quiet ends a sentence — short, so JARVIS reacts as soon as you stop
@@ -4756,33 +3717,23 @@
     let _muted = false;           // not remembered: every page load listens
     let _voiceProofDone = false;  // has the first click been answered with a word?
 
-    /* ── Which engine ───────────────────────────────────────────────────────
-       'auto'   this browser first, this computer's voice service as the fallback
-       'server' this computer first, this browser as the fallback
-       Remembered in localStorage, so a choice survives a reload. */
-    const VOICE_ENGINE_KEY = 'jarvis_voice_engine';
-    const VOICE_NAME_KEY   = 'jarvis_voice_name';
+    const VOICE_NAME_KEY = 'jarvis_voice_name';
     function _voicePref(key, dflt) { try { return localStorage.getItem(key) || dflt; } catch (_) { return dflt; } }
     function _voicePrefSet(key, val) { try { localStorage.setItem(key, val); } catch (_) {} }
 
     const Voice = {
-      engine: _voicePref(VOICE_ENGINE_KEY, 'auto'),          // auto | server
       synth: (typeof window.speechSynthesis !== 'undefined') ? window.speechSynthesis : null,
-      recogClass: window.SpeechRecognition || window.webkitSpeechRecognition || null,
-      voices: [],            // the browser's own voices, once it has listed them
-      voice: null,           // the one chosen (a British male, when there is one)
-      voiceName: _voicePref(VOICE_NAME_KEY, ''),             // '' = choose the best automatically
-      synthProblem: '',      // why this browser cannot speak
-      synthDead: false,      // it failed: stop choosing it for a while, then try again
-      synthRetryAt: 0,       // when a failed browser voice may be tried again
-      recogProblem: '',      // why this browser cannot listen
-      recogFatal: false,     // the recogniser refused for good (permission / no service)
-      recogMisses: 0,        // network hiccups in a row — a few and the engine changes
+      voices: [],            // only voices explicitly identified as local
+      voice: null,           // the selected local browser voice, when available
+      voiceName: _voicePref(VOICE_NAME_KEY, ''),
+      synthProblem: '',
+      synthDead: false,
+      synthRetryAt: 0,
     };
 
     const Ear = {
       ready: false, starting: false, ctx: null, stream: null, proc: null,
-      rate: 48000, noise: 0.005, inSentence: false, loudBlocks: 0,
+      rate: 48000, noise: 0.005, inSentence: false, loudBlocks: 0, generation: 0,
       chunks: [], samples: 0, quietSince: 0, resumeAt: 0,
       queue: [], sending: false, problem: '', lastHeard: { text: '', at: 0 },
     };
@@ -4792,19 +3743,19 @@
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
     };
 
-    /* The browser's own ear: one live recogniser, restarted after it stops. */
-    const Listen = {
-      recog: null, active: false, paused: false, missing: 0,
-      restart: 0, interim: '', engine: 'browser', lastStart: 0,
-    };
+    // speechSynthesis has its own queue. Keep every page request in one ordered
+    // lane so a settings preview cannot cancel or time out behind a reply.
+    const BrowserSpeech = { tail: Promise.resolve() };
+    const BROWSER_START_TIMEOUT_MS = 6000;
+    const BROWSER_RETRY_MS = 5000;
 
-    /* ── This browser's own voice and ear ───────────────────────────────────
-       Nothing here needs a package, a model or a download: the browser has
-       both, and they run on the machine the page is open on. */
+    /* ── Installed local browser speaker; local STT is supplied by JARVIS. ── */
 
     function browserVoiceList() {
       if (!Voice.synth) return [];
-      try { return Voice.synth.getVoices() || []; } catch (_) { return []; }
+      try {
+        return (Voice.synth.getVoices() || []).filter((voice) => voice && voice.localService === true);
+      } catch (_) { return []; }
     }
 
     /** The butler's voice, if this machine has one: English, British, male.
@@ -4819,7 +3770,6 @@
       if (/\b(female|woman)\b/.test(name)) score -= 12;
       if (/(george|daniel|arthur|oliver|ryan|guy|thomas|james|david|alex|fred)/.test(name)) score += 12;
       if (/(google|microsoft|natural|neural|premium|enhanced|siri)/.test(name)) score += 4;
-      if (v.localService) score += 2;                     // works with no internet
       if (v.default) score += 3;
       return score;
     }
@@ -4835,7 +3785,11 @@
 
     /** The browser lists its voices asynchronously, and again when they change. */
     function refreshBrowserVoiceList(voicesChanged) {
-      if (voicesChanged) { Voice.synthDead = false; Voice.synthProblem = ''; }
+      if (voicesChanged) {
+        Voice.synthDead = false;
+        Voice.synthRetryAt = 0;
+        Voice.synthProblem = '';
+      }
       Voice.voices = browserVoiceList();
       if (!Voice.voices.length) { Voice.voice = null; renderVoiceEngineReport(); return; }
       const chosen = Voice.voiceName ? Voice.voices.find((v) => v.name === Voice.voiceName) : null;
@@ -4850,10 +3804,11 @@
         not talk". An empty list means use the other engine, not keep trying. */
     function browserCanSpeak() {
       if (Voice.synthDead) {
-        // It failed earlier. A failure is not forever: after a short rest the
-        // browser's voice is tried again, so one slow start cannot silence JARVIS.
+        // A failed native start is temporary: after the retry window, give this
+        // browser another chance instead of abandoning it for the whole session.
         if (Date.now() < Voice.synthRetryAt) return false;
         Voice.synthDead = false;
+        Voice.synthRetryAt = 0;
         Voice.synthProblem = '';
       }
       if (!Voice.synth) {
@@ -4861,7 +3816,7 @@
         return false;
       }
       if (!Voice.voices.length) {
-        Voice.synthProblem = 'this browser has not listed a single voice to speak with.';
+        Voice.synthProblem = 'this browser has no installed local voice.';
         return false;
       }
       return !!Voice.voice;                       // a voice must actually have been chosen
@@ -4871,65 +3826,103 @@
       if (Voice.synth) {
         try { Voice.synth.onvoiceschanged = () => refreshBrowserVoiceList(true); } catch (_) {}
         refreshBrowserVoiceList();
-        // Some browsers fill the list a moment later; re-read it, then leave it.
-        [300, 1000, 2500].forEach((ms) => setTimeout(refreshBrowserVoiceList, ms));
-      }
-      if (!Voice.recogClass) {
-        Voice.recogProblem = 'this browser has no speech recogniser (SpeechRecognition is missing) — its ears will be the JARVIS server’s.';
+        // Voice lists arrive late on some Chromium/Safari builds, and not every
+        // build dispatches voiceschanged. Keep checking briefly after startup.
+        [300, 1000, 2500, 5000, 10000].forEach((ms) => setTimeout(refreshBrowserVoiceList, ms));
       }
       renderVoiceEngineReport();
     }
 
-    /** Speak one sentence with the browser's own voice. true = it was said. */
-    function sayWithBrowser(text, gen) {
+    /** Perform one native utterance. The caller owns queueing and recovery. */
+    function sayBrowserUtterance(text, gen) {
       return new Promise((resolve) => {
-        if (!Voice.synth || !Voice.voice) { resolve(false); return; }
-        const clean = cleanForSpeech(text);
+        if (!Voice.synth || !Voice.voice || gen !== Speech.generation) { resolve(false); return; }
+        let clean = '';
+        try { clean = cleanForSpeech(text); } catch (_) { clean = String(text || '').trim(); }
         if (!clean) { resolve(true); return; }
+
         let settled = false, started = false, startGuard = 0, endGuard = 0;
         const finish = (spoke) => {
           if (settled) return;
           settled = true;
           clearTimeout(startGuard); clearTimeout(endGuard);
+          if (spoke && gen === Speech.generation) {
+            Voice.synthDead = false;
+            Voice.synthRetryAt = 0;
+            Voice.synthProblem = '';
+            renderVoiceEngineReport();
+          }
           resolve(spoke);
         };
-        const utter = new SpeechSynthesisUtterance(clean);
-        utter.voice = Voice.voice;
-        utter.lang = Voice.voice.lang || 'en-GB';
-        utter.rate = 1; utter.pitch = 0.95; utter.volume = 1;
-        utter.onstart = () => {
-          started = true;
-          clearTimeout(startGuard);
-          // Safety net only, and it assumes the words WERE said: wrongly saying
-          // "false" here would repeat the sentence in the other voice.
-          endGuard = setTimeout(() => finish(true), clean.length * 160 + 8000);
-        };
-        utter.onend = () => finish(true);
-        utter.onerror = (e) => {
-          const code = (e && e.error) || '';
-          if (code === 'interrupted' || code === 'canceled') { finish(true); return; }
-          Voice.synthProblem = code === 'not-allowed'
-            ? 'this browser would not let the page speak (the page has not been clicked yet, or sound is blocked).'
-            : `this browser’s voice failed (${code || 'no reason given'}).`;
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
+        const fail = (message) => {
+          if (settled) return;
+          if (gen !== Speech.generation) { finish(false); return; }
+          Voice.synthProblem = message;
+          Voice.synthDead = true;
+          Voice.synthRetryAt = Date.now() + BROWSER_RETRY_MS;
+          // Settle before cancel: some engines synchronously dispatch `canceled`
+          // when cancel() clears a stuck native utterance.
           finish(false);
+          try { Voice.synth.cancel(); } catch (_) {}
+          renderVoiceEngineReport();
         };
-        startGuard = setTimeout(() => {
-          if (started) return;
-          Voice.synthProblem = 'this browser listed a voice but never began speaking — on Linux that usually means no speech engine (espeak-ng or speech-dispatcher) is installed.';
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
-          finish(false);
-        }, 6000);
+
         try {
+          const utter = new SpeechSynthesisUtterance(clean);
+          utter.voice = Voice.voice;
+          utter.lang = Voice.voice.lang || 'en-GB';
+          utter.rate = 1; utter.pitch = 0.95; utter.volume = 1;
+          utter.onstart = () => {
+            started = true;
+            clearTimeout(startGuard);
+            Voice.synthDead = false;
+            Voice.synthRetryAt = 0;
+            Voice.synthProblem = '';
+            // A watchdog for browsers that fire start but never fire end. Keep
+            // each utterance short (see sayTextWithBrowser) so a missing event
+            // cannot hold the whole reply queue indefinitely.
+            endGuard = setTimeout(() => fail('this browser began speaking but never reported that the utterance finished.'),
+              clean.length * 160 + 8000);
+          };
+          utter.onend = () => finish(true);
+          utter.onerror = (e) => {
+            if (settled) return;
+            if (gen !== Speech.generation) { finish(false); return; }
+            const code = (e && e.error) || '';
+            if (code === 'interrupted' || code === 'canceled') {
+              // Intentional stop is handled by the generation check above. An
+              // unsolicited cancel before onstart is a real failure, not proof
+              // that the words were heard; after start, avoid replaying a piece
+              // that may already have reached the owner.
+              if (started) finish(true);
+              else fail('this browser canceled the utterance before it began speaking.');
+              return;
+            }
+            fail(code === 'not-allowed'
+              ? 'this browser would not let the page speak (sound may be blocked until a user gesture).'
+              : `this browser’s voice failed (${code || 'no reason given'}).`);
+          };
+          startGuard = setTimeout(() => {
+            if (!started) fail('this browser listed a voice but did not start speaking within 6 seconds.');
+          }, BROWSER_START_TIMEOUT_MS);
           if (Voice.synth.paused) Voice.synth.resume();
-          Voice.synth.cancel();      // nothing may pile up inside the browser's queue
+          // Do not cancel before every utterance. This page already serializes
+          // speech; cancel() here can interrupt a valid utterance on Safari,
+          // Firefox or Chromium and some engines report that interruption late.
           Voice.synth.speak(utter);
         } catch (err) {
-          Voice.synthProblem = `this browser’s voice could not be used (${err.message}).`;
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
-          finish(false);
+          const detail = err && err.message ? err.message : 'the browser rejected the utterance';
+          fail(`this browser’s voice could not be used (${detail}).`);
         }
       });
+    }
+
+    /** Speak one sentence with the browser's own voice. true = it was said. */
+    function sayWithBrowser(text, gen) {
+      const run = () => gen === Speech.generation ? sayBrowserUtterance(text, gen) : Promise.resolve(false);
+      const pending = BrowserSpeech.tail.then(run, run);
+      BrowserSpeech.tail = pending.then(() => undefined, () => undefined);
+      return pending;
     }
 
     function stopBrowserVoice() {
@@ -4937,162 +3930,19 @@
       try { Voice.synth.cancel(); } catch (_) {}
     }
 
-    /* ── The browser's ear ──────────────────────────────────────────────── */
+    /* ── Local ear: microphone audio goes only to faster-whisper on this machine. ──
+       Do not use SpeechRecognition: its implementation may send the microphone
+       audio to a browser-vendor service and is not reliably local across browsers. */
 
-    /** A recogniser error in plain words. null = normal, nothing to report. */
-    function recogExplain(code) {
-      const framedPolicy = micPolicyAllows();
-      switch (code) {
-        case 'not-allowed':
-        case 'service-not-allowed':
-          if (framedPolicy === false) {
-            return {
-              short: 'The preview frame forbids the microphone',
-              long: 'This page is shown inside a frame that is not allowed to touch the microphone, so the permission prompt can never appear here. Open JARVIS in its own tab and it works.',
-              actions: micInFrame() ? [{ label: '↗ Open in New Tab', run: () => openStandaloneTab() }] : [],
-            };
-          }
-          return {
-            short: 'Microphone permission was refused',
-            long: 'The browser would not give this page a microphone. Click the lock / sliders icon at the left of the address bar, set Microphone to "Allow", then reload.',
-          };
-        case 'audio-capture':
-          return { short: 'No microphone was found', long: 'The browser cannot see a microphone on this computer. Plug one in (or check the system sound settings), then press the mic button again.' };
-        case 'network':
-          return { short: 'The browser’s speech service is unreachable', long: 'This browser does its recognising on a server of its own and could not reach it, so the JARVIS server’s ears will be used instead.' };
-        case 'language-not-supported':
-          return { short: 'The browser does not recognise that language', long: '' };
-        case 'no-speech':
-        case 'aborted':
-          return null;                       // ordinary — silence, or we stopped it
-        default:
-          return { short: `The browser’s ear failed (${code || 'no reason given'})`, long: '' };
-      }
-    }
-
-    function recogStop() {
-      const r = Listen.recog;
-      Listen.recog = null;
-      Listen.active = false;
-      Listen.interim = '';
-      if (r) {
-        r.onend = null; r.onerror = null; r.onresult = null; r.onstart = null;
-        try { r.abort(); } catch (_) {}
-      }
-    }
-
-    function recogRestartSoon() {
-      clearTimeout(Listen.restart);
-      Listen.restart = setTimeout(() => {
-        if (Listen.paused || _muted || Voice.recogFatal) return;
-        if (hearEngine() === 'browser' && !Listen.recog) recogSpawn();
-      }, 350);
-    }
-
-    /** Hand the ears over to the server, and say why. */
-    function earsFallBack(reason, actions) {
-      Voice.recogFatal = true;
-      recogStop();
-      Listen.engine = 'server';
-      if (reason) micReport(`🎤 ${reason}`, actions || []);
-      renderEar();
-      if (!_muted && !Ear.ready) earStart();
-    }
-
-    function recogSpawn() {
-      if (!Voice.recogClass || Voice.recogFatal || _muted || Listen.paused || Listen.recog) return;
-      let r = null;
-      try {
-        r = new Voice.recogClass();
-      } catch (err) {
-        earsFallBack(`The browser’s speech recogniser could not be started (${err.message}), so JARVIS is listening with the server’s ears instead.`);
-        return;
-      }
-      r.continuous = true;
-      r.interimResults = true;
-      r.maxAlternatives = 1;
-      r.lang = (Voice.voice && Voice.voice.lang) || 'en-GB';
-      r.onstart = () => {
-        Listen.active = true;
-        Listen.interim = '';
-        Voice.recogProblem = '';
-        Voice.recogMisses = 0;
-        Ear.problem = '';
-        renderEar();
-      };
-      r.onresult = (ev) => {
-        // Gated exactly like the raw-audio ear: nothing is heard while JARVIS
-        // is speaking, while muted, or in the moment just after a reply.
-        if (earGated()) { Listen.interim = ''; return; }
-        let said = '', pending = '';
-        for (let i = ev.resultIndex; i < ev.results.length; i++) {
-          const res = ev.results[i];
-          const alt = res[0] ? res[0].transcript : '';
-          if (res.isFinal) said += alt; else pending += alt;
-        }
-        Listen.interim = pending;
-        renderEar();
-        if (said.trim()) { Listen.interim = ''; earHeard(said); }
-      };
-      r.onerror = (ev) => {
-        const code = (ev && ev.error) || '';
-        const why = recogExplain(code);
-        if (!why) { Listen.interim = ''; return; }
-        if (code === 'network') {
-          // A wobble is normal; three in a row means this browser cannot do it.
-          if (++Voice.recogMisses < 3) { Voice.recogProblem = why.short; renderEar(); return; }
-        }
-        earsFallBack(`${why.short}. ${why.long}`.trim(), why.actions);
-      };
-      r.onend = () => {
-        // Chrome ends the session on its own after a pause: start it again, or
-        // "always listening" would quietly become "listens once".
-        Listen.active = false;
-        if (Listen.recog === r) Listen.recog = null;
-        renderEar();
-        if (!Listen.paused && !_muted && !Voice.recogFatal) recogRestartSoon();
-      };
-      Listen.recog = r;
-      Listen.lastStart = performance.now();
-      try {
-        r.start();
-      } catch (err) {
-        // InvalidStateError: it was already started. Anything else: try again shortly.
-        if (!/already started/i.test(err.message || '')) { Listen.recog = null; recogRestartSoon(); }
-      }
-    }
-
-    function recogPause() {
-      Listen.paused = true;
-      clearTimeout(Listen.restart);
-      recogStop();
-      renderEar();
-    }
-
-    function recogResume() {
-      if (!Listen.paused) return;
-      Listen.paused = false;
-      if (!_muted && hearEngine() === 'browser') recogSpawn();
-      renderEar();
-    }
-
-    /** Which ear this page is using, right now. */
-    function hearEngine() {
-      if (Ear.ready) return 'server';                       // the raw-audio ear is already open
-      if (Voice.recogFatal || !Voice.recogClass) return 'server';
-      if (Voice.engine === 'server') return 'server';
-      return 'browser';
-    }
+    function hearEngine() { return 'server'; }
 
     function listenRunning() {
-      return Listen.active || !!Listen.recog || Ear.ready || Ear.starting;
+      return Ear.ready || Ear.starting;
     }
 
-    /** Open the ears — whichever engine this page is set to use. */
     function listenStart() {
-      if (_muted) return;
-      if (hearEngine() === 'browser') { Listen.paused = false; recogSpawn(); }
-      else earStart();
+      if (_muted) return Promise.resolve();
+      return earStart();
     }
 
     /* ── The one place a voice problem is shown: the green bar, and one chat line. */
@@ -5107,23 +3957,16 @@
       if (_muted) return 'Muted — JARVIS is not listening. Press 🔇 Mute to listen again.';
       if (Ear.problem) return `⚠ ${Ear.problem}`;
       if (Speech.busy || Speech.queue.length) return 'JARVIS is speaking.';
-      if (hearEngine() === 'browser') {
-        if (Listen.interim) return `🎙 hearing: “${Listen.interim.trim()}”`;
-        if (Voice.recogProblem) return `⚠ ${Voice.recogProblem}`;
-        if (Listen.active) return 'Listening with this browser’s own ear — just speak.';
-        return Listen.paused ? 'Ear paused while JARVIS speaks.' : 'Opening this browser’s ear…';
-      }
-      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet. Click anywhere on the page to open it.';
+      if (!Ear.ready) return Ear.starting ? 'Opening the microphone…' : 'Microphone not open yet — allow access when the browser asks.';
       if (Ear.sending) return 'Turning your words into text…';
-      return 'Listening with the server’s ear — just speak.';
+      return 'Listening with the app-local faster-whisper ear — just speak.';
     }
 
     function renderEar() {
       const text = document.getElementById('listen-text');
       if (text) text.textContent = earStatusText();
-      document.querySelectorAll('#listen-mute-btn, #btn-mute').forEach((b) => {
-        b.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
-      });
+      const mute = document.getElementById('listen-mute-btn');
+      if (mute) mute.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
     }
 
     /* ── Ears ───────────────────────────────────────────────────────────── */
@@ -5246,23 +4089,31 @@
 
     async function earStart() {
       if (Ear.ready || Ear.starting) return;
-      // The browser's own ear is the one in use — do not also hold the raw
-      // microphone open for the server's ear.
-      if (hearEngine() === 'browser') return;
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        voiceProblem('This browser cannot open a microphone, so JARVIS cannot hear you. Open JARVIS in Chrome or Edge.');
+        voiceProblem('This browser cannot open a microphone, so JARVIS cannot hear you. Open JARVIS in Chrome, Edge, Firefox or Safari.');
         return;
       }
+      const generation = ++Ear.generation;
       Ear.starting = true;
       renderEar();
+      let stream = null, ctx = null;
       try {
-        const stream = await micOpenStream();
+        stream = await micOpenStream();
+        if (generation !== Ear.generation || _muted) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         const Ctx = window.AudioContext || window.webkitAudioContext;
-        // Ask for 16 kHz — the rate the speech model works at, and the rate
-        // the standalone app records at. A browser that won't (it is only a
-        // request) is shrunk to 16 kHz when the sentence is sent instead.
-        const ctx = new Ctx({ sampleRate: 16000 });
+        if (!Ctx) throw Object.assign(new Error('This browser has no Web Audio input.'), { name: 'NotSupportedError' });
+        // Ask for 16 kHz; browsers that choose another rate are resampled before
+        // the local speech model receives the audio.
+        ctx = new Ctx({ sampleRate: 16000 });
         if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+        if (generation !== Ear.generation || _muted) {
+          try { await ctx.close(); } catch (_) {}
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
         const source = ctx.createMediaStreamSource(stream);
         const proc = ctx.createScriptProcessor(2048, 1, 1);
         const silent = ctx.createGain();
@@ -5273,12 +4124,17 @@
         silent.connect(ctx.destination);
         Object.assign(Ear, { ctx, stream, proc, rate: ctx.sampleRate, ready: true, problem: '' });
       } catch (err) {
+        if (ctx) { try { await ctx.close(); } catch (_) {} }
+        if (stream) { try { stream.getTracks().forEach((track) => track.stop()); } catch (_) {} }
+        if (generation !== Ear.generation || _muted) return;
         const why = micExplain(err);
         Ear.problem = why.short;
         micReport(`${why.short}. ${why.long}`, why.actions);
       } finally {
-        Ear.starting = false;
-        renderEar();
+        if (generation === Ear.generation) {
+          Ear.starting = false;
+          renderEar();
+        }
       }
     }
 
@@ -5288,64 +4144,63 @@
     }
 
     /* ── Mouth ──────────────────────────────────────────────────────────── */
-    // Two engines, tried in the order this page is set to use them. The browser
-    // speaks on the machine you are sitting at (no models, no downloads); the
-    // server speaks on the machine JARVIS runs on, which is the same machine
-    // when both are local and a different one for a preview or remote page.
-    async function speakOne(text, gen) {
-      const browserFirst = Voice.engine !== 'server';
-      if (browserFirst && browserCanSpeak() && Voice.voice) {
-        const spoke = await sayWithBrowser(text, gen);
-        if (gen !== Speech.generation) return;
-        if (spoke) { Ear.problem = ''; return; }
-        // This browser cannot say it after all. Say so once, then try the
-        // computer's voice — silence is never the answer.
-        voiceProblem(`This browser could not speak: ${Voice.synthProblem} Trying the voice on the computer running JARVIS.`);
+    // Try the app-local Kokoro generator first. Only fall back to a browser
+    // voice when the OS explicitly marks it as local.
+    /** Keep native utterances short: long speech is cut off on some mobile engines. */
+    async function sayTextWithBrowser(text, gen) {
+      const pieces = chunkForSpeech(text);
+      for (let i = 0; i < pieces.length; i++) {
+        if (gen !== Speech.generation) return { spoke: false, remaining: '' };
+        if (!await sayWithBrowser(pieces[i], gen)) {
+          return { spoke: false, remaining: pieces.slice(i).join(' ') };
+        }
       }
-      const result = await speakViaServer(text, gen);
-      // The owner asked for this computer's voice and it could not speak. Rather
-      // than leave him in silence, say what happened and use this browser's voice.
-      if (result === 'failed' && Voice.engine === 'server' && browserCanSpeak() && Voice.voice) {
-        const spoke = await sayWithBrowser(text, gen);
-        if (gen !== Speech.generation) return;
-        if (spoke) appendChat('system', 'This computer could not speak, so this browser’s own voice said it instead. Press 🔊 Test Speakers in Settings → Voice to see the full reason.');
-      }
-      renderVoiceEngineReport();
+      return { spoke: true, remaining: '' };
     }
 
-    // The PC makes the voice and plays it. The answer comes back only when playback has finished,
-    // so Speech.busy (and the ear's pause) covers the whole sentence.
+    async function speakOne(text, gen) {
+      const clean = String(text || '');
+      const result = await speakViaServer(clean, gen);
+      if (gen !== Speech.generation || result === 'aborted') return 'aborted';
+      if (result === 'ok') { Ear.problem = ''; return 'server'; }
+
+      // Keep the app's own Kokoro generator primary. Only use a browser voice
+      // that the OS explicitly marks local, and only when Kokoro is unavailable.
+      if (browserCanSpeak() && Voice.voice) {
+        const browserResult = await sayTextWithBrowser(clean, gen);
+        if (gen !== Speech.generation) return 'aborted';
+        if (browserResult.spoke) { Ear.problem = ''; return 'browser'; }
+      }
+      voiceProblem('JARVIS could not speak this reply with an available local voice. The complete answer remains in chat.');
+      renderVoiceEngineReport();
+      return 'failed';
+    }
+
+    // The app-local voice generator makes and plays this complete reply on the JARVIS computer.
     async function speakViaServer(text, gen) {
       const controller = new AbortController();
       Speech.controller = controller;
-      let data = null;
       try {
         const res = await _authFetch('/api/voice/speak', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.slice(0, 1400) }),
+          body: JSON.stringify({ text }),
           signal: controller.signal,
         });
-        data = await res.json();
+        const data = await res.json().catch(() => null);
+        if (gen !== Speech.generation || controller.signal.aborted) return 'aborted';
+        if (!res.ok || !data || !data.ok) {
+          console.warn('[voice] app-local generator failed:', (data && data.message) || `HTTP ${res.status}`);
+          return 'failed';
+        }
+        return 'ok';
       } catch (err) {
         if (gen !== Speech.generation || (err && err.name === 'AbortError')) return 'aborted';
-        voiceProblem('Neither voice could speak. This browser: '
-          + (Voice.synthProblem || 'no reason recorded')
-          + ' This computer: the local voice is not answering — its messages are in the server console, marked [local-voice]. The reply is in the chat.');
+        console.warn('[voice] app-local generator did not answer:', err && err.message ? err.message : err);
         return 'failed';
       } finally {
         if (Speech.controller === controller) Speech.controller = null;
       }
-      if (gen !== Speech.generation) return 'aborted';
-      if (!data || !data.ok) {
-        const browserNote = Voice.synthProblem ? `This browser: ${Voice.synthProblem} ` : '';
-        const why = (data && data.message) || 'the local voice gave no reason';
-        if (Voice.engine === 'server') appendChat('system', `This computer\u2019s voice could not speak: ${why}`);
-        voiceProblem(`JARVIS could not speak. ${browserNote}This computer: ${why}. The reply is in the chat.`);
-        return 'failed';
-      }
-      Ear.problem = '';
-      return 'ok';
     }
 
     async function pumpSpeech() {
@@ -5355,15 +4210,21 @@
         // The last sentence has been said: hold the ears for a moment so JARVIS
         // never hears his own tail, then start listening again.
         Ear.resumeAt = performance.now() + EAR_RESUME_MS;
-        setTimeout(recogResume, EAR_RESUME_MS);
         renderEar();
         return;
       }
       Speech.busy = true;
-      recogPause();          // the browser's ear must not hear JARVIS's own voice
-      renderEar();
+      renderEar();            // earFrame drops microphone audio while JARVIS is speaking
       const gen = Speech.generation;
-      await speakOne(next, gen);
+      try {
+        await speakOne(next, gen);
+      } catch (err) {
+        // One browser-specific exception must not leave the speech queue stuck
+        // with Speech.busy=true and silence every reply that follows it.
+        if (gen === Speech.generation) {
+          voiceProblem(`JARVIS could not finish speaking this reply: ${(err && err.message) || 'the voice engine failed unexpectedly'}.`);
+        }
+      }
       if (gen !== Speech.generation) return;     // stopSpeaking() has already cleared everything
       Speech.busy = false;
       pumpSpeech();
@@ -5389,7 +4250,7 @@
       // for the previous piece to finish before it was even made.
       const clean = cleanForSpeech(String(text));
       if (!clean) return;
-      Speech.queue.push(clean.slice(0, 1400));
+      Speech.queue.push(clean);
       pumpSpeech();
       renderEar();
     }
@@ -5422,7 +4283,6 @@
       if (Speech.controller) Speech.controller.abort();
       stopBrowserVoice();
       _authFetch('/api/voice/stop', { method: 'POST' }).catch(() => {});
-      setTimeout(recogResume, EAR_RESUME_MS);
       renderEar();
     }
 
@@ -5431,7 +4291,7 @@
       _muted = !_muted;
       if (_muted) {
         earDropSentence();
-        recogPause();
+        earStop();
         toast('🔇 Muted — JARVIS is not listening');
       } else {
         Ear.lastHeard = { text: '', at: 0 };
@@ -5441,10 +4301,11 @@
       renderEar();
     }
 
-    /* ── The engine panel: what this page will really use, and how to change it ── */
+    /* ── Local voice diagnostics and self-tests ───────────────────────────── */
 
     /** Release the raw-audio ear: stop the tracks, close the audio graph. */
     function earStop() {
+      Ear.generation++;
       if (Ear.proc) { try { Ear.proc.disconnect(); } catch (_) {} }
       if (Ear.ctx) { try { Ear.ctx.close(); } catch (_) {} }
       if (Ear.stream) { try { Ear.stream.getTracks().forEach((t) => t.stop()); } catch (_) {} }
@@ -5457,32 +4318,28 @@
     function refreshVoiceServerInfo() {
       fetch('/api/system-status').then((r) => (r.ok ? r.json() : null)).then((data) => {
         _voiceServerInfo = data;
+        refreshBuildLine(data);
         renderVoiceEngineReport();
       }).catch(() => {});
     }
 
-    /** The lines under the engine selector: what is speaking, what is hearing. */
+    /** The settings report describes the automatic, local-only voice path. */
     function voiceEngineRows() {
       const rows = [];
+      const browserReady = browserCanSpeak();
       const browserVoice = Voice.voice ? `${Voice.voice.name} (${Voice.voice.lang})` : '';
-      const speaking = (Voice.engine === 'auto' && browserCanSpeak()) ? 'browser'
-        : Voice.engine === 'server' ? 'server'
-          : browserCanSpeak() ? 'browser' : 'server';
-      rows.push(speaking === 'browser'
-        ? `🔊 Speaking: this browser${browserVoice ? ` — ${browserVoice}` : ''}`
-        : `🔊 Speaking: this computer (the server’s voice)${Voice.synthProblem && Voice.engine === 'auto' ? ` — this browser cannot speak: ${Voice.synthProblem}` : ''}`);
-      const ears = hearEngine();
-      rows.push(ears === 'browser'
-        ? '🎤 Hearing: this browser’s own recogniser'
-        : `🎤 Hearing: this computer (the server’s ears)${Voice.recogProblem ? ` — ${Voice.recogProblem}` : ''}`);
       const local = _voiceServerInfo && _voiceServerInfo.voiceLocal;
+      rows.push('🔊 Speaking: app-local Kokoro (primary)');
+      rows.push(browserReady
+        ? `🔊 Fallback: browser-local${browserVoice ? ` — ${browserVoice}` : ''}`
+        : `🔊 Browser-local fallback: not available${Voice.synthProblem ? ` — ${Voice.synthProblem}` : ''}`);
+      rows.push('🎤 Listening: app-local faster-whisper');
       if (local) {
-        rows.push(`🖥 This computer’s voice service: ${local.ready ? 'ready' : 'NOT available'}${local.message ? ` — ${local.message}` : ''}`);
+        const speakReady = typeof local.speakReady === 'boolean' ? local.speakReady : local.ready;
+        const hearReady = typeof local.hearReady === 'boolean' ? local.hearReady : local.ready;
+        rows.push(`App-local generator: ${speakReady ? 'ready' : 'not available'}${!speakReady && (local.speakMessage || local.message) ? ` — ${local.speakMessage || local.message}` : ''}`);
+        rows.push(`App-local recogniser: ${hearReady ? 'ready' : 'not available'}${!hearReady && (local.hearMessage || local.message) ? ` — ${local.hearMessage || local.message}` : ''}`);
       }
-      if (Voice.voice && !/^en/i.test(Voice.voice.lang || '')) {
-        rows.push(`ℹ This machine has no English voice, so ${Voice.voice.name} will read English with a ${Voice.voice.lang} accent.`);
-      }
-      if (!Voice.recogClass) rows.push('ℹ This browser has no recogniser (Firefox), so the server’s ears are used. Chrome, Edge and Safari have one built in.');
       return rows;
     }
 
@@ -5494,7 +4351,7 @@
         sel.innerHTML = '';
         const auto = document.createElement('option');
         auto.value = '';
-        auto.textContent = 'Choose the best voice automatically';
+        auto.textContent = 'Choose the best installed local voice automatically';
         sel.appendChild(auto);
         Voice.voices.forEach((v) => {
           const o = document.createElement('option');
@@ -5508,29 +4365,9 @@
     }
 
     function renderVoiceEngineReport() {
-      const desc = document.getElementById('voice-engine-desc');
-      if (desc) {
-        desc.textContent = Voice.engine === 'server'
-          ? 'JARVIS uses the voice and the ears of the computer he runs on. Right when this page is open on that same machine.'
-          : 'JARVIS speaks and listens with this browser — free, offline, and on the machine you are actually sitting at.';
-      }
-      const sel = document.getElementById('sel-voice-engine');
-      if (sel && sel.value !== Voice.engine) sel.value = Voice.engine;
       fillBrowserVoiceSelect();
       const el = document.getElementById('voice-engine-report');
       if (el) el.textContent = voiceEngineRows().join('\n');
-    }
-
-    function setVoiceEngine(value) {
-      Voice.engine = value === 'server' ? 'server' : 'auto';
-      _voicePrefSet(VOICE_ENGINE_KEY, Voice.engine);
-      recogStop();                 // let go of whichever ear is open…
-      if (Ear.ready) earStop();    // …including the raw microphone, if it was
-      Listen.paused = false;
-      renderVoiceEngineReport();
-      renderEar();
-      if (!_muted) listenStart();  // …then open the one this engine asks for
-      toast(Voice.engine === 'server' ? '🔊 Voice: this computer' : '🔊 Voice: this browser');
     }
 
     function setBrowserVoice(name) {
@@ -5541,45 +4378,18 @@
       if (Voice.voice && !_muted) sayWithBrowser('This is the voice I will use, sir.', Speech.generation);
     }
 
-    window.setVoiceEngine = setVoiceEngine;
     window.setBrowserVoice = setBrowserVoice;
 
-    /* ── Settings self-tests ────────────────────────────────────────────── */
-    // Test Speakers tests the engine the page is actually set to use — before
-    // this it always asked the server to speak, and reported "✔ spoke through
-    // this computer's speakers" even when the person at the browser heard
-    // nothing, because the sound came out of a different machine.
+    /* ── Local voice self-tests ─────────────────────────────────────────── */
     async function testSpeakersNow() {
-      const say = (t) => { const r = document.getElementById('voice-test-report'); if (r) r.textContent = t; };
-      const line = 'Speakers test. If you can hear this, the voice works.';
-      if (Voice.engine !== 'server' && browserCanSpeak() && Voice.voice) {
-        say(`Asking this browser to speak with ${Voice.voice.name}…`);
-        const spoke = await sayWithBrowser(line, Speech.generation);
-        renderVoiceEngineReport();
-        if (spoke) {
-          say(`✔ This browser spoke with ${Voice.voice.name} (${Voice.voice.lang}).\nThe words came out of the speakers of the computer this page is open on — if you heard nothing, check its volume.`);
-          return;
-        }
-        say(`△ This browser could not speak: ${Voice.synthProblem}\nNow trying the voice on the computer running JARVIS…`);
-      }
-      say(Voice.engine === 'server' || !browserCanSpeak() ? 'Asking this computer to speak…' : 'Asking the local voice to speak…');
-      let data = null;
-      try {
-        const res = await _authFetch('/api/voice/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: line }),
-        });
-        data = await res.json();
-      } catch (_) {
-        say('✖ This computer’s voice is not answering. Its messages are in the server console, marked [local-voice].\nSwitch "Voice engine" to Auto to speak with this browser instead.');
-        return;
-      }
-      if (!data || !data.ok) {
-        say(`✖ The voice on this computer could not speak: ${(data && data.message) || 'no reason given'}\nSwitch "Voice engine" to Auto to speak with this browser instead.`);
-        return;
-      }
-      say('✔ This computer’s voice service spoke. Note: the sound came out of the speakers of the machine JARVIS runs on, so you only hear it when that machine is the one you are sitting at.');
+      const report = document.getElementById('voice-test-report');
+      const say = (text) => { if (report) report.textContent = text; };
+      say('Testing the automatic local voice…');
+      const source = await speakOne('Speakers test. If you can hear this, the local voice works.', Speech.generation);
+      if (source === 'browser') say(`✔ The installed local browser voice${Voice.voice ? ` (${Voice.voice.name})` : ''} spoke the test.`);
+      else if (source === 'server') say('✔ The app-local voice generator finished the test.');
+      else if (source !== 'aborted') say('✖ No local voice completed the test. A short explanation is in chat.');
+      renderVoiceEngineReport();
     }
     window.testSpeakersNow = testSpeakersNow;
 
@@ -5605,8 +4415,6 @@
     window.finishStreamed = finishStreamed;
     window.__jarvisStopSpeaking = stopSpeaking;
 
-    refreshBuildLine(null);   // the marker at once, so the line is never blank…
-    refreshGeminiKeyStatus(); // …then the server's own marker, so a stale page says so before Settings is opened
 
     document.addEventListener('pointerdown', earGesture, true);
     document.addEventListener('keydown', earGesture, true);
@@ -5635,7 +4443,7 @@
 
       if (!window.isSecureContext) {
         out.short = 'This page is not secure';
-        out.long = 'Browsers only hand a microphone to https:// pages or to localhost. Open JARVIS at http://localhost:3000 (the launcher does that for you) and the mic button works.';
+        out.long = 'Browsers only hand a microphone to https:// pages or to localhost. Open JARVIS at http://localhost:3000 (the launcher does that for you) and allow the permission.';
         return out;
       }
       if (policy === false) {
@@ -5711,8 +4519,8 @@
         e.name = 'NotSupportedError';
         throw e;
       }
-      // Always the system default microphone — the same one the browser's own
-      // recogniser uses, so there is no second choice that can disagree with it.
+      // Capture only for local faster-whisper; do not use browser SpeechRecognition,
+      // which can send microphone audio to a vendor service depending on the browser.
       return await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         video: false,
@@ -5751,20 +4559,8 @@
         }
       }
       if (buf.trim()) out.push(buf.trim());
-      return out.filter(Boolean).slice(0, 60);
+      return out.filter(Boolean);
     }
-
-    /* Everything in the mouth stops now (used when the mode or the mic changes). */
-    function openVoiceSettings() {
-      const w = document.getElementById('win-settings');
-      if (w && w.style.display === 'none') toggleWindow('win-settings');
-      else if (w && typeof bringToFront === 'function') bringToFront(w);
-      if (w) { try { w.scrollIntoView({ block: 'nearest' }); } catch (_) {} }
-      refreshVoiceBudget();
-      const rep = document.getElementById('voice-test-report');
-      if (rep) { rep.style.borderColor = 'var(--accent)'; setTimeout(() => { rep.style.borderColor = ''; }, 900); }
-    }
-    window.openVoiceSettings = openVoiceSettings;
 
     async function testMicNow() {
       const rep = document.getElementById('voice-test-report');
@@ -5773,9 +4569,7 @@
         say('✖ This browser has no microphone API at all — voice commands cannot work here. Use Chrome, Edge or Safari.');
         return;
       }
-      const engineNote = hearEngine() === 'browser'
-        ? '\nEars: this browser’s own recogniser (no model, nothing to install).'
-        : `\nEars: the JARVIS server${Voice.recogProblem ? ` — ${Voice.recogProblem}` : ''}.`;
+      const engineNote = '\nEars: app-local faster-whisper; microphone audio stays on this computer.';
       say(`Asking the browser for the microphone… allow it if it asks.${engineNote}`);
       let stream;
       try {
@@ -5826,7 +4620,7 @@
         if (ctx) { try { ctx.close(); } catch (_) {} }
       }
       if (loud > 6) {
-        say(`✔ ${label} works — I picked up your voice clearly (peak ${Math.round(peak * 100)}%).\nPress the "Mic" button in the top row and just talk.`);
+        say(`✔ ${label} works — I picked up your voice clearly (peak ${Math.round(peak * 100)}%).\nJARVIS listens automatically in the chat bar; just talk.`);
       } else if (peak > 0.03) {
         say(`△ ${label} works, but quietly (peak ${Math.round(peak * 100)}%).\nMove closer to it, or raise the input level in the system sound settings.`);
       } else {
@@ -5837,19 +4631,6 @@
       }
     }
     window.testMicNow = testMicNow;
-
-    async function refreshVoiceBudget() {
-      const el = document.getElementById('voice-budget-line');
-      if (!el) return;
-      try {
-        const res = await _authFetch('/api/system-status');
-        const info = await res.json();
-        if (info && info.voice) {
-          el.textContent = `${info.voice.used} of ${info.voice.limit} spoken sentences used today (${info.voice.source}), and ${info.knowledge ? info.knowledge.entries : '?'} local answers stored`;
-        }
-      } catch (_) { el.textContent = 'the server did not answer'; }
-    }
-    window.refreshVoiceBudget = refreshVoiceBudget;
 
     // Window focus & touch-anywhere grab handler
     document.querySelectorAll('.glass-window').forEach(win => {
@@ -5865,207 +4646,21 @@
     // Auto-probe camera on boot without breaking
     populateCameraDevices();
 
-    // ═══ THE JARVIS OS LAYOUT ═══════════════════════════════════════════════
-    // Left: the dock — visualiser up tight in the corner, the chats below it.
-    // Top: the always-there buttons. The rest: open area — your folders as
-    // icons you pick up, move, open and put down. Windows float over it.
-
-    // 1. Assemble the dock: the two windows already there — Core Telemetry
-    //    and Command & Dialogue — become PERMANENT in the left panel.
-    //    Telemetry (the round JARVIS + wake buttons) on top, the chat below.
-    (function assembleDock() {
-      const t = document.getElementById('win-telemetry');
-      if (t) {
-        t.classList.add('docked');
-        t.style.display = '';
-        document.getElementById('dock-top').appendChild(t);
+    // The primary chat window is the page's main content, not a draggable panel.
+    (function mountChat() {
+      const chat = document.getElementById('win-chat');
+      const host = document.getElementById('chat-content');
+      if (chat && host) {
+        chat.classList.add('primary-chat');
+        chat.style.display = '';
+        host.appendChild(chat);
       }
-      const c = document.getElementById('win-chat');
-      if (c) {
-        c.classList.add('docked');
-        c.style.display = '';
-        document.getElementById('dock-chat').appendChild(c);
-      }
-      const tr = document.getElementById('win-tree');
-      if (tr) tr.style.display = 'none';
     })();
-
-    // 2. The audio visualiser: alive in the corner, flares when JARVIS speaks.
-    (function startVisualiser() {
-      const c = document.getElementById('viz-canvas');
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const N = 28;
-      let t = 0;
-      function frame() {
-        t += 0.016;
-        ctx.clearRect(0, 0, 128, 128);
-        const speaking = Speech.busy;
-        const watching = typeof handTrackingActive !== 'undefined' && handTrackingActive;
-        const state = document.getElementById('dock-state');
-        if (state) state.textContent = speaking ? 'SPEAKING' : (watching ? 'WATCHING' : 'ONLINE');
-        for (let i = 0; i < N; i++) {
-          const a = (i / N) * Math.PI * 2;
-          const energy = speaking
-            ? 0.45 + 0.55 * Math.abs(Math.sin(t * 7 + i * 1.7))
-            : 0.16 + 0.1 * Math.sin(t * 2 + i);
-          const r0 = 26;
-          const r1 = r0 + 30 * energy;
-          ctx.strokeStyle = speaking ? 'rgba(255,208,74,0.95)' : 'rgba(255,208,74,0.4)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(64 + Math.cos(a) * r0, 64 + Math.sin(a) * r0);
-          ctx.lineTo(64 + Math.cos(a) * r1, 64 + Math.sin(a) * r1);
-          ctx.stroke();
-        }
-        ctx.beginPath();
-        ctx.arc(64, 64, 10 + (speaking ? 3 * Math.abs(Math.sin(t * 9)) : 1.5 * Math.sin(t * 2)), 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(125,211,252,0.9)';
-        ctx.fill();
-        requestAnimationFrame(frame);
-      }
-      frame();
-    })();
-
-    // 3. The desktop: your real folders (Documents, Downloads, the project)
-    //    as icons. Pick them up with the hand or the pointer, put them down
-    //    anywhere, double-tap to open. Positions are remembered.
-    const DESK_POS_KEY = 'jarvis-desk-pos';
-    function deskSavePos(name, x, y) {
-      let all = {};
-      try { all = JSON.parse(localStorage.getItem(DESK_POS_KEY) || '{}'); } catch (_) { /* fresh */ }
-      all[name] = { x, y };
-      localStorage.setItem(DESK_POS_KEY, JSON.stringify(all));
-    }
-    async function buildDesktop() {
-      let roots = [];
-      try {
-        const res = await _authFetch('/api/files/roots');
-        roots = (await res.json()).roots || [];
-      } catch (_) { return; }
-      let saved = {};
-      try { saved = JSON.parse(localStorage.getItem(DESK_POS_KEY) || '{}'); } catch (_) { /* fresh */ }
-      const headerH = 72;
-      roots.forEach((root, i) => {
-        const icon = document.createElement('div');
-        icon.className = 'desk-icon';
-        const emoji = /download/i.test(root.name) ? '⬇️'
-          : /document/i.test(root.name) ? '📄'
-          : /jarvis|project/i.test(root.name) ? '🧠' : '📁';
-        const ico = document.createElement('div'); ico.className = 'ico'; ico.textContent = emoji;
-        const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = root.name;
-        icon.appendChild(ico); icon.appendChild(lbl);
-        const pos = saved[root.name] || { x: 292, y: headerH + 24 + i * 128 };
-        icon.style.left = pos.x + 'px';
-        icon.style.top = pos.y + 'px';
-
-        icon.addEventListener('pointerdown', (e) => {
-          e.preventDefault();
-          const offX = e.clientX - icon.offsetLeft;
-          const offY = e.clientY - icon.offsetTop;
-          icon.setPointerCapture(e.pointerId);
-          icon.classList.add('grabbed');
-          const move = (ev) => {
-            icon.style.left = Math.max(0, Math.min(window.innerWidth - 96, ev.clientX - offX)) + 'px';
-            icon.style.top = Math.max(headerH - 16, Math.min(window.innerHeight - 90, ev.clientY - offY)) + 'px';
-          };
-          icon.addEventListener('pointermove', move);
-          icon.addEventListener('pointerup', () => {
-            icon.classList.remove('grabbed');
-            icon.removeEventListener('pointermove', move);
-            deskSavePos(root.name, icon.offsetLeft, icon.offsetTop);
-          }, { once: true });
-        });
-        icon.addEventListener('dblclick', () => openFolderWindow(root.path, root.name));
-        document.body.appendChild(icon);
-      });
-    }
-
-    // 4. Folder windows: an icon opens into a window you pull across the room.
-    let folderWinCount = 0;
-    function openFolderWindow(rootPath, title) {
-      const id = `win-folder-${++folderWinCount}`;
-      const win = document.createElement('div');
-      win.className = 'glass-window';
-      win.id = id;
-      win.style.cssText = `top:${90 + (folderWinCount % 5) * 30}px; left:${380 + (folderWinCount % 5) * 30}px; width:430px; height:470px;`;
-      win.innerHTML = `
-        <div class="window-header" onpointerdown="startWindowDrag(event, '${id}')">
-          <div class="window-title-group"><span class="window-icon">📂</span><span class="fw-title"></span></div>
-          <div class="window-actions"><button class="win-btn" onclick="document.getElementById('${id}').remove()">✕</button></div>
-        </div>
-        <div class="window-body" style="display:flex; flex-direction:column; min-height:0; height:calc(100% - 42px); padding:6px;">
-          <ul class="folder-list" style="flex:1 1 auto; min-height:0;"></ul>
-          <pre class="fw-preview" style="display:none; flex:1 1 auto; min-height:0; overflow:auto; margin:0; padding:10px; font:12px/1.5 monospace; color:#ffe9a3; white-space:pre-wrap;"></pre>
-        </div>
-        <div class="window-grab-bar" onpointerdown="startWindowDrag(event, '${id}')" title="Grab handle"></div>`;
-      document.body.appendChild(win);
-      win.querySelector('.fw-title').textContent = title;
-      bringToFront(win);
-      fwNavigate(win, rootPath);
-    }
-    async function fwNavigate(win, dirPath) {
-      const list = win.querySelector('.folder-list');
-      const preview = win.querySelector('.fw-preview');
-      preview.style.display = 'none';
-      list.style.display = '';
-      list.textContent = '';
-      let data;
-      try {
-        const res = await _authFetch(`/api/files/list?path=${encodeURIComponent(dirPath)}`);
-        data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'blocked');
-      } catch (err) {
-        const li = document.createElement('li');
-        li.textContent = `⚠ Cannot open: ${err.message}`;
-        list.appendChild(li);
-        return;
-      }
-      win.querySelector('.fw-title').textContent = dirPath.split(/[\\/]/).pop() || dirPath;
-      if (data.parent) {
-        const up = document.createElement('li');
-        up.textContent = '⬅ ..';
-        up.addEventListener('click', () => fwNavigate(win, data.parent));
-        list.appendChild(up);
-      }
-      for (const entry of data.entries || []) {
-        const li = document.createElement('li');
-        li.textContent = `${entry.kind === 'folder' ? '📁' : '📄'} ${entry.name}`;
-        li.addEventListener('click', () => {
-          if (entry.kind === 'folder') fwNavigate(win, entry.path);
-          else fwPreview(win, entry.path, dirPath);
-        });
-        list.appendChild(li);
-      }
-      if (data.truncated) {
-        const li = document.createElement('li');
-        li.textContent = '… more files not shown';
-        list.appendChild(li);
-      }
-    }
-    async function fwPreview(win, filePath, backDir) {
-      const list = win.querySelector('.folder-list');
-      const preview = win.querySelector('.fw-preview');
-      list.style.display = 'none';
-      preview.style.display = '';
-      preview.textContent = 'Reading…';
-      try {
-        const res = await _authFetch(`/api/files/read?path=${encodeURIComponent(filePath)}`);
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'blocked');
-        preview.textContent = `⬅ (double-click to go back)\n── ${data.name} ──\n\n${data.text}${data.truncated ? '\n\n… file continues' : ''}`;
-      } catch (err) {
-        preview.textContent = `⬅ (double-click to go back)\n⚠ Cannot read: ${err.message}`;
-      }
-      preview.ondblclick = () => fwNavigate(win, backDir);
-    }
-    window.openFolderWindow = openFolderWindow;
 
     // The owner's glass numbers are on screen from the first paint: they are
     // applied here, and again every time a slider moves.
     applyGlassSettings();
 
-    buildDesktop();
   </script>
 </body>
 </html>

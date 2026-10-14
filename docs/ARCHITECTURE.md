@@ -1,6 +1,8 @@
-# JARVIS architecture: one application, many features
+# Legacy Python architecture: `backend/app.py`, `web/`, and `myhands/`
 
-Status: rules in force from 2026-10-09. Tests in `tests/test_architecture.py` enforce the parts that can be checked by machine.
+> **Scope warning:** this document describes the separate legacy FastAPI application. It is not the supported dashboard runtime. The supported app is `server.ts` + `dashboard/static/app.html` + `local_voice/service.py`; read `AGENTS.md` before changing launchers, voice, My Hands, chat, or UI behavior. Do not apply this document's Gemini Live, browser-voice, or Python UI rules to the supported Node dashboard unless the owner explicitly asks.
+
+Status: legacy Python architecture notes; the machine-checkable tests in `tests/test_architecture.py` cover that legacy path only.
 
 ## The picture
 

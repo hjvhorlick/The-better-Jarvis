@@ -100,7 +100,7 @@
     .env-tool-control input[type="color"] { width: 42px; height: 34px; }
   </style>
 </head>
-<body class="show-tools">
+<body>
   <!-- The picture behind the glass: the dashboard's live camera, handed over
        (see /rooms-src/camera.js). When it is off, the dark grey room shows. -->
   <video id="env-camera" class="jg-cam" autoplay playsinline muted></video>
@@ -109,8 +109,8 @@
 
   <div class="rooms-top">
     <nav id="env-switcher" class="env-switcher" aria-label="Rooms"></nav>
-    <button type="button" id="env-tools-toggle" class="rooms-switch" aria-pressed="true"
-            title="Hide this room's tools">✕ Tools</button>
+    <button type="button" id="env-tools-toggle" class="rooms-switch" aria-pressed="false"
+            title="Show this room's tools">🧰 Tools</button>
   </div>
 
   <!-- The windowing environment: one rail, sliding left and right. -->

@@ -1,4 +1,4 @@
-# JARVIS's voice, all on this computer (local_voice/service.py). No Gemini is used for voice.
+# JARVIS's local voice service (local_voice/service.py): Kokoro speech and faster-whisper transcription.
 # Install with:  pip install -r backend/requirements-local-voice.txt
 # Then see docs/LOCAL_VOICE.md (the Kokoro voice files go in models/kokoro/).
 #
