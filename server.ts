@@ -1444,10 +1444,6 @@ async function processCommand(userCommand: string, onDelta?: (textSoFar: string)
   // "go offline" keeps everything on this computer until "come back online".
   // Useful when the owner wants no internet traffic at all, and the honest
   // counterpart to the automatic offline Google's 429 forces.
-  // "explain the quota" / "what are my limits": the whole explanation, said by Jarvis.
-  if (/^(?:please\s+)?(?:jarvis,?\s+)?(?:explain|tell me about|what (?:is|are)|how (?:does|do)|show)\s+(?:(?:the|my|and|your)\s+)*(?:quota|limits?|quotas)(?:\s+and\s+(?:the\s+)?(?:limits?|quota))?\b|^(?:please\s+)?(?:my\s+|the\s+)?(?:quota|limits?)(?:\s+and\s+(?:the\s+)?limits?)?\s*\??$/i.test(trimmed)) {
-    return quotaAndLimitExplanation();
-  }
   if (/\b(?:go|switch|stay|turn)\s+(?:yourself\s+)?offline\b|\boffline mode\b|\blocal only\b/i.test(lower)) {
     const state = setOfflineMode(true);
     broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
@@ -1682,19 +1678,8 @@ function broadcast(payload: object) {
 // when the count passes the warning level, when key 2 takes over, and when
 // Google has stopped us for the day — three different things, named apart.
 onQuotaEvent((event) => {
-  const text = event.kind === 'warn'
-    ? `Heads-up: ${event.message}`
-    : event.kind === 'unreadable'
-      ? `Heads-up: ${event.message}`
-      : event.kind === 'offline'
-        ? `${event.offline ? 'OFFLINE' : 'Back online'}: ${event.message}`
-        : event.switchedTo
-          ? `Key switch: ${event.message}`
-          : `Google has stopped us: ${event.message}`;
-  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
-  messageHistory.push(line);
-  saveHistory();
-  broadcast(line);
+  // The quota is not a chat topic. The terminal keeps every event; the dialogue
+  // gets only the one line from announceOfflineChange, when the quota runs out.
   if (event.kind === 'key-stopped' && !event.switchedTo) announceOfflineChange();
 });
 
@@ -1706,33 +1691,8 @@ onQuotaEvent((event) => {
 let announcedOffline: boolean | null = null;
 const QUOTA_EXPLAINER_ID = 'quota-explainer';
 
-/**
- * The complete explanation of the quota and the limits, in Jarvis's own words.
- * Said when the app goes offline (and at boot), and on request: "explain the quota".
- */
-function quotaAndLimitExplanation(): string {
-  const state = offlineSnapshot();
-  const q = quotaSnapshot();
-  const parts: string[] = [];
-  parts.push(state.offline
-    ? `I am OFFLINE right now, sir, because ${state.why}. I am not calling Gemini, and nothing is counted while this lasts.`
-    : 'I am ONLINE right now, sir: the Gemini keys are usable. Local answers are still tried first, so most questions cost nothing.');
-  const warnText = q.warnAt > 0
-    ? `I warn you once today's count reaches ${q.warnAt} (set by SUPPER_GEMINI_DAILY_WARN, default 20)`
-    : 'the warning level is switched off';
-  parts.push(`Your count: ${q.used} Gemini call${q.used === 1 ? '' : 's'} today. ${warnText}${q.pastWarn ? ', and we are past it now' : ''}. This count is this app's own, kept in runtime/quota.json, and it starts again at local midnight. It only warns; it never stops a call.`);
-  parts.push(`The real limit belongs to Google, not to this app. Only a real 429 from Google stops calls, and only for the key Google refused. Google's daily quota resets at ${googleResetPromise()}. Google's own limits differ by model and project, so AI Studio shows the true figures.`);
-  parts.push(q.hasSecondKey
-    ? 'A second key is set. If Google refuses the first key, the second takes over for the rest of the day. It only doubles the allowance when it comes from a different Google account or project.'
-    : 'No second key is set. If Google refuses your only key, nothing else can answer Gemini until the reset. A second key from a different Google account or project can take over then; add it in Settings → The Brain.');
-  if (q.stoppedByGoogle) parts.push('Google has stopped the key for today, so Gemini calls stay off until that reset.');
-  parts.push(`While offline I still work: the open web (search, facts, pictures, video and sound, with no key and no quota), chat and small talk, the local knowledge base, your memory, notes and reminders, the drafting desk, the time and date, and the rooms and camera. I cannot write an answer with a Gemini model, draw a picture with a model, or write a grounded research report until the keys come back.`);
-  parts.push('To return to automatic, say "come back online". To stay offline on purpose, say "go offline".');
-  return parts.join('\n\n');
-}
-
-/** The one line Jarvis gives about being offline. Shown once, never spoken unprompted. */
-const OFFLINE_NOTE = 'I am running offline for now: Gemini is not answering, so I answer from this computer and the open web. Chats keep working. Say "explain the quota" if you want the details.';
+/** The one line about the quota. Shown once, never spoken unprompted. */
+const OFFLINE_NOTE = 'The Gemini quota is finished for now.';
 
 /**
  * One announcement when the app crosses into or out of offline mode. Going
@@ -1759,7 +1719,7 @@ function announceOfflineChange(): void {
     saveHistory();
     broadcast({ ...line, replay: true });   // shown once; a page open now does not read it aloud
   } else if (!atBoot) {
-    const text = 'Back ONLINE — the Gemini keys are usable again.';
+    const text = 'Gemini is back.';
     console.warn(`[JARVIS] ${text}`);
     const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
     messageHistory.push(line);
