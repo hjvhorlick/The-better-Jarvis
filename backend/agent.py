@@ -863,8 +863,9 @@ class Agent:
                 reply = self._chat.reply(text, workspace=workspace)
         except UpstreamError as e:
             if e.quota:
-                # Google's own 429: offline for the rest of the local day — but
-                # the conversation carries on locally, with one line of warning.
+                # Google's own 429: offline until midnight Pacific (its own
+                # quota reset) — but the conversation carries on locally, with
+                # one line of warning.
                 self._budget.mark_exhausted()
                 self._publish("chat_notice",
                               message=f"OFFLINE — local only ({self._budget.offline_reason()}). "
@@ -887,8 +888,8 @@ class Agent:
         was fetched, when the internet comes back, and what still works here.
         """
         why = (why or "the Gemini provider is unavailable").strip()
-        back = ("The keys come back at local midnight, or sooner if you add a key from another "
-                "Google account." if "429" in why else
+        back = ("The keys come back at midnight Pacific — Google's own quota reset — "
+                "or sooner if you add a key from another Google account." if "429" in why else
                 "Set GEMINI_API_KEY, or add gemini_api_key to config/api_keys.json, and fresh "
                 "answers work at once." if "key" in why else
                 "Say 'come back online' (or unset SUPPER_OFFLINE) and the keys are used again.")

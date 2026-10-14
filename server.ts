@@ -42,6 +42,7 @@ import {
   resolveKeySlot,
   resolveNames,
   resolveTextModel,
+  googleResetPromise,
   modelCandidates,
   runBrain,
   runBrainStream,
@@ -468,7 +469,7 @@ function brainCaller(): BrainCaller | null {
 function researchProviderFailure(error: unknown, phase: 'search' | 'report' | 'followup'): string {
   if (error instanceof BrainError) {
     if (error.code === 'no-key') return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.';
-    if (error.code === 'google-stopped') return 'Google has stopped our Gemini calls for today (its own quota, not this app\'s count). No further provider call was made; calls resume at local midnight.';
+    if (error.code === 'google-stopped') return `Google has stopped our Gemini calls for today (its own quota, not this app's count). No further provider call was made; calls resume at ${googleResetPromise()}.`;
     if (error.code === 'rate-limited') return 'Google reports a Gemini rate limit (429). Research stopped; try again after the provider limit resets.';
     if (error.code === 'key-rejected') return 'Gemini rejected the configured key. Check Settings → The Brain; the secret value is not shown here.';
     if (error.code === 'connection') return 'The Gemini service could not be reached. No web search is being claimed.';
@@ -1704,7 +1705,7 @@ function announceOfflineChange(): void {
   if (announcedOffline === state.offline) return;
   announcedOffline = state.offline;
   const text = state.offline
-    ? `No Gemini right now (${state.why})${state.reason === 'google-stopped' ? '; the keys come back at local midnight' : ''}. This is a warning, not a block: every local feature still works, the open web still works — search, facts, pictures and video need no key and no quota — and no call is counted.`
+    ? `No Gemini right now (${state.why})${state.reason === 'google-stopped' ? `; the keys come back at ${googleResetPromise()}` : ''}. This is a warning, not a block: every local feature still works, the open web still works — search, facts, pictures and video need no key and no quota — and no call is counted.`
     : 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
   console.warn(`[JARVIS] ${text}`);
   const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };

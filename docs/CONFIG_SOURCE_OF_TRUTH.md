@@ -66,7 +66,7 @@ still had calls to give. That refusal is gone.
 | Reset at local midnight | same |
 | Past `SUPPER_GEMINI_DAILY_WARN` (default 20; an old `SUPPER_GEMINI_DAILY_BUDGET` is honoured as the warning level) the terminal, the dialogue (a system line) and Settings WARN — the call still goes through | `resolveDailyWarn()`, `onQuotaEvent()` |
 | A counter file that exists but cannot be read: the count continues in memory for the day, the file is left alone, and Settings says the file could not be read — nothing is blocked | `readBrainCounter()` |
-| A real `429` from Google stops THAT key until local midnight; Google rejecting a key does the same | `markKeyStoppedByGoogle()` |
+| A real `429` from Google stops THAT key until midnight Pacific (Google's own quota reset — NOT the local midnight the count resets at); Google rejecting a key does the same | `markKeyStoppedByGoogle()`, `liveStop()` |
 | If the second key (`gemini_api_key_2` / `GEMINI_API_KEY_2`) is set and not stopped, it takes over for the rest of the day — the same question is retried on it at once (counted as one call on key 2, the one exception to "one unit per question", because Google counts it against key 2) | `runBrain()` / `runBrainStream()` |
 | Only when EVERY key we have is stopped are calls refused before they are sent — code `google-stopped`, and the message says Google did it, not this app | `resolveActiveKey()`, `explainBrainFailure()` |
 | Voice (Kokoro / faster-whisper on this computer) and local answers (knowledge, time, reminders, drafts, small talk, memory) never reach the gate and never count | they never call `runBrain()` |
@@ -99,10 +99,10 @@ sentence. The rules:
 |---|---|---|
 | `404 NOT_FOUND`, "no longer available" | `model-unavailable` | "The model name was withdrawn, sir — my key is fine, so do not change it." … names `SUPPER_TEXT_MODEL` / `GEMINI_MODEL`, the app's current model and its alias fallback |
 | `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — names which key (1 or 2), where it came from and its last four characters; if the other key is set, it takes over for the day |
-| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own quota — "Google stopping us, not this app"; that key is stopped until local midnight, the second key takes over if set |
+| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own quota — "Google stopping us, not this app"; that key is stopped until midnight Pacific, the second key takes over if set |
 | `ENOTFOUND`, `ECONNREFUSED`, "fetch failed" | `connection` | the call never left the machine; neither key nor model is at fault |
 | no key anywhere | `no-key` | names every place checked: `GEMINI_API_KEY` (including `./.env`) and `config/api_keys.json` → `gemini_api_key` |
-| Google has stopped every key we have today | `google-stopped` | refused before it is sent: "Google has stopped our calls for today — Google, not this app", with the time each key was stopped and local midnight as the reset |
+| Google has stopped every key we have today | `google-stopped` | refused before it is sent: "Google has stopped our calls for today — Google, not this app", with the time each key was stopped and midnight Pacific (`googleResetPromise()`) as the reset |
 
 Never returned or logged: the key itself. Only the last four characters, its
 source, and the file it was read from.

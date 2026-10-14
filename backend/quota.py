@@ -11,13 +11,16 @@ Rules, and they are the owner's rules:
     count too, because the provider may still have counted them.
   * The COUNT NEVER REFUSES A CALL. Past the warning level the app says so; the
     call still goes out. The only thing that stops an outbound call is Google
-    itself: a real 429 marks the app OFFLINE for the rest of the local day.
+    itself: a real 429 marks the app OFFLINE until Google's own daily quota
+    resets — midnight Pacific.
   * OFFLINE IS A MODE, NOT A DEAD END. While offline nothing is fetched from the
     internet and no unit is counted, but the chat and every local feature keep
     working — the caller answers from this computer instead of stopping.
   * SUPPER_OFFLINE=1 forces the same offline mode by hand (no internet at all).
-  * The count resets at local midnight. Google resets its own daily quota at
-    midnight Pacific time, so the two can differ by a few hours.
+  * The count resets at local midnight. A Google 429 stop ends at midnight
+    Pacific (America/Los_Angeles) — Google's own quota boundary, the same one
+    the dashboard (config.ts) uses. The two differ by hours (nine for a clock
+    in UTC+2): the stop follows Google's day, not ours.
   * The count is kept in runtime/quota.json (git-ignored), in the {day, used}
     shape the dashboard writes and reads. A file that exists but cannot be read
     is left alone and the count continues in memory; it never blocks anything.
@@ -32,6 +35,15 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
+from zoneinfo import ZoneInfo
+
+try:
+    _PACIFIC = ZoneInfo("America/Los_Angeles")
+except Exception:                                # noqa: BLE001 - a machine with no tz database
+    from datetime import timedelta, timezone
+    # Fixed PST offset: close enough to keep the promise honest (the real
+    # boundary is midnight Pacific; only the DST hour shifts).
+    _PACIFIC = timezone(timedelta(hours=-8))
 
 
 def offline_requested() -> bool:
@@ -59,7 +71,7 @@ class DailyBudget:
         self._used = 0
         self._unreadable = False
         self._save_failed = False
-        self._stopped_at: datetime | None = None   # Google's 429: offline until local midnight
+        self._stopped_at: datetime | None = None   # Google's 429: offline until midnight Pacific
         self._load()
 
     # ----- public -----
@@ -116,7 +128,7 @@ class DailyBudget:
                     f"only Google can.")
 
     def mark_exhausted(self) -> None:
-        """Google answered 429: offline until local midnight. The chat carries on locally."""
+        """Google answered 429: offline until midnight Pacific. The chat carries on locally."""
         with self._lock:
             self._roll_locked()
             if not self._stopped_at:
@@ -173,17 +185,22 @@ class DailyBudget:
             return
         if day == self._day:
             self._used = max(0, used)
-            stopped = data.get("google_stopped")
-            if isinstance(stopped, dict):
-                # The dashboard's per-key shape: {1: {...}, 2: {...}} — offline when
-                # every key it holds was refused. A bare ISO string is accepted too.
-                entries = [v for v in stopped.values() if v]
-                if entries and all(entries):
-                    first = entries[0]
-                    at = first.get("at") if isinstance(first, dict) else str(first)
-                    self._stopped_at = self._parse_stamp(at) or self._clock()
-            elif isinstance(stopped, str) and stopped:
-                self._stopped_at = self._parse_stamp(stopped) or self._clock()
+        # Google's stop is read REGARDLESS of the count's local day: it ends at
+        # midnight Pacific, which is hours after our own midnight — dropping it
+        # at a local-day change is exactly the nine-hours-early bug.
+        stopped = data.get("google_stopped")
+        if isinstance(stopped, dict):
+            # The dashboard's per-key shape: {1: {...}, 2: {...}} — offline when
+            # every key it holds was refused. A bare ISO string is accepted too.
+            entries = [v for v in stopped.values() if v]
+            if entries and all(entries):
+                first = entries[0]
+                at = first.get("at") if isinstance(first, dict) else str(first)
+                self._stopped_at = self._parse_stamp(at) or self._clock()
+        elif isinstance(stopped, str) and stopped:
+            self._stopped_at = self._parse_stamp(stopped) or self._clock()
+        if self._stopped_at and not self._stop_live_locked():
+            self._stopped_at = None
 
     @staticmethod
     def _parse_stamp(value) -> datetime | None:
@@ -195,10 +212,27 @@ class DailyBudget:
     def _roll_locked(self) -> None:
         today = self._today()
         if today != self._day:
-            self._day = today
+            self._day = today                # the COUNT is this computer's day
             self._used = 0
-            self._stopped_at = None          # a new local day: try the keys again
             self._unreadable = False
+        # The STOP is Google's day: it ends at midnight Pacific — which for the
+        # owner (UTC+2) is nine hours AFTER this computer's midnight. Carrying
+        # it across the local day is the whole point of the fix.
+        if self._stopped_at and not self._stop_live_locked():
+            self._stopped_at = None
+
+    @staticmethod
+    def _pacific_day(dt: datetime) -> str:
+        """The calendar date in Pacific time — the day Google's quota runs on."""
+        if dt.tzinfo is None:
+            dt = dt.astimezone()              # a naive stamp means this computer's clock
+        return dt.astimezone(_PACIFIC).date().isoformat()
+
+    def _stop_live_locked(self) -> bool:
+        """True while the recorded 429 belongs to the current Pacific day."""
+        if not self._stopped_at:
+            return False
+        return self._pacific_day(self._stopped_at) == self._pacific_day(self._clock())
 
     def _save_locked(self) -> None:
         if self._path is None or self._unreadable:

@@ -495,7 +495,8 @@ function freePort() {
  * The owner's rule: the app never blocks itself. It counts every outbound call
  * (one unit per question), warns past SUPPER_GEMINI_DAILY_WARN, and keeps
  * going. The only thing that stops a call is a real 429 from Google — and that
- * is said plainly as Google's doing, until local midnight.                    */
+ * is said plainly as Google's doing, until midnight Pacific (Google's own quota
+ * reset — NOT this computer's local midnight).                                */
 {
   const MODELS = { 'harness-text-model': { } };
   const readCounter = (srv) => JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'quota.json'), 'utf-8'));
@@ -555,7 +556,7 @@ function freePort() {
     const sent = srv3.stub.calls.filter((c) => c.kind === 'generate').length;
     const next = await get(srv3, '/api/brain-check');
     ok('429: the next call is refused before it is sent — Google stopped us until midnight', next.body.ok === false && next.body.code === 'google-stopped' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `${next.body.code}; generates still ${sent}`);
-    ok('429: …and the message blames Google, names the time, and promises midnight', /Google, not this app/.test(String(next.body.error)) && /key 1 was stopped at \d\d:\d\d/.test(String(next.body.error)) && /local midnight/.test(String(next.body.error)), String(next.body.error).slice(0, 160));
+    ok('429: …and the message blames Google, names the time, and promises midnight Pacific', /Google, not this app/.test(String(next.body.error)) && /key 1 was stopped at \d\d:\d\d/.test(String(next.body.error)) && /midnight Pacific/.test(String(next.body.error)) && !/local midnight/.test(String(next.body.error)), String(next.body.error).slice(0, 160));
     ok('429: …and the count is not pretended to be used up', next.body.quota.used === 1 && next.body.quota.stoppedByGoogle === true, JSON.stringify({ used: next.body.quota.used, stoppedByGoogle: next.body.quota.stoppedByGoogle }));
     const chat = await post(srv3, '/api/command', { text: 'explain how a transistor works' });
     // The owner's rule: a 429 is a WARNING, not a block. The chat does not stop
@@ -577,6 +578,35 @@ function freePort() {
     ok('429: Settings says Google stopped us', settings.body.quota.stoppedByGoogle === true && settings.body.activeKey.stoppedByGoogle === true && /GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
     ok('429: the terminal says Google stopped key 1 and no second key is set', /Google stopped key 1/.test(srv3.log()) && /no second key is set/.test(srv3.log()), (srv3.log().match(/.*Google stopped key 1.*/) || [''])[0].slice(0, 160));
   } finally { await srv3.stop(); }
+
+  // (e) THE STOP FOLLOWS GOOGLE'S DAY: it survives this computer's local
+  // midnight and ends only at midnight Pacific. (The app used to clear it at
+  // local midnight — nine hours early for the owner in UTC+2 — so the first
+  // call after "resume" 429'd again, straight after a message that said calls
+  // had resumed.)
+  const pacific = await startDashboard({ models: { 'harness-text-model': { rateLimited: true } }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'pacific-stop' });
+  try {
+    const first = await get(pacific, '/api/brain-check');
+    ok('pacific: the 429 records a stop on key 1', first.body.ok === false && first.body.code === 'rate-limited' && readCounter(pacific).google_stopped['1'], String(first.body.code));
+    const qfile = path.join(pacific.cwd, 'runtime', 'quota.json');
+    // Roll THIS COMPUTER'S day back one day (a local midnight just passed),
+    // keeping the stop recorded now — Google's day has not changed.
+    const rolled = JSON.parse(fs.readFileSync(qfile, 'utf-8'));
+    const y = new Date(Date.now() - 24 * 3600_000);
+    const pad = (n) => String(n).padStart(2, '0');
+    rolled.day = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
+    fs.writeFileSync(qfile, JSON.stringify(rolled));
+    const next = await get(pacific, '/api/brain-check');
+    ok('pacific: a new LOCAL day does not lift Google\'s stop', next.body.code === 'google-stopped', String(next.body.code));
+    ok('pacific: …and the message promises midnight Pacific, not local midnight', /midnight Pacific/.test(String(next.body.error)) && !/local midnight/.test(String(next.body.error)), String(next.body.error).slice(-180));
+    // Age the stop to 48 hours ago — a previous Pacific day — and the key is tried again.
+    const aged = JSON.parse(fs.readFileSync(qfile, 'utf-8'));
+    const sent = pacific.stub.calls.filter((c) => c.kind === 'generate').length;
+    aged.google_stopped['1'].at = new Date(Date.now() - 48 * 3600_000).toISOString();
+    fs.writeFileSync(qfile, JSON.stringify(aged));
+    const again = await get(pacific, '/api/brain-check');
+    ok('pacific: once midnight Pacific has passed, the key really is tried again', again.body.code === 'rate-limited' && pacific.stub.calls.filter((c) => c.kind === 'generate').length === sent + 1, `${again.body.code}; generates ${sent} -> ${pacific.stub.calls.filter((c) => c.kind === 'generate').length}`);
+  } finally { await pacific.stop(); }
 }
 
 /* ── 5b. THE SECOND KEY: Google stops key 1, key 2 carries on ─────────────── */

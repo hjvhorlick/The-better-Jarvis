@@ -28,16 +28,18 @@
  *          then config/api_keys.json -> "gemini_api_key_2"
  *          The optional FALLBACK key. Every call goes out on the first key;
  *          when Google refuses the first key with a 429 (its quota) or rejects
- *          the key itself, the second key takes over for the rest of the local
- *          day. It only doubles the real allowance if it belongs to a
- *          different Google account/project.
+ *          the key itself, the second key takes over until midnight Pacific,
+ *          when Google's own quota resets. It only doubles the real allowance
+ *          if it belongs to a different Google account/project.
  *
  *   COUNT  The app COUNTS and WARNS; it never BLOCKS. Every outbound question
  *          adds one unit to runtime/quota.json (total and per key), reset at
  *          local midnight. Past SUPPER_GEMINI_DAILY_WARN (default 20) the
  *          terminal and Settings warn — the call still goes through. The only
  *          thing that stops calls is Google itself: a real 429 marks THAT key
- *          as stopped by Google until local midnight. When every key we have
+ *          as stopped by Google until midnight Pacific (its own quota reset —
+ *          NOT our local midnight: the count and the stop have different
+ *          days). When every key we have
  *          is stopped, calls are refused with a message that says Google did
  *          it, not this app. A counter file that cannot be read never blocks
  *          either: the count continues in memory and Settings says the file
@@ -460,8 +462,9 @@ export function publicKeyInfo(info: KeyInfo = resolveGeminiKey()): {
 /**
  * Which key answers NOW, and why. The first key, always — unless Google has
  * stopped it today (a 429, or it rejected the key), in which case the second
- * key takes over until local midnight. When every key we have is stopped, the
- * report says so: that is Google stopping us, and the only thing that may.
+ * key takes over until midnight Pacific (Google's quota reset). When every key
+ * we have is stopped, the report says so: that is Google stopping us, and the
+ * only thing that may.
  */
 export interface ActiveKey {
   slot: KeySlot | null;
@@ -484,7 +487,7 @@ export function resolveActiveKey(): ActiveKey {
   }
   if (second.key && !counter.stopped[2]) {
     const why = first.key && counter.stopped[1]
-      ? `the second key — Google stopped the first one at ${clockTime(counter.stopped[1].at)} (${stopReasonText(counter.stopped[1])}); the first key is tried again after local midnight`
+      ? `the second key — Google stopped the first one at ${clockTime(counter.stopped[1].at)} (${stopReasonText(counter.stopped[1])}); the first key is tried again at ${googleResetPromise()}`
       : 'the second key — no first key is set';
     return { slot: 2, info: second, reason: why, stoppedByGoogle: false };
   }
@@ -703,7 +706,7 @@ export interface QuotaSnapshot {
   activeReason: string;
   /** Per key: Google's stop for today, or null. */
   googleStopped: { 1: StopRecord | null; 2: StopRecord | null };
-  /** True only when Google has stopped EVERY key we have: no calls until local midnight. */
+  /** True only when Google has stopped EVERY key we have: no calls until midnight Pacific (Google's quota reset). */
   stoppedByGoogle: boolean;
   /** When the second key took over today, if it did. */
   switchedAt: string | null;
@@ -766,6 +769,56 @@ function stopReasonText(stop: StopRecord): string {
   return stop.reason === 'quota' ? "Google's quota, a real 429" : 'Google rejected the key itself';
 }
 
+// ── GOOGLE'S DAY IS THE PACIFIC DAY ─────────────────────────────────────────
+// The app's own count resets at local midnight, but Google's daily quota
+// resets at midnight in Pacific time (America/Los_Angeles) — that is the
+// boundary Google itself uses. A Google stop (a real 429) therefore ends at
+// midnight Pacific, not at our local midnight: for a clock in UTC+2 the two
+// are nine hours apart, and the app used to resume nine hours early — the
+// first call after local midnight 429'd again, straight after a message that
+// had just said calls resumed. The count still resets locally; the STOP
+// follows Google's day, and every message that promises a resume time says
+// midnight Pacific.
+const PACIFIC_TZ = 'America/Los_Angeles';
+const PACIFIC_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: PACIFIC_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
+const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-GB', { timeZone: PACIFIC_TZ, hour: '2-digit', hour12: false });
+
+/** The calendar date in Pacific time (YYYY-MM-DD). */
+function pacificDay(at: Date = new Date()): string {
+  return PACIFIC_DAY_FMT.format(at);
+}
+
+/** A Google stop lives for the Pacific day it was recorded on: at midnight Pacific Google's quota is back. */
+function liveStop(stop: StopRecord | null, now: Date = new Date()): StopRecord | null {
+  if (!stop) return null;
+  const at = Date.parse(stop.at);
+  if (Number.isNaN(at)) return null;
+  return pacificDay(new Date(at)) === pacificDay(now) ? stop : null;
+}
+
+/** The next midnight Pacific — the moment Google's quota really resets — as a timestamp. */
+function nextGoogleResetAt(now: Date = new Date()): number {
+  // Midnight Pacific is 07:00 or 08:00 UTC depending on the season (PDT/PST),
+  // so both candidates are checked and the one that is 00:00 Pacific wins.
+  const today = pacificDay(now);
+  for (let add = 1; add <= 3; add++) {
+    const d = new Date(`${today}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() + add);
+    const day = d.toISOString().slice(0, 10);
+    for (const hour of [7, 8]) {
+      const t = Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
+      const reset = new Date(t);
+      if (t > now.getTime() && pacificDay(reset) === day && PACIFIC_HOUR_FMT.format(reset) === '00') return t;
+    }
+  }
+  return now.getTime() + 24 * 3600_000;   // unreachable in practice
+}
+
+/** The honest promise every message can share: midnight Pacific, on this computer's clock. */
+export function googleResetPromise(): string {
+  return `midnight Pacific — ${clockTime(new Date(nextGoogleResetAt()).toISOString())} on this computer's clock`;
+}
+
 // ── The brain's counter: total, per key, and Google's stops ─────────────────
 interface BrainCounter {
   day: string;
@@ -798,7 +851,16 @@ function readStop(value: unknown): StopRecord | null {
 function readBrainCounter(): BrainCounter {
   const day = localDay();
   if (unreadableDay[QUOTA_FILE] === day) {
-    if (!memoryBrainCounter || memoryBrainCounter.day !== day) memoryBrainCounter = freshBrainCounter(day, true);
+    if (!memoryBrainCounter || memoryBrainCounter.day !== day) {
+      // The count starts a new local day, but Google's stop is carried across
+      // when it is still the same Pacific day — it ends at midnight Pacific.
+      const fresh = freshBrainCounter(day, true);
+      if (memoryBrainCounter) {
+        fresh.stopped = { 1: liveStop(memoryBrainCounter.stopped[1]), 2: liveStop(memoryBrainCounter.stopped[2]) };
+        fresh.switchedAt = fresh.stopped[1] ? memoryBrainCounter.switchedAt : null;
+      }
+      memoryBrainCounter = fresh;
+    }
     return memoryBrainCounter;
   }
   memoryBrainCounter = null;
@@ -809,7 +871,17 @@ function readBrainCounter(): BrainCounter {
     };
     const used = Number(data?.used);
     if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
-    if (data?.day !== day) return freshBrainCounter(day);       // yesterday's count: a new day starts at zero
+    // Google's stops are filtered against ITS day: a stop recorded today is
+    // live until midnight Pacific, however many local midnights pass.
+    const stopped = { 1: liveStop(readStop(data.google_stopped?.['1'])), 2: liveStop(readStop(data.google_stopped?.['2'])) };
+    if (data?.day !== day) {
+      // Yesterday's count: a new local day starts at zero — but Google's stop
+      // is not over yet (until midnight Pacific), so it carries across.
+      const fresh = freshBrainCounter(day);
+      fresh.stopped = stopped;
+      fresh.switchedAt = stopped[1] && typeof data.switched_at === 'string' ? data.switched_at : null;
+      return fresh;
+    }
     const perKey = (slot: KeySlot): number => {
       const n = Number(data.keys?.[String(slot)]);
       return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
@@ -820,8 +892,8 @@ function readBrainCounter(): BrainCounter {
       day,
       used: Math.floor(used),
       keys,
-      stopped: { 1: readStop(data.google_stopped?.['1']), 2: readStop(data.google_stopped?.['2']) },
-      switchedAt: typeof data.switched_at === 'string' ? data.switched_at : null,
+      stopped,
+      switchedAt: stopped[1] && typeof data.switched_at === 'string' ? data.switched_at : null,
       unreadable: false,
     };
   } catch (err) {
@@ -862,7 +934,7 @@ function summarise(counter: BrainCounter, warn: WarnInfo, active: ActiveKey, has
   if (warn.warnAt > 0 && counter.used >= warn.warnAt) parts.push(`⚠ at or past your warning level of ${warn.warnAt} — the count never blocks, this is only a warning`);
   else if (warn.warnAt > 0) parts.push(`warning level ${warn.warnAt}`);
   if (counter.unreadable) parts.push('⚠ runtime/quota.json could not be read, so this is the count since the server started');
-  if (active.stoppedByGoogle) parts.push('GOOGLE HAS STOPPED US for today (not this app) — calls resume at local midnight');
+  if (active.stoppedByGoogle) parts.push(`GOOGLE HAS STOPPED US for today (not this app) — calls resume at ${googleResetPromise()}`);
   else if (active.slot === 2 && counter.stopped[1]) parts.push(`answering on the SECOND key since ${clockTime(counter.stopped[1].at)} — Google stopped the first one`);
   else if (active.slot) parts.push(`answering on key ${active.slot}`);
   if (!hasSecondKey && !active.stoppedByGoogle) parts.push('no second key set');
@@ -892,7 +964,7 @@ export function quotaSnapshot(): QuotaSnapshot {
     hasSecondKey,
     summary: summarise(counter, warn, active, hasSecondKey),
     source: warn.source,
-    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks; only a real 429 from Google stops calls, and only until local midnight. Google's real limit differs by model and project; check AI Studio.",
+    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks; only a real 429 from Google stops calls, and only until Google's own daily quota resets at midnight Pacific. Google's real limit differs by model and project; check AI Studio.",
   };
 }
 
@@ -980,8 +1052,9 @@ export function countRetryOnKey(slot: KeySlot): void {
 
 /**
  * Google refused this key — a real 429 (its quota) or the key itself — so the
- * key is stopped until local midnight. If the OTHER key is set and not stopped,
- * it takes over now; the caller retries the same question on it.
+ * key is stopped until midnight Pacific, when Google's own quota resets. If
+ * the OTHER key is set and not stopped, it takes over now; the caller retries
+ * the same question on it.
  */
 export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason'], detail: string): { switchedTo: KeySlot | null; allStopped: boolean } {
   const counter = readBrainCounter();
@@ -994,8 +1067,8 @@ export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason
 
   const why = reason === 'quota' ? 'Google answered 429 — its own quota is used up for this key' : 'Google rejected the key itself';
   const message = switchedTo
-    ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again after local midnight.`
-    : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at local midnight.`;
+    ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again at ${googleResetPromise()}.`
+    : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at ${googleResetPromise()}.`;
   console.warn(`[JARVIS] ${message}`);
   emit({ kind: 'key-stopped', slot, reason, switchedTo, message });
   return { switchedTo, allStopped: !switchedTo };
@@ -1010,12 +1083,13 @@ export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason
  * OFFLINE and carries on with everything that runs on this computer: the chat
  * still answers (from the local knowledge base, memory, drafts, reminders, the
  * time, arithmetic, the rooms, diagnostics, the voice), and nothing is fetched
- * from the internet until the keys come back at local midnight. A 429 is
+ * from the internet until the keys come back at midnight Pacific (Google's
+ * own quota reset). A 429 is
  * therefore a WARNING the owner is told about once, never a block on the chat.
  *
  * Offline has three causes, all reported honestly:
  *   'google-stopped'  every key was refused by Google today (a real 429, or the
- *                     key itself) — automatic, and over at local midnight;
+ *                     key itself) — automatic, and over at midnight Pacific;
  *   'no-key'          no Gemini key is configured at all;
  *   'manual'          the owner switched the app offline on purpose.
  *
@@ -1112,7 +1186,7 @@ export function setOfflineMode(on: boolean | null): OfflineSwitchResult {
   const said = on === true
     ? 'OFFLINE by your own switch — local only, nothing will be fetched from the internet until you switch it back.'
     : on === false && snapshot.offline
-      ? `The switch is back to automatic, but I am still offline — ${snapshot.why}${snapshot.reason === 'google-stopped' ? ' until local midnight' : ''}. The keys are used again the moment that lifts.`
+      ? `The switch is back to automatic, but I am still offline — ${snapshot.why}${snapshot.reason === 'google-stopped' ? ` until midnight Pacific (Google's own quota reset)` : ''}. The keys are used again the moment that lifts.`
       : on === false
         ? 'Online again: the keys will be used as soon as Google accepts them.'
         : 'The offline switch is back to automatic: Google\'s own state decides.';
@@ -1145,7 +1219,7 @@ export function offlineSnapshot(): OfflineSnapshot {
   }
   const offline = reason !== null;
   const summary = offline
-    ? `No Gemini right now (${why}). Everything else keeps working — including the open web: search, facts, pictures and video cost no key and no quota${reason === 'google-stopped' ? '. The keys come back at local midnight' : ''}.`
+    ? `No Gemini right now (${why}). Everything else keeps working — including the open web: search, facts, pictures and video cost no key and no quota${reason === 'google-stopped' ? `. The keys come back at ${googleResetPromise()}` : ''}.`
     : 'Online — the keys are usable, and local answers are still tried first so most work never spends a call.';
   return {
     offline,
@@ -1484,8 +1558,8 @@ export function explainBrainFailure(ctx: FailureContext): string {
       return `I have no Gemini key, sir. ${key.detail}. Add "gemini_api_key" to config/api_keys.json (Settings → "The Brain" writes it there), or set GEMINI_API_KEY — either is read at once, no restart.`;
     case 'google-stopped':
       return `Google has stopped our calls for today, sir — Google, not this app. ${googleStopStory()}` +
-        ` So there is no Gemini until local midnight, and I am answering from everything else: this computer and the open web, which needs no key and no quota.` +
-        ` That is a warning, not a block — the keys come back at local midnight (Google's own daily quota resets at midnight Pacific), or sooner if you add a key from another Google account in Settings → "The Brain".`;
+        ` So there is no Gemini until ${googleResetPromise()}, and I am answering from everything else: this computer and the open web, which needs no key and no quota.` +
+        ` That is a warning, not a block — the keys come back at ${googleResetPromise()}, or sooner if you add a key from another Google account in Settings → "The Brain".`;
     case 'offline':
       return `You switched me off Gemini, sir, so no model is called and nothing is counted.` +
         ` The chat, every local feature and the open web all keep working — search, facts, pictures and video need no key. Say "come back online" (or use the switch in Settings) and the keys are used again at once.`;
@@ -1501,7 +1575,7 @@ export function explainBrainFailure(ctx: FailureContext): string {
     case 'rate-limited':
       return `Google answered 429 — its own quota is used up for key ${key.slot} (ending in …${key.tail ?? '????'}) on ${ctx.model}. That is Google stopping us, sir, not this app: this app's count only warns. ${googleStopStory()}` +
         ` There is no Gemini for now, so I am answering from this computer and the open web instead — neither costs a quota. ` +
-        `Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Neither the key nor the model name is at fault.` +
+        `Calls resume at ${googleResetPromise()}, which is when Google's own daily quota resets. Neither the key nor the model name is at fault.` +
         (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'connection':
       return `The call never reached Google, sir — a connection problem, so neither the key (${key.source || 'none'}) nor the model (${ctx.model}) is at fault.` +
@@ -1662,7 +1736,8 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
 
       if (classified.code === 'rate-limited' || classified.code === 'key-rejected') {
         // Google refused THIS key: a real 429 (its quota) or the key itself. The
-        // key is stopped until local midnight. If the other key is set, it takes
+        // key is stopped until midnight Pacific, when Google's quota resets. If
+        // the other key is set, it takes
         // over now and the same question is retried on it — for free, it is a
         // retry — so the owner gets an answer instead of an apology.
         const stop = markKeyStoppedByGoogle(slot, classified.code === 'rate-limited' ? 'quota' : 'key-rejected', classified.raw);

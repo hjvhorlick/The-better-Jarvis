@@ -70,7 +70,8 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
   (total and per key, in `runtime/quota.json`, shown in Settings → "The Brain"
   and the terminal) and **warns** past `SUPPER_GEMINI_DAILY_WARN` (default 20) —
   it never blocks. Only a real `429` from Google stops calls, for that key until
-  local midnight, and the message then says plainly that Google stopped us.
+  midnight Pacific — Google's own quota reset, which may be hours after this
+  computer's midnight — and the message then says plainly that Google stopped us.
 - **Second Gemini key (fallback).** Settings → "The Brain" takes an optional
   second key (`gemini_api_key_2` in `config/api_keys.json`, or
   `GEMINI_API_KEY_2`). All calls use the first key; when Google refuses it with

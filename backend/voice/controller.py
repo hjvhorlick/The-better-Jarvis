@@ -143,7 +143,7 @@ class VoiceController:
                     raise VoiceError(
                         f"The Gemini Live voice needs the internet, and the app is offline — "
                         f"{self._budget.offline_reason()}. The LOCAL voice still works: switch the "
-                        "engine to local, or wait for local midnight.", 503)
+                        "engine to local, or wait for midnight Pacific (Google's quota reset).", 503)
             stop = threading.Event()
             callbacks = dict(on_activity=self._touch, on_error=self._set_error)
             if local:
