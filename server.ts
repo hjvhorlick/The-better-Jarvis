@@ -104,7 +104,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-13-open-web-1';
+const SERVER_BUILD = '2026-10-14-browser-voice-1';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';

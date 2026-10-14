@@ -1702,7 +1702,7 @@
           </div>
 
           <div class="settings-row" style="margin-top: 8px;">
-            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-13-always-on-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
+            <span class="settings-desc" id="jarvis-build-line">Build 2026-10-14-browser-voice-1 — the model, the key's source and the server's own build appear here as soon as the page is open.</span>
           </div>
         </div>
 
@@ -1839,7 +1839,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-open-web-1';
+    const JARVIS_BUILD = '2026-10-14-browser-voice-1';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -4773,7 +4773,7 @@
       voice: null,           // the one chosen (a British male, when there is one)
       voiceName: _voicePref(VOICE_NAME_KEY, ''),             // '' = choose the best automatically
       synthProblem: '',      // why this browser cannot speak
-      synthDead: false,      // it failed: stop choosing it for a while, then try again
+      synthDead: false,      // it failed: recover the native queue, then retry shortly
       synthRetryAt: 0,       // when a failed browser voice may be tried again
       recogProblem: '',      // why this browser cannot listen
       recogFatal: false,     // the recogniser refused for good (permission / no service)
@@ -4791,6 +4791,12 @@
       busy: false, controller: null,
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
     };
+
+    // speechSynthesis has its own queue. Keep every page request in one ordered
+    // lane so a settings preview cannot cancel or time out behind a reply.
+    const BrowserSpeech = { tail: Promise.resolve() };
+    const BROWSER_START_TIMEOUT_MS = 6000;
+    const BROWSER_RETRY_MS = 5000;
 
     /* The browser's own ear: one live recogniser, restarted after it stops. */
     const Listen = {
@@ -4835,7 +4841,11 @@
 
     /** The browser lists its voices asynchronously, and again when they change. */
     function refreshBrowserVoiceList(voicesChanged) {
-      if (voicesChanged) { Voice.synthDead = false; Voice.synthProblem = ''; }
+      if (voicesChanged) {
+        Voice.synthDead = false;
+        Voice.synthRetryAt = 0;
+        Voice.synthProblem = '';
+      }
       Voice.voices = browserVoiceList();
       if (!Voice.voices.length) { Voice.voice = null; renderVoiceEngineReport(); return; }
       const chosen = Voice.voiceName ? Voice.voices.find((v) => v.name === Voice.voiceName) : null;
@@ -4850,10 +4860,11 @@
         not talk". An empty list means use the other engine, not keep trying. */
     function browserCanSpeak() {
       if (Voice.synthDead) {
-        // It failed earlier. A failure is not forever: after a short rest the
-        // browser's voice is tried again, so one slow start cannot silence JARVIS.
+        // A failed native start is temporary: after the retry window, give this
+        // browser another chance instead of abandoning it for the whole session.
         if (Date.now() < Voice.synthRetryAt) return false;
         Voice.synthDead = false;
+        Voice.synthRetryAt = 0;
         Voice.synthProblem = '';
       }
       if (!Voice.synth) {
@@ -4871,8 +4882,9 @@
       if (Voice.synth) {
         try { Voice.synth.onvoiceschanged = () => refreshBrowserVoiceList(true); } catch (_) {}
         refreshBrowserVoiceList();
-        // Some browsers fill the list a moment later; re-read it, then leave it.
-        [300, 1000, 2500].forEach((ms) => setTimeout(refreshBrowserVoiceList, ms));
+        // Voice lists arrive late on some Chromium/Safari builds, and not every
+        // build dispatches voiceschanged. Keep checking briefly after startup.
+        [300, 1000, 2500, 5000, 10000].forEach((ms) => setTimeout(refreshBrowserVoiceList, ms));
       }
       if (!Voice.recogClass) {
         Voice.recogProblem = 'this browser has no speech recogniser (SpeechRecognition is missing) — its ears will be the JARVIS server’s.';
@@ -4880,56 +4892,96 @@
       renderVoiceEngineReport();
     }
 
-    /** Speak one sentence with the browser's own voice. true = it was said. */
-    function sayWithBrowser(text, gen) {
+    /** Perform one native utterance. The caller owns queueing and recovery. */
+    function sayBrowserUtterance(text, gen) {
       return new Promise((resolve) => {
-        if (!Voice.synth || !Voice.voice) { resolve(false); return; }
-        const clean = cleanForSpeech(text);
+        if (!Voice.synth || !Voice.voice || gen !== Speech.generation) { resolve(false); return; }
+        let clean = '';
+        try { clean = cleanForSpeech(text); } catch (_) { clean = String(text || '').trim(); }
         if (!clean) { resolve(true); return; }
+
         let settled = false, started = false, startGuard = 0, endGuard = 0;
         const finish = (spoke) => {
           if (settled) return;
           settled = true;
           clearTimeout(startGuard); clearTimeout(endGuard);
+          if (spoke && gen === Speech.generation) {
+            Voice.synthDead = false;
+            Voice.synthRetryAt = 0;
+            Voice.synthProblem = '';
+            renderVoiceEngineReport();
+          }
           resolve(spoke);
         };
-        const utter = new SpeechSynthesisUtterance(clean);
-        utter.voice = Voice.voice;
-        utter.lang = Voice.voice.lang || 'en-GB';
-        utter.rate = 1; utter.pitch = 0.95; utter.volume = 1;
-        utter.onstart = () => {
-          started = true;
-          clearTimeout(startGuard);
-          // Safety net only, and it assumes the words WERE said: wrongly saying
-          // "false" here would repeat the sentence in the other voice.
-          endGuard = setTimeout(() => finish(true), clean.length * 160 + 8000);
-        };
-        utter.onend = () => finish(true);
-        utter.onerror = (e) => {
-          const code = (e && e.error) || '';
-          if (code === 'interrupted' || code === 'canceled') { finish(true); return; }
-          Voice.synthProblem = code === 'not-allowed'
-            ? 'this browser would not let the page speak (the page has not been clicked yet, or sound is blocked).'
-            : `this browser’s voice failed (${code || 'no reason given'}).`;
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
+        const fail = (message) => {
+          if (settled) return;
+          if (gen !== Speech.generation) { finish(false); return; }
+          Voice.synthProblem = message;
+          Voice.synthDead = true;
+          Voice.synthRetryAt = Date.now() + BROWSER_RETRY_MS;
+          // Settle before cancel: some engines synchronously dispatch `canceled`
+          // when cancel() clears a stuck native utterance.
           finish(false);
+          try { Voice.synth.cancel(); } catch (_) {}
+          renderVoiceEngineReport();
         };
-        startGuard = setTimeout(() => {
-          if (started) return;
-          Voice.synthProblem = 'this browser listed a voice but never began speaking — on Linux that usually means no speech engine (espeak-ng or speech-dispatcher) is installed.';
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
-          finish(false);
-        }, 6000);
+
         try {
+          const utter = new SpeechSynthesisUtterance(clean);
+          utter.voice = Voice.voice;
+          utter.lang = Voice.voice.lang || 'en-GB';
+          utter.rate = 1; utter.pitch = 0.95; utter.volume = 1;
+          utter.onstart = () => {
+            started = true;
+            clearTimeout(startGuard);
+            Voice.synthDead = false;
+            Voice.synthRetryAt = 0;
+            Voice.synthProblem = '';
+            // A watchdog for browsers that fire start but never fire end. Keep
+            // each utterance short (see sayTextWithBrowser) so a missing event
+            // cannot hold the whole reply queue indefinitely.
+            endGuard = setTimeout(() => fail('this browser began speaking but never reported that the utterance finished.'),
+              clean.length * 160 + 8000);
+          };
+          utter.onend = () => finish(true);
+          utter.onerror = (e) => {
+            if (settled) return;
+            if (gen !== Speech.generation) { finish(false); return; }
+            const code = (e && e.error) || '';
+            if (code === 'interrupted' || code === 'canceled') {
+              // Intentional stop is handled by the generation check above. An
+              // unsolicited cancel before onstart is a real failure, not proof
+              // that the words were heard; after start, avoid replaying a piece
+              // that may already have reached the owner.
+              if (started) finish(true);
+              else fail('this browser canceled the utterance before it began speaking.');
+              return;
+            }
+            fail(code === 'not-allowed'
+              ? 'this browser would not let the page speak (sound may be blocked until a user gesture).'
+              : `this browser’s voice failed (${code || 'no reason given'}).`);
+          };
+          startGuard = setTimeout(() => {
+            if (!started) fail('this browser listed a voice but did not start speaking within 6 seconds.');
+          }, BROWSER_START_TIMEOUT_MS);
           if (Voice.synth.paused) Voice.synth.resume();
-          Voice.synth.cancel();      // nothing may pile up inside the browser's queue
+          // Do not cancel before every utterance. This page already serializes
+          // speech; cancel() here can interrupt a valid utterance on Safari,
+          // Firefox or Chromium and some engines report that interruption late.
           Voice.synth.speak(utter);
         } catch (err) {
-          Voice.synthProblem = `this browser’s voice could not be used (${err.message}).`;
-          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
-          finish(false);
+          const detail = err && err.message ? err.message : 'the browser rejected the utterance';
+          fail(`this browser’s voice could not be used (${detail}).`);
         }
       });
+    }
+
+    /** Speak one sentence with the browser's own voice. true = it was said. */
+    function sayWithBrowser(text, gen) {
+      const run = () => gen === Speech.generation ? sayBrowserUtterance(text, gen) : Promise.resolve(false);
+      const pending = BrowserSpeech.tail.then(run, run);
+      BrowserSpeech.tail = pending.then(() => undefined, () => undefined);
+      return pending;
     }
 
     function stopBrowserVoice() {
@@ -5292,23 +5344,47 @@
     // speaks on the machine you are sitting at (no models, no downloads); the
     // server speaks on the machine JARVIS runs on, which is the same machine
     // when both are local and a different one for a preview or remote page.
+    /** Keep native utterances short: long speech is cut off on some mobile engines. */
+    async function sayTextWithBrowser(text, gen) {
+      const pieces = chunkForSpeech(text);
+      for (let i = 0; i < pieces.length; i++) {
+        if (gen !== Speech.generation) return { spoke: false, remaining: '' };
+        if (!await sayWithBrowser(pieces[i], gen)) {
+          return { spoke: false, remaining: pieces.slice(i).join(' ') };
+        }
+      }
+      return { spoke: true, remaining: '' };
+    }
+
     async function speakOne(text, gen) {
       const browserFirst = Voice.engine !== 'server';
+      const hasBrowserVoice = () => Boolean(Voice.synth && Voice.voices.length && Voice.voice);
+      let remaining = text;
       if (browserFirst && browserCanSpeak() && Voice.voice) {
-        const spoke = await sayWithBrowser(text, gen);
+        const browserResult = await sayTextWithBrowser(text, gen);
         if (gen !== Speech.generation) return;
-        if (spoke) { Ear.problem = ''; return; }
-        // This browser cannot say it after all. Say so once, then try the
-        // computer's voice — silence is never the answer.
+        if (browserResult.spoke) { Ear.problem = ''; return; }
+        remaining = browserResult.remaining || text;
+        // This browser could not start or finish the utterance. Try the other
+        // engine, then make one final browser attempt if that engine is down.
         voiceProblem(`This browser could not speak: ${Voice.synthProblem} Trying the voice on the computer running JARVIS.`);
       }
-      const result = await speakViaServer(text, gen);
-      // The owner asked for this computer's voice and it could not speak. Rather
-      // than leave him in silence, say what happened and use this browser's voice.
-      if (result === 'failed' && Voice.engine === 'server' && browserCanSpeak() && Voice.voice) {
-        const spoke = await sayWithBrowser(text, gen);
+      const result = await speakViaServer(remaining, gen);
+      // A failed server voice must not leave the only working browser voice
+      // disabled by a short native-synth retry cooldown. Try once more after the
+      // server failure (including an unsolicited cancel before onstart).
+      if (result === 'failed' && hasBrowserVoice()) {
         if (gen !== Speech.generation) return;
-        if (spoke) appendChat('system', 'This computer could not speak, so this browser’s own voice said it instead. Press 🔊 Test Speakers in Settings → Voice to see the full reason.');
+        Voice.synthDead = false;
+        Voice.synthRetryAt = 0;
+        const browserResult = await sayTextWithBrowser(remaining, gen);
+        if (gen !== Speech.generation) return;
+        if (browserResult.spoke) {
+          Ear.problem = '';
+          appendChat('system', Voice.engine === 'server'
+            ? 'This computer could not speak, so this browser’s own voice said it instead. Press 🔊 Test Speakers in Settings → Voice to see the full reason.'
+            : 'The browser voice recovered on a retry and finished this reply.');
+        }
       }
       renderVoiceEngineReport();
     }
@@ -5363,7 +5439,15 @@
       recogPause();          // the browser's ear must not hear JARVIS's own voice
       renderEar();
       const gen = Speech.generation;
-      await speakOne(next, gen);
+      try {
+        await speakOne(next, gen);
+      } catch (err) {
+        // One browser-specific exception must not leave the speech queue stuck
+        // with Speech.busy=true and silence every reply that follows it.
+        if (gen === Speech.generation) {
+          voiceProblem(`JARVIS could not finish speaking this reply: ${(err && err.message) || 'the voice engine failed unexpectedly'}.`);
+        }
+      }
       if (gen !== Speech.generation) return;     // stopSpeaking() has already cleared everything
       Speech.busy = false;
       pumpSpeech();

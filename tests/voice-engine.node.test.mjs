@@ -38,7 +38,8 @@ function extractFunction(name) {
 
 const NAMES = [
   'browserVoiceList', 'voiceScore', 'bestBrowserVoice', 'refreshBrowserVoiceList',
-  'browserCanSpeak', 'sayWithBrowser', 'stopBrowserVoice', 'recogExplain', 'recogStop',
+  'browserCanSpeak', 'sayBrowserUtterance', 'sayWithBrowser', 'sayTextWithBrowser',
+  'chunkForSpeech', 'stopBrowserVoice', 'recogExplain', 'recogStop',
   'recogRestartSoon', 'earsFallBack', 'recogSpawn', 'recogPause', 'recogResume',
   'hearEngine', 'listenRunning', 'listenStart', 'earStatusText',
 ];
@@ -92,10 +93,16 @@ function makeWorld({ voices = [], withRecognition = true, recognitionError = '' 
   world.problems = [];
   world.serverSpeaks = [];
   world.Ear = { ready: false, starting: false, problem: '', resumeAt: 0, queue: [], sending: false };
-  world.Speech = { busy: false, queue: [], generation: 0, controller: null };
+  world.Speech = { busy: false, queue: [], generation: 0, controller: null, streams: new Map(), spoken: new Set() };
+  world.BrowserSpeech = { tail: Promise.resolve() };
   world.voiceSynthesis = {
-    getVoices: () => voices, speakCount: 0, cancelled: 0, paused: false,
-    speak(u) { this.speakCount++; this.last = u; if (u.onstart) setTimeout(() => { u.onstart(); setTimeout(() => u.onend && u.onend(), 0); }, 0); },
+    getVoices: () => voices, speakCount: 0, cancelled: 0, paused: false, utterances: [],
+    speak(u) {
+      this.speakCount++;
+      this.last = u;
+      this.utterances.push(u);
+      if (u.onstart) setTimeout(() => { u.onstart(); setTimeout(() => u.onend && u.onend(), 0); }, 0);
+    },
     cancel() { this.cancelled++; }, resume() {},
   };
   world.Voice = {
@@ -103,7 +110,8 @@ function makeWorld({ voices = [], withRecognition = true, recognitionError = '' 
     synth: world.voiceSynthesis,
     recogClass: withRecognition ? FakeRecognition : null,
     voices, voice: null, voiceName: '',
-    synthProblem: '', recogProblem: '', recogFatal: false, recogMisses: 0,
+    synthProblem: '', synthDead: false, synthRetryAt: 0,
+    recogProblem: '', recogFatal: false, recogMisses: 0,
   };
   world.Listen = { recog: null, active: false, paused: false, missing: 0, restart: 0, interim: '', engine: 'browser', lastStart: 0 };
   return world;
@@ -117,6 +125,8 @@ function load(world, extra = []) {
     const VOICE_ENGINE_KEY = 'jarvis_voice_engine';
     const VOICE_NAME_KEY = 'jarvis_voice_name';
     const EAR_RESUME_MS = 500;
+    const BROWSER_START_TIMEOUT_MS = 6000;
+    const BROWSER_RETRY_MS = 5000;
     ${body}
     return { ${all.join(', ')} };
   `);
@@ -160,6 +170,50 @@ test('speaking with the browser reports success and actually speaks the words', 
   assert.equal(w.voiceSynthesis.speakCount, 1);
   assert.equal(w.voiceSynthesis.last.text, 'Good evening, sir.');
   assert.equal(w.voiceSynthesis.last.voice.name, 'Google UK English Male');
+  assert.equal(w.voiceSynthesis.cancelled, 0, 'normal utterances must not cancel the browser queue before speaking');
+});
+
+test('an unsolicited cancel before onstart is a failure, not phantom success', async () => {
+  const w = makeWorld({ voices: [BRITISH] });
+  const api = load(w);
+  api.refreshBrowserVoiceList();
+  w.voiceSynthesis.speak = function (utterance) {
+    this.speakCount++;
+    this.last = utterance;
+    queueMicrotask(() => utterance.onerror && utterance.onerror({ error: 'canceled', charIndex: 0 }));
+  };
+
+  const spoke = await api.sayWithBrowser('This must not be reported as heard.', 0);
+  assert.equal(spoke, false, 'a canceled utterance that never started must trigger fallback');
+  assert.match(w.Voice.synthProblem, /canceled.*before it began speaking/);
+  assert.equal(w.Voice.synthDead, true);
+  assert.equal(w.voiceSynthesis.cancelled, 1, 'a failed native queue is cleared once for recovery');
+});
+
+test('concurrent browser requests are serialized instead of canceling each other', async () => {
+  const w = makeWorld({ voices: [BRITISH] });
+  const api = load(w);
+  api.refreshBrowserVoiceList();
+  const first = api.sayWithBrowser('First answer.', 0);
+  const second = api.sayWithBrowser('Second answer.', 0);
+
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.equal(w.voiceSynthesis.speakCount, 2);
+  assert.equal(w.voiceSynthesis.cancelled, 0);
+  assert.equal(w.voiceSynthesis.last.text, 'Second answer.');
+});
+
+test('a long browser reply is split into short native utterances', async () => {
+  const w = makeWorld({ voices: [BRITISH] });
+  const api = load(w, ['speakOne']);
+  api.refreshBrowserVoiceList();
+  const reply = 'A long sentence that must keep going. '.repeat(35);
+
+  await api.speakOne(reply, 0);
+  assert.ok(w.voiceSynthesis.speakCount > 1, 'long replies should be voiced as safe-sized chunks');
+  assert.ok(w.voiceSynthesis.utterances.every((utterance) => utterance.text.length <= 160),
+    'no browser utterance should exceed 160 characters');
+  assert.equal(w.serverSpeaks.length, 0, 'successful browser chunks must not call the server voice');
 });
 
 test('a browser that accepts the text and never starts speaking is reported, not hung', async () => {
@@ -169,14 +223,67 @@ test('a browser that accepts the text and never starts speaking is reported, not
   w.voiceSynthesis.speak = function () { this.speakCount++; };   // lists a voice, says nothing
   const spoke = await api.sayWithBrowser('Are you there?', 0);
   assert.equal(spoke, false);
-  assert.match(w.Voice.synthProblem, /never began speaking/);
+  assert.match(w.Voice.synthProblem, /did not start speaking within 6 seconds/);
   assert.equal(api.browserCanSpeak(), false, 'a failed browser voice must stay failed, not be re-chosen for the next sentence');
-  assert.match(w.Voice.synthProblem, /never began speaking/, 'the reason survives the next engine check');
+  assert.match(w.Voice.synthProblem, /did not start speaking within 6 seconds/, 'the reason survives the next engine check');
 
   // …until the browser says its voice list has actually changed.
   w.voiceSynthesis.speak = function (u) { this.speakCount++; if (u.onstart) setTimeout(() => { u.onstart(); setTimeout(() => u.onend && u.onend(), 0); }, 0); };
   api.refreshBrowserVoiceList(true);
   assert.equal(api.browserCanSpeak(), true, 'new voices are worth one more try');
+});
+
+test('a constructor exception resolves as a browser failure instead of rejecting the speech queue', async () => {
+  const w = makeWorld({ voices: [BRITISH] });
+  w.SpeechSynthesisUtterance = class { constructor() { throw new Error('engine unavailable'); } };
+  const api = load(w);
+  api.refreshBrowserVoiceList();
+
+  await assert.doesNotReject(async () => {
+    assert.equal(await api.sayWithBrowser('Good evening, sir.', 0), false);
+  });
+  assert.equal(w.Voice.synthDead, true);
+  assert.match(w.Voice.synthProblem, /could not be used.*engine unavailable/);
+});
+
+test('a browser start failure gets one final retry if the server voice is unavailable', async () => {
+  const w = makeWorld({ voices: [BRITISH] });
+  let attempts = 0;
+  w.voiceSynthesis.speak = function (utterance) {
+    this.speakCount++;
+    this.last = utterance;
+    this.utterances.push(utterance);
+    if (attempts++ === 0) {
+      queueMicrotask(() => utterance.onerror && utterance.onerror({ error: 'canceled', charIndex: 0 }));
+    } else if (utterance.onstart) {
+      setTimeout(() => { utterance.onstart(); setTimeout(() => utterance.onend && utterance.onend(), 0); }, 0);
+    }
+  };
+  w.speakViaServer = async () => { w.serverSpeaks.push(1); return 'failed'; };
+  const api = load(w, ['speakOne']);
+  api.refreshBrowserVoiceList();
+
+  await api.speakOne('Still speak this reply.', 0);
+  assert.equal(w.voiceSynthesis.speakCount, 2, 'browser TTS should recover after the server fallback also fails');
+  assert.equal(w.serverSpeaks.length, 1);
+  assert.equal(w.Voice.synthDead, false);
+  assert.match(w.chat.at(-1), /recovered on a retry/);
+});
+
+test('an unexpected speech rejection does not wedge the reply queue', async () => {
+  const w = makeWorld();
+  let attempts = 0;
+  w.speakOne = async () => { attempts++; throw new Error('browser API threw'); };
+  w.Speech.queue.push('first reply', 'second reply');
+  w.setTimeout = () => 0; // do not leave a recogniser-resume timer behind in this focused test
+  const api = load(w, ['pumpSpeech']);
+
+  api.pumpSpeech();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(attempts, 2, 'the next queued reply should still be attempted');
+  assert.equal(w.Speech.busy, false, 'the busy flag must always be released');
+  assert.deepEqual(w.Speech.queue, []);
+  assert.equal(w.problems.length, 2, 'each unexpected failure should be visible, not silent');
 });
 
 test('the ears prefer the browser recogniser, and fall back when there is none', () => {
