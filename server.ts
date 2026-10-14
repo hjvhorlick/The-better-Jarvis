@@ -1678,19 +1678,8 @@ function broadcast(payload: object) {
 // when the count passes the warning level, when key 2 takes over, and when
 // Google has stopped us for the day — three different things, named apart.
 onQuotaEvent((event) => {
-  const text = event.kind === 'warn'
-    ? `Heads-up: ${event.message}`
-    : event.kind === 'unreadable'
-      ? `Heads-up: ${event.message}`
-      : event.kind === 'offline'
-        ? `${event.offline ? 'OFFLINE' : 'Back online'}: ${event.message}`
-        : event.switchedTo
-          ? `Key switch: ${event.message}`
-          : `Google has stopped us: ${event.message}`;
-  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
-  messageHistory.push(line);
-  saveHistory();
-  broadcast(line);
+  // The quota is not a chat topic. The terminal keeps every event; the dialogue
+  // gets only the one line from announceOfflineChange, when the quota runs out.
   if (event.kind === 'key-stopped' && !event.switchedTo) announceOfflineChange();
 });
 
@@ -1700,18 +1689,44 @@ onQuotaEvent((event) => {
  * a wall of error text on every following message.
  */
 let announcedOffline: boolean | null = null;
+const QUOTA_EXPLAINER_ID = 'quota-explainer';
+
+/** The one line about the quota. Shown once, never spoken unprompted. */
+const OFFLINE_NOTE = 'The Gemini quota is finished for now.';
+
+/**
+ * One announcement when the app crosses into or out of offline mode. Going
+ * offline, Jarvis mentions it once in the dialogue (replacing any older
+ * mention, and never spoken unprompted). Coming back online is a short system
+ * notice, and starting online is not news at all.
+ */
 function announceOfflineChange(): void {
   const state = offlineSnapshot();
   if (announcedOffline === state.offline) return;
+  const atBoot = announcedOffline === null;
   announcedOffline = state.offline;
-  const text = state.offline
-    ? `No Gemini right now (${state.why})${state.reason === 'google-stopped' ? `; the keys come back at ${googleResetPromise()}` : ''}. This is a warning, not a block: every local feature still works, the open web still works — search, facts, pictures and video need no key and no quota — and no call is counted.`
-    : 'Back ONLINE — the Gemini keys are usable again. Local answers are still tried first, so most work costs nothing.';
-  console.warn(`[JARVIS] ${text}`);
-  const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
-  messageHistory.push(line);
-  saveHistory();
-  broadcast(line);
+  if (state.offline) {
+    // The terminal keeps the full warning, once. The dialogue gets only the short line.
+    console.warn(`[JARVIS] No Gemini right now (${state.why}). This is a warning, not a block: local features and the open web keep working, and no call is counted.`);
+    for (let i = messageHistory.length - 1; i >= 0; i--) {
+      const m = messageHistory[i];
+      if (m.type === 'log' && typeof m.id === 'string' && m.id.startsWith(QUOTA_EXPLAINER_ID)) messageHistory.splice(i, 1);
+    }
+    const line: LogMessage = {
+      type: 'log', speaker: 'jarvis', id: `${QUOTA_EXPLAINER_ID}-${Date.now()}`,
+      text: OFFLINE_NOTE, timestamp: Date.now(),
+    };
+    messageHistory.push(line);
+    saveHistory();
+    broadcast({ ...line, replay: true });   // shown once; a page open now does not read it aloud
+  } else if (!atBoot) {
+    const text = 'Gemini is back.';
+    console.warn(`[JARVIS] ${text}`);
+    const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
+    messageHistory.push(line);
+    saveHistory();
+    broadcast(line);
+  }
   broadcast({ type: 'offline', offline: state.offline, reason: state.reason, summary: state.summary });
 }
 

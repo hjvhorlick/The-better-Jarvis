@@ -10,7 +10,6 @@
        same file), so a window here and a panel there are the same clear glass
        with the same thin yellow line. -->
   <link rel="stylesheet" href="/static/jarvis-glass.css">
-  <link rel="stylesheet" href="/static/brain.css">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -1269,11 +1268,6 @@
         <span>Rooms</span>
       </button>
 
-      <button class="hud-toggle-btn" id="btn-toggle-brain" onclick="toggleWindow('win-brain')" title="Open persistent Brain, saved topics, memories, decisions, tasks and research">
-        <span class="btn-icon">🧠</span>
-        <span>Brain</span>
-      </button>
-
       <button class="hud-toggle-btn" id="btn-toggle-settings" onclick="toggleWindow('win-settings')" title="Workspace Settings">
         <span class="btn-icon">⚙️</span>
         <span>Settings</span>
@@ -1295,7 +1289,6 @@
     </div>
 
     <div class="hud-status-group">
-      <span class="brain-topic-chip" id="brain-active-topic" title="Current persistent Brain topic">Topic: none</span>
       <div class="status-pill online" id="status-pill">
         <span class="status-dot"></span>
         <span id="status-txt">Online</span>
@@ -1796,94 +1789,6 @@
       </div>
       <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-settings')" title="Tactile Glass Grab Handle"></div>
       <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-settings')" title="Drag to Resize Glass Window"></div>
-    </div>
-
-    <!-- PANEL 6: THE OWNER'S PERSISTENT BRAIN. All controls call the same local BrainStore used by chat. -->
-    <div class="glass-window" id="win-brain" style="top: 72px; left: 60%; width: 470px; height: min(82vh, 760px); display: none;">
-      <div class="window-header" onpointerdown="startWindowDrag(event, 'win-brain')">
-        <div class="window-title-group"><span class="window-icon">🧠</span><span>Persistent Brain</span></div>
-        <div class="window-actions">
-          <button class="win-btn" onclick="toggleMinimize('win-brain')" title="Minimize">_</button>
-          <button class="win-btn" onclick="toggleWindow('win-brain')" title="Close">✕</button>
-        </div>
-      </div>
-      <div class="window-body settings-body brain-window-body" id="brain-window-body">
-        <p id="brain-status" class="brain-status" role="status" aria-live="polite">Checking local memory…</p>
-        <p id="brain-feedback" class="brain-feedback" role="status" aria-live="polite"></p>
-        <div class="brain-action-row">
-          <button type="button" class="preset-btn" id="brain-provider-test">Test Gemini connection</button>
-          <button type="button" class="preset-btn" id="brain-backup">Create verified backup</button>
-        </div>
-        <div class="brain-restore-row">
-          <select id="brain-backup-select" aria-label="Verified backup to restore"><option value="">Choose verified backup</option></select>
-          <button type="button" class="preset-btn" id="brain-restore">Restore…</button>
-        </div>
-
-        <details open class="brain-section">
-          <summary>Topics and project continuity</summary>
-          <label for="brain-topic-select">Saved topic</label>
-          <select id="brain-topic-select"><option value="">No saved topics</option></select>
-          <div class="brain-action-row">
-            <button type="button" class="preset-btn" id="brain-topic-resume">Resume selected</button>
-            <select id="brain-topic-status" aria-label="Topic status">
-              <option value="active">Active</option><option value="paused">Paused</option>
-              <option value="completed">Completed</option><option value="archived">Archived</option>
-            </select>
-          </div>
-          <label for="brain-topic-goal">Goal</label>
-          <textarea id="brain-topic-goal" rows="2" maxlength="800"></textarea>
-          <label for="brain-topic-summary">Summary</label>
-          <textarea id="brain-topic-summary" rows="3" maxlength="1600"></textarea>
-          <label for="brain-topic-next">Next step</label>
-          <textarea id="brain-topic-next" rows="2" maxlength="800"></textarea>
-          <button type="button" class="preset-btn" id="brain-topic-save">Save topic state</button>
-          <form id="brain-topic-create" class="brain-form">
-            <input id="brain-topic-title" type="text" maxlength="160" placeholder="New topic title" required>
-            <button type="submit" class="preset-btn">Create topic</button>
-          </form>
-        </details>
-
-        <details open class="brain-section">
-          <summary>Persistent memories</summary>
-          <div class="brain-form">
-            <input id="brain-memory-search" type="search" maxlength="400" placeholder="Search memories">
-            <button type="button" class="preset-btn" id="brain-memory-search-go">Search</button>
-          </div>
-          <form id="brain-memory-create" class="brain-form">
-            <select id="brain-memory-category" aria-label="Memory category">
-              <option value="notes">Note</option><option value="preferences">Preference</option>
-              <option value="identity">Identity</option><option value="projects">Project</option>
-              <option value="relationships">Relationship</option><option value="wishes">Plan</option>
-            </select>
-            <input id="brain-memory-key" type="text" maxlength="160" placeholder="Name, e.g. tea" required>
-            <textarea id="brain-memory-value" rows="2" maxlength="1200" placeholder="What should be remembered?" required></textarea>
-            <button type="submit" class="preset-btn">Save memory</button>
-          </form>
-          <div id="brain-memory-list" class="brain-list"></div>
-        </details>
-
-        <details open class="brain-section">
-          <summary>Decisions and tasks</summary>
-          <form id="brain-decision-create" class="brain-form">
-            <input id="brain-decision-value" type="text" maxlength="1200" placeholder="Record a decision for this topic" required>
-            <button type="submit" class="preset-btn">Save decision</button>
-          </form>
-          <div id="brain-decision-list" class="brain-list"></div>
-          <form id="brain-task-create" class="brain-form">
-            <input id="brain-task-title" type="text" maxlength="800" placeholder="Add a task or next step" required>
-            <button type="submit" class="preset-btn">Add task</button>
-          </form>
-          <div id="brain-task-list" class="brain-list"></div>
-        </details>
-
-        <details class="brain-section">
-          <summary>Sourced research</summary>
-          <div id="brain-research-list" class="brain-list"></div>
-        </details>
-        <p class="brain-footnote">Memory, history and backups stay in the local app data folder. Provider status is measured only when you press Test; stored research keeps its source URLs and verification limits.</p>
-      </div>
-      <div class="window-grab-bar" onpointerdown="startWindowDrag(event, 'win-brain')" title="Drag Brain window"></div>
-      <div class="window-resizer" onpointerdown="startWindowResize(event, 'win-brain')" title="Resize Brain window"></div>
     </div>
 
     <!-- SPATIAL STATUS TELEMETRY HUD (Bottom-Right) -->
@@ -4868,7 +4773,8 @@
       voice: null,           // the one chosen (a British male, when there is one)
       voiceName: _voicePref(VOICE_NAME_KEY, ''),             // '' = choose the best automatically
       synthProblem: '',      // why this browser cannot speak
-      synthDead: false,      // it failed mid-sentence: stop choosing it until the voices change
+      synthDead: false,      // it failed: stop choosing it for a while, then try again
+      synthRetryAt: 0,       // when a failed browser voice may be tried again
       recogProblem: '',      // why this browser cannot listen
       recogFatal: false,     // the recogniser refused for good (permission / no service)
       recogMisses: 0,        // network hiccups in a row — a few and the engine changes
@@ -4943,7 +4849,13 @@
         then every request fails silently — which sounds exactly like "he will
         not talk". An empty list means use the other engine, not keep trying. */
     function browserCanSpeak() {
-      if (Voice.synthDead) return false;          // it tried and failed: do not clear that reason
+      if (Voice.synthDead) {
+        // It failed earlier. A failure is not forever: after a short rest the
+        // browser's voice is tried again, so one slow start cannot silence JARVIS.
+        if (Date.now() < Voice.synthRetryAt) return false;
+        Voice.synthDead = false;
+        Voice.synthProblem = '';
+      }
       if (!Voice.synth) {
         Voice.synthProblem = 'this browser has no speech engine (speechSynthesis is missing).';
         return false;
@@ -4999,22 +4911,22 @@
           Voice.synthProblem = code === 'not-allowed'
             ? 'this browser would not let the page speak (the page has not been clicked yet, or sound is blocked).'
             : `this browser’s voice failed (${code || 'no reason given'}).`;
-          Voice.synthDead = true;
+          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
           finish(false);
         };
         startGuard = setTimeout(() => {
           if (started) return;
           Voice.synthProblem = 'this browser listed a voice but never began speaking — on Linux that usually means no speech engine (espeak-ng or speech-dispatcher) is installed.';
-          Voice.synthDead = true;
+          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
           finish(false);
-        }, 2500);
+        }, 6000);
         try {
           if (Voice.synth.paused) Voice.synth.resume();
           Voice.synth.cancel();      // nothing may pile up inside the browser's queue
           Voice.synth.speak(utter);
         } catch (err) {
           Voice.synthProblem = `this browser’s voice could not be used (${err.message}).`;
-          Voice.synthDead = true;
+          Voice.synthDead = true; Voice.synthRetryAt = Date.now() + 20000;
           finish(false);
         }
       });
@@ -6155,6 +6067,5 @@
 
     buildDesktop();
   </script>
-  <script src="/static/brain-ui.js"></script>
 </body>
 </html>
