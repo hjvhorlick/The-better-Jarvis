@@ -51,6 +51,12 @@
       --text-muted: var(--jg-text-faint, #a99a63);
 
       --header-h: 56px;
+      /* THE LEFT COLUMN. Everything about the dock is measured from this one
+         number: the dock itself, where the workspace begins, and where the
+         rooms slide in. It is deliberately narrow — the conversation is the
+         application, but the rooms and My Hands need the room — and the ǀ‹
+         button in the dock toggles between the narrow and the wide width. */
+      --dock-w: 182px;
       /* Sharp corners: the frames are cut glass, not rounded tiles. */
       --radius-panel: var(--jg-radius, 3px);
       --radius-control: var(--jg-radius, 3px);
@@ -198,9 +204,12 @@
     }
     @keyframes pulseDot { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
 
-    /* ── WORKSPACE DESKTOP STAGE ── */
+    /* ── WORKSPACE DESKTOP STAGE ──
+       It begins at the dock's right edge and below the header, so the
+       conversation and the header are not part of the draggable world at all:
+       nothing can be dragged over them, or lost behind them. */
     #workspace-stage {
-      position: absolute; top: var(--header-h); left: 0; right: 0; bottom: 0;
+      position: absolute; top: var(--header-h); left: var(--dock-w); right: 0; bottom: 0;
       overflow: hidden; z-index: 10;
     }
 
@@ -376,6 +385,44 @@
       margin-top: 14px; font-size: 11px; font-weight: 700;
       letter-spacing: 2px; text-transform: uppercase; color: var(--emerald);
     }
+
+    /* ── THE VOICE VISUALISER ────────────────────────────────────────────────
+       Bars around the reactor core. They move with the microphone when JARVIS
+       is listening and with his own voice while he speaks, so "he is talking"
+       is something you see, not something you guess. One colour per state. */
+    .viz-canvas {
+      position: absolute; inset: -14px; width: calc(100% + 28px); height: calc(100% + 28px);
+      pointer-events: none; z-index: 2;
+      filter: drop-shadow(0 0 6px var(--viz-glow, rgba(255, 214, 10, 0.35)));
+      --viz-colour: #ffe066;
+    }
+    /* The disc used to spin on its own; now the bars are the movement, and a
+       spinning frame around a live ring fights the eye. */
+    .reactor-disc.has-viz { animation: none; }
+    .dock-state {
+      margin-top: 6px; font-size: 9.5px; font-weight: 800;
+      letter-spacing: 1.6px; text-transform: uppercase;
+      color: var(--viz-colour, #ffe066); text-align: center;
+      transition: color 0.2s ease;
+    }
+    .dock-state[data-state="listening"] { --viz-colour: #6ee7b7; }
+    .dock-state[data-state="hearing"]   { --viz-colour: #34d399; }
+    .dock-state[data-state="thinking"]  { --viz-colour: #fbbf24; }
+    .dock-state[data-state="speaking"]  { --viz-colour: #ffd60a; animation: dockStatePulse 1s ease-in-out infinite; }
+    .dock-state[data-state="muted"]     { --viz-colour: #a99a63; }
+    .dock-state[data-state="error"]     { --viz-colour: #fb7185; }
+    @keyframes dockStatePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+
+    /* The dock's width switch: small, in the dock, never over the chat. */
+    .dock-width-btn {
+      margin-top: 6px; align-self: center; cursor: pointer;
+      padding: 2px 9px; border-radius: 99px; font-size: 10px; font-weight: 700;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--jg-line-soft, rgba(255, 214, 10, 0.3));
+      color: var(--jg-text-soft, #e7cf7d);
+    }
+    .dock-width-btn:hover { background: rgba(255, 255, 255, 0.14); }
+    body.dock-wide { --dock-w: 260px; }
 
     .metric-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
@@ -952,7 +999,7 @@
     }
     /* ── THE JARVIS DOCK: slim left column — visualiser up top, chats below ── */
     #jarvis-dock {
-      position: fixed; top: var(--header-h); left: 0; bottom: 0; width: 260px;
+      position: fixed; top: var(--header-h); left: 0; bottom: 0; width: var(--dock-w);
       z-index: 940; display: flex; flex-direction: column;
       background: rgba(18, 20, 24, 0.82);
       backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
@@ -1201,6 +1248,16 @@
     /* Depth: every floating thing drops a long, soft shadow. */
     .desk-icon { text-shadow: 0 2px 10px rgba(0, 0, 0, 0.9); }
 
+    /* A phone or a narrow window: the column keeps only what the conversation
+       needs, so the rooms and My Hands still have somewhere to happen. */
+    @media (max-width: 720px) {
+      :root { --dock-w: 150px; }
+      body.dock-wide { --dock-w: 190px; }
+      #dock-top .reactor-disc { width: 64px; height: 64px; }
+      #dock-top .reactor-state-tag { font-size: 9px; letter-spacing: 1px; }
+      .dock-state { font-size: 8.5px; letter-spacing: 1px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
   </style>
 </head>
 <body data-theme="stark">
@@ -1308,10 +1365,22 @@
       </div>
       <div class="window-body telemetry-content">
         <div class="reactor-pod">
-          <div class="reactor-disc">
+          <div class="reactor-disc" id="reactor-disc">
             <div class="reactor-core"></div>
+            <!-- THE VOICE VISUALISER. The bars ring the core and move with the
+                 real thing: the microphone when JARVIS is listening, his own
+                 voice while a reply is being spoken. The code that draws it has
+                 always been here — this element is what it draws on. -->
+            <canvas id="viz-canvas" class="viz-canvas" width="200" height="200"
+                    role="img" aria-label="Voice visualiser"></canvas>
           </div>
           <div class="reactor-state-tag" id="reactor-status">__ASSISTANT_NAME__ ACTIVE</div>
+          <div class="dock-state" id="dock-state" data-state="idle" role="status" aria-live="polite">Standing by</div>
+          <!-- The dock is one number wide; this gives the room back when the
+               conversation is not what you are working on. -->
+          <button class="dock-width-btn" id="dock-width-btn" type="button"
+                  onclick="toggleDockWidth()" aria-pressed="false"
+                  title="Make the conversation column thinner">‹‹</button>
         </div>
 
         <div class="metric-grid">
@@ -1813,9 +1882,9 @@
        · Studio · Files) that SWEEPS IN from the side. The top row and the dock
        stay visible — they are the same in every room. A hand sweep, a voice
        command or Esc moves the rooms; there is no chrome and no close button. -->
-  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:260px; right:0; bottom:0;
+  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:var(--dock-w); right:0; bottom:0;
        z-index:900; background:transparent;
-       border:1px solid var(--jg-line); border-right:none;
+       border:1px solid var(--jg-line); border-left:none; border-right:none;
        box-shadow:0 0 var(--jg-glow-size) var(--jg-glow);
        transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);">
     <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:transparent;"></iframe>
@@ -1830,7 +1899,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-13-browser-voice-1';
+    const JARVIS_BUILD = '2026-10-25-master-dock-visualiser';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -2113,6 +2182,7 @@
       {
         try {
           if (m.type === 'stream') {
+            if (m.speaker === 'jarvis' && m.replay !== true) Viz.thinkingUntil = 0;
             // The HTTP response may win the race. If it already completed this
             // id, a late stream frame is a duplicate, not a new answer.
             if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) return;
@@ -2124,6 +2194,7 @@
               else speakStreamed(m.id, m.text);
             }
           } else if (m.type === 'log') {
+            if (m.speaker === 'jarvis' && m.replay !== true) Viz.thinkingUntil = 0;
             if (m.speaker === 'user' && m.id && localEchoes.has(m.id)) {
               localEchoes.delete(m.id);          // our own command, already on screen
             } else if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) {
@@ -2308,6 +2379,8 @@
       const requestId = 'cmd-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
       localEchoes.set(requestId, Date.now());
       appendChat('user', txt);
+      // From here until the reply lands, the visualiser says "thinking".
+      Viz.thinkingUntil = performance.now() + 120000;
       const enc = _encrypt(txt);
       const body = Object.assign(enc ? { enc } : { text: txt }, { requestId });
       // Replies normally arrive on the websocket as they are written. If that
@@ -2320,6 +2393,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then((r) => (r.ok ? r.json() : null)).then((data) => {
+        Viz.thinkingUntil = 0;
         if (!data || !data.reply) return;
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
@@ -2357,6 +2431,7 @@
           }, 700);
         }
       }).catch(() => {
+        Viz.thinkingUntil = 0;
         if (!socketWasUp) {
           const id = requestId;
           if (!liveStreamBubble(id)) appendChat('system', 'The server did not answer — is JARVIS still running on port 3000?');
@@ -2840,6 +2915,41 @@
       win.classList.add('focused');
     }
 
+    /* ── THE ROOM BESIDE THE DOCK ─────────────────────────────────────────
+       The dock (the conversation, the reactor) and the header are fixed
+       furniture. Every movable window lives inside #workspace-stage, which
+       begins at the dock's right edge and below the header — so a window can
+       never be dragged over the conversation, or left behind it. These two
+       helpers are the whole rule, and dragging, resizing and My Hands all use
+       them. */
+    function stageBox() {
+      const st = document.getElementById('workspace-stage');
+      if (!st) return { left: 0, top: 0, w: window.innerWidth, h: window.innerHeight };
+      const r = st.getBoundingClientRect();
+      return { left: r.left, top: r.top, w: st.clientWidth, h: st.clientHeight };
+    }
+    function clampToStage(win, left, top) {
+      const box = stageBox();
+      const maxL = Math.max(8, box.w - win.offsetWidth - 8);
+      const maxT = Math.max(8, box.h - 60);
+      return {
+        left: Math.min(Math.max(8, left), maxL),
+        top: Math.min(Math.max(8, top), maxT),
+      };
+    }
+    /** After a resize (or a dock width change) every open window is nudged back
+        into the room, so none is ever left under the dock. */
+    function keepWindowsInRoom() {
+      document.querySelectorAll('#workspace-stage .glass-window').forEach((win) => {
+        if (win.classList.contains('docked')) return;
+        if (win.style.display === 'none') return;
+        const p = clampToStage(win, win.offsetLeft, win.offsetTop);
+        win.style.left = `${p.left}px`;
+        win.style.top = `${p.top}px`;
+      });
+    }
+    window.addEventListener('resize', keepWindowsInRoom);
+
     function startWindowDrag(e, winId) {
       if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('.tree-search') || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
       const win = document.getElementById(winId);
@@ -2867,10 +2977,9 @@
       if (!activeDragWin) return;
       const dx = e.clientX - dragStartX;
       const dy = e.clientY - dragStartY;
-      const newL = Math.max(8, Math.min(window.innerWidth - activeDragWin.offsetWidth - 8, initialLeft + dx));
-      const newT = Math.max(8, Math.min(window.innerHeight - 60, initialTop + dy));
-      activeDragWin.style.left = `${newL}px`;
-      activeDragWin.style.top = `${newT}px`;
+      const pos = clampToStage(activeDragWin, initialLeft + dx, initialTop + dy);
+      activeDragWin.style.left = `${pos.left}px`;
+      activeDragWin.style.top = `${pos.top}px`;
 
       // Track velocity for tactile release fling
       const now = performance.now();
@@ -2919,8 +3028,9 @@
 
     function onWindowResizeMove(e) {
       if (!activeResizeWin) return;
-      const nw = Math.max(260, Math.min(window.innerWidth - activeResizeWin.offsetLeft - 16, initialWidth + (e.clientX - resizeStartX)));
-      const nh = Math.max(180, Math.min(window.innerHeight - activeResizeWin.offsetTop - 16, initialHeight + (e.clientY - resizeStartY)));
+      const box = stageBox();
+      const nw = Math.max(260, Math.min(box.w - activeResizeWin.offsetLeft - 8, initialWidth + (e.clientX - resizeStartX)));
+      const nh = Math.max(180, Math.min(box.h - activeResizeWin.offsetTop - 8, initialHeight + (e.clientY - resizeStartY)));
       activeResizeWin.style.width = `${nw}px`;
       activeResizeWin.style.height = `${nh}px`;
     }
@@ -2947,6 +3057,10 @@
       if (!win) return;
       if (win.style.display === 'none') {
         win.style.display = 'flex';
+        // Opened from the header: land inside the room, never under the dock.
+        const spot = clampToStage(win, win.offsetLeft, win.offsetTop);
+        win.style.left = `${spot.left}px`;
+        win.style.top = `${spot.top}px`;
         bringToFront(win);
         FoleyAudio.grab();
         // Settings must show the truth about the brain key and the build every
@@ -3858,13 +3972,18 @@
             handGrabbedWin = win;
             bringToFront(win);
             win.classList.add('grabbed');
-            grabOffsetX = cursorX - win.offsetLeft;
-            grabOffsetY = cursorY - win.offsetTop;
+            const grabBox = stageBox();
+            grabOffsetX = cursorX - grabBox.left - win.offsetLeft;
+            grabOffsetY = cursorY - grabBox.top - win.offsetTop;
             FoleyAudio.grab();
           }
         } else {
-          handGrabbedWin.style.left = `${Math.max(8, Math.min(window.innerWidth - handGrabbedWin.offsetWidth - 8, cursorX - grabOffsetX))}px`;
-          handGrabbedWin.style.top = `${Math.max(8, Math.min(window.innerHeight - 60, cursorY - grabOffsetY))}px`;
+          const moveBox = stageBox();
+          const handPos = clampToStage(handGrabbedWin,
+            cursorX - moveBox.left - grabOffsetX,
+            cursorY - moveBox.top - grabOffsetY);
+          handGrabbedWin.style.left = `${handPos.left}px`;
+          handGrabbedWin.style.top = `${handPos.top}px`;
         }
       } else {
         if (handGrabbedWin) {
@@ -3925,8 +4044,9 @@
           handGrabbedWin = win;
           bringToFront(win);
           win.classList.add('grabbed');
-          grabOffsetX = x - win.offsetLeft;
-          grabOffsetY = y - win.offsetTop;
+          const dwellBox = stageBox();
+          grabOffsetX = x - dwellBox.left - win.offsetLeft;
+          grabOffsetY = y - dwellBox.top - win.offsetTop;
           FoleyAudio.grab();
           resetDwell();
         }
@@ -4616,6 +4736,7 @@
           if (res.isFinal) said += alt; else pending += alt;
         }
         Listen.interim = pending;
+        if ((pending.trim() || said.trim()) && typeof vizHeard === 'function') vizHeard();
         renderEar();
         if (said.trim()) { Listen.interim = ''; earHeard(said); }
       };
@@ -4732,10 +4853,13 @@
     function earFrame(input) {
       // While JARVIS is speaking, muted, or waiting for an answer, nothing is
       // heard — so JARVIS never hears its own voice.
-      if (earGated()) { earDropSentence(); return; }
+      if (earGated()) { earDropSentence(); Viz.mic = Viz.mic * 0.6; return; }
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
+      // The microphone's real loudness, for the voice visualiser.
+      const heard = Math.min(1, rms * 14);
+      Viz.mic = heard > Viz.mic ? heard : Viz.mic * 0.86 + heard * 0.14;
       const loud = rms > Math.max(Ear.noise * 3, 0.008);
       const now = performance.now();
       if (!Ear.inSentence) {
@@ -5475,41 +5599,218 @@
       if (tr) tr.style.display = 'none';
     })();
 
-    // 2. The audio visualiser: alive in the corner, flares when JARVIS speaks.
+    // The conversation is docked and the room is measured: pull every window
+    // that would otherwise sit under the dock back into the open area.
+    keepWindowsInRoom();
+
+    // 2. THE VOICE VISUALISER — the ring around the core.
+    //
+    //    It was here before, and it drew nothing: the code that drives it
+    //    survived, the canvas it draws on did not. It is back, and it is driven
+    //    by what is really happening rather than by a decoration timer:
+    //
+    //      speaking  — the reply is being played (Speech.busy), and the bars
+    //                  run with the syllables of a spoken sentence.
+    //      hearing   — the microphone is picking up a voice: real loudness from
+    //                  the raw-audio ear, or the words forming in this browser's
+    //                  own recogniser.
+    //      listening — the ear is open and the room is quiet.
+    //      thinking  — a command has been sent and no reply has landed yet.
+    //      muted / error / idle — the microphone is off, broken, or this page
+    //                  has not opened it yet.
+    const Viz = {
+      canvas: null, g: null, label: null, disc: null,
+      state: '', level: 0, mic: 0, activityUntil: 0, thinkingUntil: 0,
+      lastPaint: 0, reduced: false, started: false,
+      colours: {
+        idle: [255, 224, 102], listening: [110, 231, 183], hearing: [52, 211, 153],
+        thinking: [251, 191, 36], speaking: [255, 214, 10], muted: [169, 154, 99],
+        error: [251, 133, 133],
+      },
+      words: {
+        idle: 'Standing by', listening: 'Listening', hearing: 'Hearing you',
+        thinking: 'Thinking', speaking: 'Speaking', muted: 'Muted', error: 'Voice problem',
+      },
+    };
+
+    /** What the voice is doing, most important first. Nothing is invented. */
+    function vizState() {
+      if (Speech.busy || Speech.queue.length > 0) return 'speaking';
+      if (performance.now() < Viz.thinkingUntil) return 'thinking';
+      if (_muted) return 'muted';
+      if (Ear.problem || Voice.recogProblem) return 'error';
+      const heard = Viz.mic > 0.18 || performance.now() < Viz.activityUntil;
+      if (heard && listenRunning()) return 'hearing';
+      if (listenRunning()) return 'listening';
+      return 'idle';
+    }
+
+    /** A word was heard (or is forming): the ring answers at once. */
+    function vizHeard() {
+      Viz.activityUntil = performance.now() + 900;
+    }
+    window.vizHeard = vizHeard;
+
+    function vizMeasure() {
+      const c = Viz.canvas;
+      if (!c) return;
+      const box = c.getBoundingClientRect();
+      const side = Math.max(40, Math.round(Math.min(box.width, box.height) || 110));
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      if (c.width !== Math.round(side * dpr) || c.height !== Math.round(side * dpr)) {
+        c.width = Math.round(side * dpr);
+        c.height = Math.round(side * dpr);
+      }
+      Viz.g = c.getContext('2d');
+      if (Viz.g) Viz.g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    function vizPaint(now) {
+      const g = Viz.g, c = Viz.canvas;
+      if (!g || !c) return;
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const side = c.width / dpr;
+      const cx = side / 2, cy = side / 2;
+      const outer = side / 2 - 1.5;
+      const state = Viz.state || 'idle';
+      const t = now / 1000;
+      const rgb = Viz.colours[state] || Viz.colours.idle;
+      const colour = `rgb(${rgb[0]}, ${rgb[1]}, ${rgb[2]})`;
+
+      // How hard the ring is working, per state.
+      let target = 0.05;
+      if (state === 'speaking') {
+        const wobble = Math.abs(Math.sin(t * 8.4) * Math.sin(t * 3.1 + 1.1));
+        target = 0.34 + 0.62 * wobble;
+      } else if (state === 'hearing' || state === 'listening') {
+        target = 0.08 + Viz.mic * 0.92;
+      } else if (state === 'thinking') {
+        target = 0.20 + 0.10 * Math.sin(t * 2.4);
+      } else if (state === 'error') {
+        target = 0.14;
+      }
+      // Fast attack, slow release: a voice, not a flicker.
+      Viz.level += (target - Viz.level) * (target > Viz.level ? 0.45 : 0.10);
+      const level = Viz.reduced ? Math.max(Viz.level, 0.2) : Viz.level;
+
+      g.clearRect(0, 0, side, side);
+
+      // The quiet bed: a thin ring that is always there, so "standing by" is
+      // still visible.
+      g.beginPath();
+      g.arc(cx, cy, outer - 2, 0, Math.PI * 2);
+      g.strokeStyle = colour;
+      g.globalAlpha = 0.22;
+      g.lineWidth = 1;
+      g.stroke();
+
+      // The bars: a circle of them, each with its own phase, so the ring moves
+      // like sound instead of like a spinner.
+      const bars = 32;
+      g.strokeStyle = colour;
+      g.lineCap = 'round';
+      g.lineWidth = Math.max(1.4, side / 30);
+      const inner = outer - 6;
+      for (let i = 0; i < bars; i++) {
+        const wobble =
+          Math.abs(Math.sin(i * 0.55 + t * (state === 'speaking' ? 7.4 : 3.2) + i * 0.9)) *
+          Math.abs(Math.sin(i * 0.21 - t * 2.3 + 0.7));
+        const len = 1.2 + level * (side * 0.26) * (0.35 + 0.65 * wobble);
+        const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+        g.globalAlpha = 0.35 + 0.65 * wobble;
+        g.beginPath();
+        g.moveTo(cx + Math.cos(angle) * inner, cy + Math.sin(angle) * inner);
+        g.lineTo(cx + Math.cos(angle) * (inner + len), cy + Math.sin(angle) * (inner + len));
+        g.stroke();
+      }
+
+      // A halo while he is actually speaking: the one wide, soft effect.
+      if (state === 'speaking') {
+        const halo = g.createRadialGradient(cx, cy, 0, cx, cy, outer);
+        halo.addColorStop(0, colour);
+        halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        g.globalAlpha = 0.30 + 0.25 * level;
+        g.fillStyle = halo;
+        g.beginPath();
+        g.arc(cx, cy, outer, 0, Math.PI * 2);
+        g.fill();
+      }
+
+      // The sweep: one slow highlight around the bed while he speaks or thinks.
+      if (state === 'speaking' || state === 'thinking') {
+        const speed = state === 'speaking' ? 2.6 : 1.3;
+        g.globalAlpha = 0.85;
+        g.strokeStyle = colour;
+        g.lineWidth = Math.max(1.6, side / 24);
+        g.beginPath();
+        g.arc(cx, cy, outer - 2, t * speed, t * speed + Math.PI * 0.55);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+
+    function vizTick(now) {
+      if (!Viz.started) return;
+      const state = vizState();
+      if (state !== Viz.state) {
+        Viz.state = state;
+        if (Viz.label) {
+          Viz.label.setAttribute('data-state', state);
+          const word = Viz.words[state] || Viz.words.idle;
+          if (Viz.label.textContent !== word) Viz.label.textContent = word;
+        }
+        const rgb = Viz.colours[state] || Viz.colours.idle;
+        if (Viz.canvas) Viz.canvas.style.setProperty('--viz-glow', `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, 0.45)`);
+      }
+      // 30 frames a second: smooth to the eye, cheap next to the camera.
+      if (now - Viz.lastPaint >= 33 || Viz.reduced) {
+        Viz.lastPaint = now;
+        vizPaint(now);
+      }
+      requestAnimationFrame(vizTick);
+    }
+
     (function startVisualiser() {
       const c = document.getElementById('viz-canvas');
-      if (!c) return;
-      const ctx = c.getContext('2d');
-      const N = 28;
-      let t = 0;
-      function frame() {
-        t += 0.016;
-        ctx.clearRect(0, 0, 128, 128);
-        const speaking = Speech.busy;
-        const watching = typeof handTrackingActive !== 'undefined' && handTrackingActive;
-        const state = document.getElementById('dock-state');
-        if (state) state.textContent = speaking ? 'SPEAKING' : (watching ? 'WATCHING' : 'ONLINE');
-        for (let i = 0; i < N; i++) {
-          const a = (i / N) * Math.PI * 2;
-          const energy = speaking
-            ? 0.45 + 0.55 * Math.abs(Math.sin(t * 7 + i * 1.7))
-            : 0.16 + 0.1 * Math.sin(t * 2 + i);
-          const r0 = 26;
-          const r1 = r0 + 30 * energy;
-          ctx.strokeStyle = speaking ? 'rgba(255,208,74,0.95)' : 'rgba(255,208,74,0.4)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(64 + Math.cos(a) * r0, 64 + Math.sin(a) * r0);
-          ctx.lineTo(64 + Math.cos(a) * r1, 64 + Math.sin(a) * r1);
-          ctx.stroke();
-        }
-        ctx.beginPath();
-        ctx.arc(64, 64, 10 + (speaking ? 3 * Math.abs(Math.sin(t * 9)) : 1.5 * Math.sin(t * 2)), 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(125,211,252,0.9)';
-        ctx.fill();
-        requestAnimationFrame(frame);
+      if (!c) return;                                  // no visualiser: never fatal
+      Viz.canvas = c;
+      Viz.label = document.getElementById('dock-state');
+      Viz.disc = document.getElementById('reactor-disc');
+      if (Viz.disc) Viz.disc.classList.add('has-viz');
+      try { Viz.reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) { Viz.reduced = false; }
+      vizMeasure();
+      Viz.started = true;
+      requestAnimationFrame(vizTick);
+      window.addEventListener('resize', vizMeasure);
+    })();
+    window.__jarvisViz = Viz;
+
+    // The dock's width switch: narrow (the default) or wide. Remembered, so it
+    // is where the owner left it.
+    const DOCK_WIDE_KEY = 'jarvis-dock-wide';
+    function toggleDockWidth() {
+      let wide = false;
+      try { wide = localStorage.getItem(DOCK_WIDE_KEY) === '1'; } catch (_) {}
+      wide = !wide;
+      document.body.classList.toggle('dock-wide', wide);
+      try { localStorage.setItem(DOCK_WIDE_KEY, wide ? '1' : '0'); } catch (_) {}
+      const btn = document.getElementById('dock-width-btn');
+      if (btn) {
+        btn.setAttribute('aria-pressed', String(wide));
+        btn.title = wide ? 'Make the conversation column thinner' : 'Make the conversation column wider';
+        btn.textContent = wide ? '››' : '‹‹';
       }
-      frame();
+      vizMeasure();
+      keepWindowsInRoom();
+    }
+    window.toggleDockWidth = toggleDockWidth;
+    (function restoreDockWidth() {
+      let wide = false;
+      try { wide = localStorage.getItem(DOCK_WIDE_KEY) === '1'; } catch (_) {}
+      if (!wide) return;
+      document.body.classList.add('dock-wide');
+      const btn = document.getElementById('dock-width-btn');
+      if (btn) { btn.setAttribute('aria-pressed', 'true'); btn.textContent = '››'; }
     })();
 
     // 3. The desktop: your real folders (Documents, Downloads, the project)
@@ -5541,8 +5842,9 @@
         const lbl = document.createElement('div'); lbl.className = 'lbl'; lbl.textContent = root.name;
         icon.appendChild(ico); icon.appendChild(lbl);
         const pos = saved[root.name] || { x: 292, y: headerH + 24 + i * 128 };
-        icon.style.left = pos.x + 'px';
-        icon.style.top = pos.y + 'px';
+        const room = stageBox();
+        icon.style.left = Math.max(room.left, Math.min(room.left + room.w - 96, pos.x)) + 'px';
+        icon.style.top = Math.max(room.top, pos.y) + 'px';
 
         icon.addEventListener('pointerdown', (e) => {
           e.preventDefault();
@@ -5551,8 +5853,12 @@
           icon.setPointerCapture(e.pointerId);
           icon.classList.add('grabbed');
           const move = (ev) => {
-            icon.style.left = Math.max(0, Math.min(window.innerWidth - 96, ev.clientX - offX)) + 'px';
-            icon.style.top = Math.max(headerH - 16, Math.min(window.innerHeight - 90, ev.clientY - offY)) + 'px';
+            // Desk icons are fixed to the viewport, but the desk is only the
+            // room beside the dock: an icon cannot be put down on the
+            // conversation, or up in the header.
+            const box = stageBox();
+            icon.style.left = Math.max(box.left, Math.min(box.left + box.w - 96, ev.clientX - offX)) + 'px';
+            icon.style.top = Math.max(box.top, Math.min(box.top + box.h - 90, ev.clientY - offY)) + 'px';
           };
           icon.addEventListener('pointermove', move);
           icon.addEventListener('pointerup', () => {

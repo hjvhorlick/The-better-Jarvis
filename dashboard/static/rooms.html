@@ -50,6 +50,10 @@
 
     /* The Flat room's tool drawer: the real design tools live in this
        sub-section, and they are out of the way until Tools is pressed. */
+    /* The drawer is opened and closed with the `hidden` attribute. A plain
+       `display: flex` beats that attribute, so the attribute is honoured here —
+       without this line the Flat room's tools could never be put away. */
+    .flat-drawer[hidden] { display: none; }
     .flat-drawer {
       display: flex; flex-wrap: wrap; gap: 8px;
       padding: 8px 12px; flex: 0 0 auto;

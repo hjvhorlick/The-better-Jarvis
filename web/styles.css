@@ -895,6 +895,8 @@ select option { background: #191a1e; color: var(--jg-gold-bright); }
    straight away. The Tools switch only hides or restores their strip. */
 body:not(.show-tools) .env-tools { display: none; }
 body:not(.show-tools) .flat-drawer { display: none; }
+/* The drawer's own hidden attribute must win over display:flex. */
+.flat-drawer[hidden] { display: none; }
 .env-tool { padding: 7px 12px; font-size: 13px; }
 
 /* A thin yellow line around a room's own frames, and a long shadow for depth. */
