@@ -271,6 +271,21 @@ export function stopStillBlocks(stop: StopRecord | null, now = Date.now()): bool
   return Number.isFinite(at) ? now - at < QUOTA_STOP_COOLDOWN_MS : false;  // an unreadable time never blocks
 }
 
+/**
+ * The owner saved a NEW key into this slot: whatever Google said about the OLD
+ * key no longer applies, so its stop is cleared at once. Without this, a fresh
+ * key pasted after "Google rejected the key" would sit unused until local
+ * midnight — the one gate left that a new key could not unlock.
+ */
+export function clearKeyStop(slot: KeySlot): void {
+  const counter = readBrainCounter();
+  if (!counter.stopped[slot]) return;
+  counter.stopped[slot] = null;
+  if (!counter.stopped[1] && !counter.stopped[2]) counter.switchedAt = null;
+  writeBrainCounter(counter);
+  console.log(`[JARVIS] key ${slot} was replaced — Google's stop on the OLD key is cleared; the new key answers at once.`);
+}
+
 export function resolveActiveKey(): ActiveKey {
   const first = resolveKeySlot(1);
   const second = resolveKeySlot(2);

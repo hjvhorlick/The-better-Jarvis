@@ -24,6 +24,7 @@ import {
   brainCheck,
   classifyGeminiError,
   clearGeminiKey2,
+  clearKeyStop,
   explainBrainFailure,
   onQuotaEvent,
   quotaSnapshot,
@@ -2938,6 +2939,9 @@ app.post('/api/settings/gemini-key', requireAuth, (req: Request, res: Response) 
     // A previous "no key" brain check must not make a fresh greeting sound
     // broken after the owner has just connected the brain.
     brainHealth = null;
+    // And a stop Google put on the OLD key must not hold the NEW one: saving a
+    // key clears that slot's stop at once, so a fresh key answers immediately.
+    clearKeyStop(slot);
     // The key that is actually IN FORCE may differ from the one just typed:
     // an old GEMINI_API_KEY (or GEMINI_API_KEY_2) already in the environment is
     // read first and shadows the saved file. Report that honestly instead of

@@ -562,6 +562,16 @@ function freePort() {
     fs.writeFileSync(counterFile, JSON.stringify(cooled));
     const retried = await get(srv3, '/api/brain-check');
     ok('429: after the 10-minute cooldown the key is tried again — no all-day block', retried.body.ok === false && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 1, `generates now ${srv3.stub.calls.filter((c) => c.kind === 'generate').length} (was ${sent})`);
+    // A NEW key saved into the slot clears Google's stop on the OLD key at once
+    // (this stub 429s again, but the call must go OUT instead of being refused).
+    const reblocked = JSON.parse(fs.readFileSync(path.join(srv3.cwd, 'runtime', 'quota.json'), 'utf-8'));
+    if (reblocked.google_stopped['1']) reblocked.google_stopped['1'].at = new Date().toISOString();
+    fs.writeFileSync(path.join(srv3.cwd, 'runtime', 'quota.json'), JSON.stringify(reblocked));
+    const savedKey = await post(srv3, '/api/settings/gemini-key', { key: 'a-brand-new-harness-key' });
+    const freshKey = await get(srv3, '/api/brain-check');
+    ok('new key: saving a key clears the old key\'s stop — the next call goes out at once',
+       savedKey.body.ok === true && freshKey.body.code === 'rate-limited' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 2,
+       `code=${freshKey.body.code} generates=${srv3.stub.calls.filter((c) => c.kind === 'generate').length} (want ${sent + 2})`);
     // Local answers never go near the gate.
     const time = await post(srv3, '/api/command', { text: 'what time is it' });
     ok('429: local answers still work while Google has stopped us (the time)', !/Google/.test(String(time.body.reply)) && /\d/.test(String(time.body.reply)), String(time.body.reply).slice(0, 80));
@@ -570,7 +580,7 @@ function freePort() {
     ok('429: …and learned knowledge', /bay three/.test(String(recall.body.reply)), `${String(learn.body.reply).slice(0, 40)} / ${String(recall.body.reply).slice(0, 60)}`);
     const draft = await post(srv3, '/api/command', { text: 'draft an email to Pepper about the reactor review' });
     ok('429: …and the drafting desk', /draft|email/i.test(String(draft.body.reply)) && !/Google has stopped/.test(String(draft.body.reply)), String(draft.body.reply).slice(0, 80));
-    ok('429: …none of which counted or called Google', readCounter(srv3).used === 2 && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 1, `used=${readCounter(srv3).used}`);
+    ok('429: …none of which counted or called Google', readCounter(srv3).used === 3 && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 2, `used=${readCounter(srv3).used}`);
     const settings = await get(srv3, '/api/settings/gemini-key');
     ok('429: Settings says Google stopped us', settings.body.quota.stoppedByGoogle === true && settings.body.activeKey.stoppedByGoogle === true && /GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
     ok('429: the terminal says Google stopped key 1 and no second key is set', /Google stopped key 1/.test(srv3.log()) && /no second key is set/.test(srv3.log()), (srv3.log().match(/.*Google stopped key 1.*/) || [''])[0].slice(0, 160));
