@@ -74,7 +74,7 @@ const HOST = '0.0.0.0';
  * "no key" while the key is sitting in the file beside it. Bump it with the
  * page's JARVIS_BUILD whenever either side changes.
  */
-const SERVER_BUILD = '2026-10-25-master-dock-visualiser';
+const SERVER_BUILD = '2026-10-25-voice-takeover-device';
 /** Where this server is reading its settings from, printed for the same reason. */
 const CONFIG_ROOT = process.cwd();
 const DEFAULT_PIN = 'JARVIS';
@@ -2466,11 +2466,14 @@ function startLocalVoice(): void {
 interface LocalVoiceInfo {
   service: boolean;    // the Python service answered at all
   ready: boolean;      // it can both speak and hear right now
+  speakReady: boolean; // the Kokoro mouth alone (a missing Whisper model must not hide it)
+  hearReady: boolean;  // the faster-whisper ear alone
+  outputDevice: string; // the speakers the local voice will actually use, by name
   message: string;     // why not, in plain words ('' when it is ready)
   at: number;
 }
 
-let localVoiceInfoCache: LocalVoiceInfo = { service: false, ready: false, message: 'not checked yet', at: 0 };
+let localVoiceInfoCache: LocalVoiceInfo = { service: false, ready: false, speakReady: false, hearReady: false, outputDevice: '', message: 'not checked yet', at: 0 };
 
 async function probeLocalVoice(): Promise<void> {
   try {
@@ -2486,6 +2489,9 @@ async function probeLocalVoice(): Promise<void> {
     localVoiceInfoCache = {
       service: true,
       ready: speakReady && hearReady,
+      speakReady,
+      hearReady,
+      outputDevice: typeof data.outputDevice === 'string' ? data.outputDevice : '',
       message: speakReady && hearReady ? '' : (reasons || 'the voice service is running but nothing is loaded'),
       at: Date.now(),
     };
@@ -2494,6 +2500,9 @@ async function probeLocalVoice(): Promise<void> {
     localVoiceInfoCache = {
       service: false,
       ready: false,
+      speakReady: false,
+      hearReady: false,
+      outputDevice: '',
       message: timedOut ? 'the voice service did not answer in time' : 'the voice service is not running on this computer',
       at: Date.now(),
     };
@@ -2516,7 +2525,7 @@ function resolveVoiceModel(): { model: string; source: string; note: string } {
   return {
     model: `Kokoro ${(process.env.SUPPER_TTS_VOICE || 'bm_george').trim()} on this computer`,
     source: 'local_voice/service.py',
-    note: health.ready
+    note: health.speakReady
       ? ` · ready (used as the fallback; the browser's own voice speaks first)`
       : ` · NOT available here — ${health.message}`,
   };

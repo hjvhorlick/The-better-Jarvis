@@ -139,6 +139,7 @@ voice conversation starts. It ends after about a minute with no speech, and list
 | `SUPPER_STT_LANGUAGE` | `en` | language code; empty means detect |
 | `SUPPER_TTS_ENGINE` | `auto` | `auto`, `kokoro`, `system`, or `off` (no spoken replies; text only) |
 | `SUPPER_TTS_VOICE` | `af_heart` | Kokoro voice name |
+| `SUPPER_SPEAKER_DEVICE` | the speaker saved by the desktop app (`output_device` in `config/api_keys.json`), else system default | speaker name or index for this computer's voice. Names are resolved through the same measured device picker as the desktop app (`core/audio_devices.py`), and a chosen speaker that will not open falls back to the system default in the same reply. The chosen speakers are named in the `[local-voice]` startup lines and in Settings → Voice |
 | `SUPPER_VOICE_IDLE_S` | `60` | seconds without speech before the session stops |
 | `SUPPER_WAKE_WORD` | `on` | `on` listens for "Hey Jarvis" at start-up once the model is installed; `off` does not |
 

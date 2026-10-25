@@ -78,8 +78,8 @@
   --jg-gold-faint: #8a7a25;
 
   --jg-text: #ffe45c;           /* every word, bright yellow */
-  --jg-text-soft: #e8d178;      /* the quieter words */
-  --jg-text-faint: #b8a75e;     /* labels and counts */
+  --jg-text-soft: #ffe45c;      /* the quieter words — still bright yellow: dim words on glass are unreadable */
+  --jg-text-faint: #ffd60a;     /* labels and counts — bright yellow too, never dull on the glass */
 
   /* The thin line around every frame, and the bloom that lifts it off the
      background. Both are set from the Settings sliders. */

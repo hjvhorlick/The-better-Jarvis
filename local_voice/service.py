@@ -18,6 +18,8 @@ Settings (environment, optional):
   SUPPER_STT_MODEL           faster-whisper model: tiny, base, small, medium (default tiny.en — the fast one)
   SUPPER_STT_LANGUAGE        language code (default en)
   SUPPER_LOCAL_VOICE_PORT    port on 127.0.0.1 (default 3101)
+  SUPPER_SPEAKER_DEVICE      speaker name or index; otherwise the speaker saved by the
+                             desktop app (config/api_keys.json: output_device) is used
 """
 from __future__ import annotations
 
@@ -46,6 +48,12 @@ except Exception as _numpy_exc:   # pragma: no cover - depends on the machine
     _numpy_error = str(_numpy_exc)
 
 ROOT = Path(__file__).resolve().parent.parent
+# server.ts launches this file as a script, so Python's import path starts in
+# local_voice/, not at the repository root. Add the root explicitly: the
+# speaker-name resolver below deliberately reuses the desktop app's measured
+# device picker (core/audio_devices.py) instead of inventing a second one.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 KOKORO_DIR = Path(os.environ.get("SUPPER_KOKORO_DIR", ROOT / "models" / "kokoro"))
 KOKORO_MODEL = "kokoro-v1.0.onnx"
 KOKORO_VOICES = "voices-v1.0.bin"
@@ -61,8 +69,8 @@ STT_RATE = 16000
 _speak_lock = threading.Lock()   # one sentence at a time
 _hear_lock = threading.Lock()
 _active_stream = None            # the speakers' stream while JARVIS is talking (for /stop)
-_out_stream = None               # the speakers' stream, kept open between replies
-_out_rate = 0
+_output_device_cache: dict = {"key": None, "device": None, "label": "system default"}
+_output_failed = ""              # why the speakers themselves last failed ('' = they have not)
 _speech_stopped = False          # /stop was pressed: the current sentence ends quietly, no error
 _kokoro = None
 _whisper = None
@@ -143,18 +151,166 @@ def kokoro_lang() -> str:
     return "en-gb" if TTS_VOICE.startswith("b") else "en-us"
 
 
+# ── Which speakers? ──────────────────────────────────────────────────────────
+# The desktop Jarvis learned this the hard way (core/audio_devices.py): a
+# saved speaker NAME must be resolved through the host-API that was measured
+# to actually move audio. Passing the bare name to sounddevice can pick a
+# duplicate endpoint that opens, accepts every write instantly, and makes no
+# sound at all — the exact "local voice says it spoke but I heard nothing"
+# failure. This service used to ignore the saved speaker entirely and always
+# took the PortAudio default. Now it uses the same saved choice and resolver
+# as main.py, with SUPPER_SPEAKER_DEVICE as an override, and falls back to
+# the system default rather than going silent.
+
+def _configured_output_name() -> tuple[str, str]:
+    """(speaker name/index as text, where it came from). '' = system default."""
+    env = (os.environ.get("SUPPER_SPEAKER_DEVICE") or "").strip()
+    if env:
+        return env, "SUPPER_SPEAKER_DEVICE"
+    try:
+        from memory.config_manager import get_output_device
+
+        return (get_output_device() or "").strip(), "the saved speaker"
+    except Exception as err:  # a broken config must never take the voice down
+        log(f"the saved speaker could not be read ({err}) — using the system default")
+        return "", ""
+
+
+def _output_label(sd, device, fallback: str = "system default") -> str:
+    try:
+        info = sd.query_devices(kind="output") if device is None else sd.query_devices(device)
+        name = str((info or {}).get("name") or "").strip()
+        return name or fallback
+    except Exception:
+        return fallback if device is None else str(device)
+
+
+def resolve_output_device(rate: int = 24000):
+    """Return (sounddevice device argument, human label) for the speakers.
+
+    Cached by configured name + rate: resolving by name probes the host audio
+    APIs with real (silent) streams, which is startup work, not per-sentence
+    work. The cache is dropped whenever opening or writing fails, so an
+    unplugged headset is re-decided on the next reply instead of failing for
+    the whole session."""
+    configured, _source = _configured_output_name()
+    key = (configured, int(rate))
+    if _output_device_cache.get("key") == key:
+        return _output_device_cache.get("device"), _output_device_cache.get("label") or "system default"
+
+    device = None
+    label = "system default"
+    if configured:
+        if configured.isdigit():
+            device = int(configured)
+            label = configured
+        else:
+            try:
+                from core import audio_devices
+
+                audio_devices.configure(STT_RATE, int(rate))
+                device = audio_devices.resolve(configured, "output")
+                if device is None:
+                    log(f"the saved speaker '{configured}' is not available — using the system default")
+                    label = "system default"
+                else:
+                    label = configured
+            except Exception as err:
+                # Let sounddevice try the name itself; _open_output_stream
+                # still falls back to the default if even that will not open.
+                log(f"speaker lookup failed ({err}) — trying '{configured}' by name")
+                device = configured
+                label = configured
+
+    try:
+        import sounddevice as sd
+
+        label = _output_label(sd, device, label)
+    except Exception:
+        pass
+
+    _output_device_cache.update({"key": key, "device": device, "label": label})
+    log(f"speakers: {label}" + (f" (saved choice: '{configured}')" if configured and label != configured else ""))
+    return device, label
+
+
+def _forget_output_device() -> None:
+    _output_device_cache.update({"key": None, "device": None, "label": "system default"})
+
+
+def _open_output_stream(sd, rate: int):
+    """Open and start the output stream on the chosen speakers.
+
+    A chosen device that will not open (asleep, exclusive mode, unplugged
+    since it was resolved) must degrade to the system default in the same
+    reply — exactly as main.py's _play_audio does — never to silence."""
+    device, label = resolve_output_device(int(rate))
+    try:
+        stream = sd.OutputStream(samplerate=int(rate), channels=1, dtype="float32", device=device)
+        stream.start()
+        return stream, device, label
+    except Exception as err:
+        if device is None:
+            raise
+        log(f"speaker '{label}' would not open ({err}) — trying the system default")
+        _forget_output_device()
+        stream = sd.OutputStream(samplerate=int(rate), channels=1, dtype="float32", device=None)
+        stream.start()
+        return stream, None, _output_label(sd, None)
+
+
+def verify_output_device() -> str:
+    """Open the chosen speakers once and play 60 ms of silence through them.
+
+    This makes /health honest: 'speaking ready' used to mean only that the
+    packages and model files existed, even when the sound was going to a
+    device that could not be opened at all. Returns the speakers' label."""
+    global _output_failed
+    _need_numpy()
+    try:
+        import sounddevice as sd
+    except ImportError:
+        raise VoiceError("no-speaker", "sounddevice is not installed. Run: pip install -r backend/requirements-local-voice.txt")
+    stream = None
+    try:
+        stream, _device, label = _open_output_stream(sd, 24000)
+        stream.write(np.zeros((max(1, int(24000 * 0.06)), 1), dtype=np.float32))
+        _output_failed = ""
+        log(f"speaker check passed — the local voice will use: {label}")
+        return label
+    except VoiceError:
+        raise
+    except Exception as err:
+        _output_failed = f"this computer's speakers could not be opened ({err}). Check the output device."
+        raise VoiceError("no-speaker", _output_failed)
+    finally:
+        if stream is not None:
+            try:
+                stream.stop()
+                stream.close()
+            except Exception:
+                pass
+
+
 def play_stream(text: str) -> None:
-    """Speak with sound starting almost at once, on a stream that stays open.
+    """Speak with sound starting almost at once, on the chosen speakers.
 
     Kokoro hands over the voice in small pieces as it makes them; the first
     piece is played while the rest is still being made. The old way made the
     WHOLE text first and only then started the speakers — every reply began
     with seconds of silence, longer for longer replies.
 
-    The speakers' stream is opened once and kept open between replies, like
-    the standalone app's Speaker (backend/voice/audio.py): opening a stream
-    is slow, and doing it for every sentence put a pause before every reply.
+    One stream per reply, closed when the reply ends. The previous version
+    kept a *blocking* OutputStream open between replies: unlike the desktop
+    app's callback Speaker (which continuously drains silence) or its
+    LocalSpeaker (which plays each utterance afresh), an idle blocking
+    stream can be left underflowed or suspended by the sound server, so the
+    first reply sounds and later writes go nowhere. Opening per reply also
+    means the saved speaker choice is re-read for every reply. A 60 ms burst
+    of silence first wakes a suspended sink — the same trick the desktop
+    app's LocalSpeaker uses — so the first syllable is not swallowed.
     """
+    global _output_failed
     _need_numpy()
     try:
         import sounddevice as sd
@@ -162,55 +318,131 @@ def play_stream(text: str) -> None:
         raise VoiceError("no-speaker", "sounddevice is not installed. Run: pip install -r backend/requirements-local-voice.txt")
     engine = kokoro()
 
-    def open_stream(rate: int):
-        global _out_stream, _out_rate
-        if _out_stream is None or _out_rate != int(rate):
-            close_stream()
-            _out_stream = sd.OutputStream(samplerate=int(rate), channels=1, dtype="float32")
-            _out_rate = int(rate)
-            _out_stream.start()
-        return _out_stream
-
     async def pump() -> None:
         global _active_stream
         started = time.monotonic()
         first = True
+        stream = None
+        stream_device = None
+        stream_rate = 0
+        wrote_speech = False
+
+        def close_current(abort: bool = False) -> None:
+            nonlocal stream
+            global _active_stream
+            current, stream = stream, None
+            if current is None:
+                return
+            if _active_stream is current:
+                _active_stream = None
+            try:
+                if abort or _speech_stopped:
+                    current.abort()   # drop what is buffered: stop means now
+                else:
+                    current.stop()    # let the buffered tail finish playing
+            except Exception:
+                pass
+            try:
+                current.close()
+            except Exception:
+                pass
+
+        def write_chunk(chunk, *, speech: bool = True) -> None:
+            nonlocal stream, stream_device, wrote_speech
+            global _active_stream
+            try:
+                stream.write(chunk)
+                if speech:
+                    wrote_speech = True
+                return
+            except Exception as err:
+                # The chosen speakers opened but will not accept audio and no
+                # speech has been heard yet: say this chunk on the default
+                # instead of losing the reply.
+                if stream_device is None or wrote_speech:
+                    raise
+                log(f"the chosen speakers would not accept audio ({err}) — trying the system default")
+                _forget_output_device()
+                close_current(abort=True)
+                stream = sd.OutputStream(samplerate=stream_rate, channels=1, dtype="float32", device=None)
+                stream.start()
+                _active_stream = stream
+                stream_device = None
+                stream.write(chunk)
+                if speech:
+                    wrote_speech = True
+
         try:
             async for samples, rate in engine.create_stream(text, voice=TTS_VOICE, speed=1.0, lang=kokoro_lang()):
-                stream = open_stream(int(rate))
-                _active_stream = stream
+                rate = int(rate)
+                chunk = np.asarray(samples, dtype=np.float32).reshape(-1, 1)
+                if stream is None or stream_rate != rate:
+                    if stream is not None:
+                        close_current()
+                    stream, stream_device, _label = _open_output_stream(sd, rate)
+                    stream_rate = rate
+                    _active_stream = stream
+                    # Wake the sink before the first syllable (see docstring).
+                    write_chunk(np.zeros((max(1, int(rate * 0.06)), 1), dtype=np.float32), speech=False)
                 if first:
                     first = False
                     log(f"first sound after {time.monotonic() - started:.1f}s")
                 # write() waits until there is room in the output buffer, so
                 # the voice can never run ahead of the speakers.
-                stream.write(np.asarray(samples, dtype=np.float32).reshape(-1, 1))
+                write_chunk(chunk)
         finally:
+            close_current()
             _active_stream = None
-            # The stream stays open for the next reply (it plays silence
-            # between replies); /stop and shutdown close it.
 
     try:
         asyncio.run(pump())
+        _output_failed = ""
     except VoiceError:
         raise
     except Exception as err:  # PortAudio errors: no output device, device busy, etc.
         if _speech_stopped:
             return   # the owner pressed stop: an aborted stream is the point, not an error
-        raise VoiceError("no-speaker", f"this computer's speakers could not play the voice ({err}). Check the output device.")
+        _forget_output_device()
+        _output_failed = f"this computer's speakers could not play the voice ({err}). Check the output device."
+        raise VoiceError("no-speaker", _output_failed)
 
 
 def play(samples, rate: int) -> None:
+    """Older kokoro-onnx without streaming: play the whole reply at once, on
+    the same chosen speakers (with the same wake-up silence and the same
+    fall-back to the system default) as the streaming path."""
+    global _output_failed
     _need_numpy()
     try:
         import sounddevice as sd
     except ImportError:
         raise VoiceError("no-speaker", "sounddevice is not installed. Run: pip install -r backend/requirements-local-voice.txt")
+    device, label = resolve_output_device(int(rate))
+    audio = np.asarray(samples, dtype=np.float32).reshape(-1)
     try:
-        sd.play(np.asarray(samples, dtype=np.float32).reshape(-1), rate)
+        audio = np.concatenate([np.zeros(max(1, int(rate * 0.06)), dtype=np.float32), audio])
+    except Exception:
+        pass  # the wake-up burst is best-effort; the speech itself is not
+
+    def _once(dev) -> None:
+        sd.play(audio, int(rate), device=dev)
         sd.wait()
+
+    try:
+        _once(device)
+        _output_failed = ""
     except Exception as err:  # PortAudio errors: no output device, device busy, etc.
-        raise VoiceError("no-speaker", f"this computer's speakers could not play the voice ({err}). Check the output device.")
+        if device is None:
+            _output_failed = f"this computer's speakers could not play the voice ({err}). Check the output device."
+            raise VoiceError("no-speaker", _output_failed)
+        log(f"speaker '{label}' would not play ({err}) — trying the system default")
+        _forget_output_device()
+        try:
+            _once(None)
+            _output_failed = ""
+        except Exception as err2:
+            _output_failed = f"this computer's speakers could not play the voice ({err2}). Check the output device."
+            raise VoiceError("no-speaker", _output_failed)
 
 
 def speak(text: str) -> dict:
@@ -236,9 +468,9 @@ def speak(text: str) -> dict:
 
 
 def close_stream() -> None:
-    """Close the kept-open speakers' stream, if any."""
-    global _out_stream, _out_rate
-    stream, _out_stream, _out_rate = _out_stream, None, 0
+    """Abort the stream that is speaking now, if any."""
+    global _active_stream
+    stream, _active_stream = _active_stream, None
     if stream is not None:
         try:
             stream.abort()
@@ -248,9 +480,9 @@ def close_stream() -> None:
 
 
 def stop() -> None:
-    # Cut the sound at once: close the kept-open stream (abort drops what is
-    # buffered). It reopens on the next reply. sd.stop() covers the old
-    # play() fallback path.
+    # Cut the sound at once: abort the active stream (abort drops what is
+    # buffered). The next reply opens a fresh stream. sd.stop() covers the
+    # non-streaming play() fallback path.
     global _speech_stopped
     _speech_stopped = True
     close_stream()
@@ -346,7 +578,7 @@ def speak_reason() -> str:
         return "sounddevice is not installed"
     if not kokoro_files_present():
         return f"the Kokoro voice files ({KOKORO_MODEL}, {KOKORO_VOICES}) are missing from {KOKORO_DIR}"
-    return _speak_failed
+    return _speak_failed or _output_failed
 
 
 def hear_reason() -> str:
@@ -362,14 +594,21 @@ def hear_reason() -> str:
 
 def health() -> dict:
     speak_why, hear_why = speak_reason(), hear_reason()
+    configured_output, _output_source = _configured_output_name()
+    output_label = (_output_device_cache.get("label") or "system default") \
+        if _output_device_cache.get("key") is not None else (configured_output or "system default")
     return {
         "ok": True,
         # "ready" must mean it can really do the work, not that this process is
         # running: the dashboard shows these lines in Settings → Voice.
+        # Speaking and hearing are reported separately: a missing speech
+        # model must not hide a working mouth (or the other way round).
         "speakReady": not speak_why,
         "speakReason": speak_why,
         "hearReady": not hear_why,
         "hearReason": hear_why,
+        "outputDevice": output_label,
+        "outputDeviceConfigured": configured_output,
         "numpy": np is not None,
         "voice": TTS_VOICE,
         "voiceFilesPresent": kokoro_files_present(),
@@ -468,6 +707,14 @@ def preload() -> None:
         if _kokoro is not None:
             try:
                 with _speak_lock:
+                    # Prove the speakers before claiming ready: resolve the
+                    # saved choice and open it once (silently), so a wrong or
+                    # dead output device is named here, at startup, in the
+                    # [local-voice] lines — not discovered as silence later.
+                    try:
+                        verify_output_device()
+                    except VoiceError as err:
+                        log(f"speaking is NOT ready: {err.message}")
                     kokoro().create("Ready.", voice=TTS_VOICE, speed=1.0, lang=kokoro_lang())
                 log("the voice is warmed up — speaking starts at once")
             except Exception:
