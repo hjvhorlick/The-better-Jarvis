@@ -12,26 +12,27 @@
  *      the server ear (POST /api/voice/transcribe) and pictures all answer;
  *   2. a configured model override (SUPPER_TEXT_MODEL / GEMINI_MODEL) wins over
  *      API discovery — only the configured model is ever called;
- *   3. a retired model name falls through to the next candidate, and a failed
- *      provider response stays concise while local/open-web chat continues;
- *   4. a missing key produces a short provider response while the diagnostic API
- *      names the places checked;
- *   5. the app's count (runtime/quota.json) is diagnostic-only and never gates
- *      chat; a damaged counter warns and never blocks; missing keys, the manual
- *      Gemini switch, and Google's stops affect provider calls only;
+ *   3. a retired model name falls through to the next candidate, and when
+ *      nothing works the message names the withdrawal — never the key or the
+ *      connection;
+ *   4. a missing key produces the documented message, naming every place checked;
+ *   5. the app's count (runtime/quota.json) counts and WARNS past
+ *      SUPPER_GEMINI_DAILY_WARN but never blocks; a damaged counter warns and
+ *      never blocks; only a real 429 from Google stops calls, until midnight;
  *   5b. the second key: a 429 on key 1 switches to key 2 for the day (the same
  *      question is retried on it, the next call goes out on it), per-key counts,
- *      and diagnostics show both stops only when both keys are stopped;
+ *      and only when both keys are stopped does the app say Google stopped us;
  *   5c. Settings saves, reports, shadows and removes the second key honestly;
- *   6. the page keeps Gemini optional, has no offline/brain status banner, and
- *      checks only its local voice path (the page itself, loaded in jsdom);
+ *   6. Settings → "The Brain" and the voice check report the key's source and the
+ *      model in use (the page itself, loaded in jsdom);
  *   7. the clear glass is one stylesheet for both surfaces, the rounded face is
  *      vendored, the rooms carry the camera behind their glass, and the local
  *      drafting desk writes an email or a letter without ever calling Gemini.
  *
  * Run:  node tests/config_harness.mjs
- *       (--http-only skips optional jsdom page checks; install project dev
- *        dependencies with npm ci to run them.)
+ *       (jsdom is not a project dependency — for the page checks, install it in a
+ *        scratch folder first:  npm i --no-save jsdom@24  — or skip them by
+ *        running with --http-only.)
  */
 import http from 'node:http';
 import fs from 'node:fs';
@@ -228,7 +229,7 @@ async function startDashboard({ models, env = {}, name = 'harness', files = {}, 
   const childEnv = { ...process.env, ...env };
   delete childEnv.GEMINI_API_KEY;          // the keys must come from the file, not the environment
   delete childEnv.GEMINI_API_KEY_2;
-  for (const k of ['SUPPER_TEXT_MODEL', 'GEMINI_MODEL', 'SUPPER_IMAGE_MODEL', 'SUPPER_GEMINI_DAILY_BUDGET', 'SUPPER_GEMINI_DAILY_WARN', 'SUPPER_GEMINI_BASE_URL']) {
+  for (const k of ['SUPPER_TEXT_MODEL', 'GEMINI_MODEL', 'SUPPER_IMAGE_MODEL', 'SUPPER_VOICE_MODEL', 'GEMINI_TTS_MODEL', 'SUPPER_GEMINI_DAILY_BUDGET', 'SUPPER_GEMINI_DAILY_WARN', 'SUPPER_GEMINI_VOICE_BUDGET', 'SUPPER_GEMINI_BASE_URL']) {
     if (!(k in env)) delete childEnv[k];
   }
   childEnv.SUPPER_DASHBOARD_PORT = String(port);
@@ -316,7 +317,7 @@ function freePort() {
     const pcm = Buffer.alloc(48000 * 2);       // 1 s of silence, mono PCM16
     const countBeforeEar = srv.stub.calls.length;
     const voice = await post(srv, '/api/voice/transcribe', { rate: 48000, pcm: pcm.toString('base64') });
-    ok('transcription stays on its local route and makes no provider call', !srv.stub.calls.some((c) => c.audio) && srv.stub.calls.length === countBeforeEar, JSON.stringify(voice.body).slice(0, 90));
+    ok('the ear is local: no audio is ever sent to Gemini', !srv.stub.calls.some((c) => c.audio) && srv.stub.calls.length === countBeforeEar, JSON.stringify(voice.body).slice(0, 90));
 
     const picture = await post(srv, '/api/ai/image', { prompt: 'a teapot, glass, studio light' });
     ok('pictures work with the file key', picture.status === 200 && typeof picture.body.image === 'string' && picture.body.mime === 'image/png', JSON.stringify(picture.body).slice(0, 80));
@@ -393,7 +394,7 @@ function freePort() {
       ok(`legacy Gemini 2.5 is never called for ${setting}`,
         !called.includes('gemini-2.5-flash') && called.every((m) => m === 'gemini-3.8-flash'),
         called.join(',') || 'none');
-      ok(`the diagnostic model source explains the ${setting} migration`,
+      ok(`Settings explains the ${setting} migration`,
         new RegExp(`legacy ${setting}.*automatically upgraded`).test(String(brain.body.modelSource)),
         String(brain.body.modelSource));
       const remembered = JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'dashboard_models.json'), 'utf8'));
@@ -436,23 +437,24 @@ function freePort() {
     ok('…and a chat reply still arrives', typeof chat.body.reply === 'string' && chat.body.reply.startsWith('answered by'), String(chat.body.reply).slice(0, 60));
   } finally { await srv.stop(); }
 
-  // Every candidate retired: the diagnostic identifies model configuration
-  // without leaking key data or a verbose provider response.
+  // Every candidate retired: the message must name the withdrawal — never the
+  // connection, and never the key.
   const dead = { 'harness-retired-model': { retire: true }, 'gemini-3.8-flash': { retire: true }, 'gemini-flash-latest': { retire: true }, 'harness-image-model': { retire: true } };
   const srv2 = await startDashboard({ models: dead, env: { SUPPER_TEXT_MODEL: 'harness-retired-model' }, name: 'all-retired' });
   try {
     const brain = await get(srv2, '/api/brain-check');
     const message = String(brain.body.error || '');
-    ok('a fully withdrawn model has a concise provider-specific diagnostic', brain.body.ok === false && brain.body.code === 'model-unavailable', String(brain.body.code));
-    ok('…and the message points to model configuration without key/connection detail', /configured Gemini model is unavailable/i.test(message) && /SUPPER_TEXT_MODEL/.test(message) && !/key is fine|connection|withdrawn|GEMINI_API_KEY/i.test(message), message.slice(0, 120));
-    ok('…without echoing the attempted model list', !/harness-retired-model|gemini-3\.8-flash|gemini-flash-latest/i.test(message), message);
+    ok('a fully withdrawn model explains itself', brain.body.ok === false && brain.body.code === 'model-unavailable', String(brain.body.code));
+    ok('…and the message blames the model name, not the key', /withdrawn/i.test(message) && /key is fine/i.test(message), message.slice(0, 120));
+    ok('…and it never blames the connection', !/connection/i.test(message), message.slice(0, 80));
+    ok('…and it points at the setting', /SUPPER_TEXT_MODEL|GEMINI_MODEL/.test(message), message.slice(0, 120));
     const chat = await post(srv2, '/api/command', { text: 'explain this model availability error' });
-    ok('…and normal chat uses its fallback instead of repeating the provider diagnostic', String(chat.body.reply).trim().length > 0 && !/withdrawn|key is fine|SUPPER_TEXT_MODEL|GEMINI_MODEL/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
+    ok('…and the dialogue says the same thing', /withdrawn/i.test(String(chat.body.reply)) && /key is fine/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
     const before = srv2.stub.calls.length;
     await post(srv2, '/api/voice/transcribe', { rate: 48000, pcm: Buffer.alloc(48000 * 2).toString('base64') });
     ok('…and the local ear never asks Gemini at all', srv2.stub.calls.length === before, `calls before=${before} after=${srv2.stub.calls.length}`);
     const picture = await post(srv2, '/api/ai/image', { prompt: 'a teapot' });
-    ok('…and the picture tool gives a short model-specific failure', picture.status >= 400 && /no Gemini model available|model.*unavailable|could not draw/i.test(String(picture.body.error)), String(picture.body.error).slice(0, 100));
+    ok('…and the picture tool as well', picture.status >= 400 && /withdrawn|no picture|key is fine/i.test(String(picture.body.error)), String(picture.body.error).slice(0, 100));
   } finally { await srv2.stop(); }
 }
 
@@ -463,34 +465,30 @@ function freePort() {
   try {
     fs.rmSync(path.join(srv.cwd, 'config', 'api_keys.json'));
     const brain = await get(srv, '/api/brain-check');
+    ok('no key produces the documented message', brain.body.ok === false && brain.body.code === 'no-key', String(brain.body.code));
     const message = String(brain.body.error || '');
-    ok('no key produces a short optional-provider diagnostic', brain.body.ok === false && brain.body.code === 'no-key' && /Gemini is optional/i.test(message), message);
-    ok('…without exposing environment or file lookup details in the provider error', !/GEMINI_API_KEY|config\/api_keys\.json|gemini_api_key|\.env/i.test(message), message);
+    ok('…naming the environment key', /GEMINI_API_KEY/.test(message), message.slice(0, 120));
+    ok('…naming config/api_keys.json and the field', /config\/api_keys\.json/.test(message) && /gemini_api_key/.test(message), message.slice(0, 160));
+    ok('…and naming ./.env', /\.env/.test(message), message.slice(0, 160));
     const settings = await get(srv, '/api/settings/gemini-key');
-    ok('the diagnostic endpoint confirms there is no key', settings.body.present === false && settings.body.source === null, JSON.stringify({ present: settings.body.present, source: settings.body.source }));
-    ok('…and its key detail identifies the locations checked', /GEMINI_API_KEY/.test(settings.body.sourceDetail) && /config\/api_keys\.json/.test(settings.body.sourceDetail) && /gemini_api_key/.test(settings.body.sourceDetail) && /\.env/.test(settings.body.sourceDetail), String(settings.body.sourceDetail).slice(0, 160));
+    ok('…and Settings agrees there is no key', settings.body.present === false && settings.body.source === null, JSON.stringify({ present: settings.body.present, source: settings.body.source }));
     const greeting = await post(srv, '/api/command', { text: 'hello' });
-    // The greeting stays focused on the greeting. Provider diagnostics belong
-    // in explicit status requests or diagnostic API responses, not unsolicited chat.
-    ok('…and an offline greeting is just the greeting — no status report', /^Good day/.test(String(greeting.body.reply)) && !/no Gemini key is set|reasoning core|offline/i.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
+    ok('…and an offline greeting stays brief and honest', /no Gemini key is set/.test(String(greeting.body.reply)) && String(greeting.body.reply).length < 100,
        String(greeting.body.reply));
     const chat = await post(srv, '/api/command', { text: 'what can you tell me offline' });
-    // The old reply was a paragraph about being offline and where the key files
-    // live. That is exactly the clutter the owner asked to have gone: the chat
-    // answers the question, and says nothing about its own state.
-    ok('…and an unanswered question stays short, with no lecture about being offline', !/I am offline|Still working|nothing was counted|GEMINI_API_KEY/i.test(String(chat.body.reply)) && /learn:/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
+    ok('…and an unanswered offline question names every place checked', /GEMINI_API_KEY/.test(String(chat.body.reply)) && /config\/api_keys\.json/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 110));
     ok('…and no call was made without a key', !srv.stub.calls.some((c) => c.kind === 'generate'), `calls=${srv.stub.calls.length}`);
-    ok('no key: the provider check and local fallback did not write quota usage', !fs.existsSync(path.join(srv.cwd, 'runtime', 'quota.json')), 'no provider call counted');
     const saved = await post(srv, '/api/settings/gemini-key', { key: 'a-new-harness-key-012345' });
     ok('saving a key clears the previous no-key status', saved.body.ok === true && !/no Gemini key is set|did not answer|offline/i.test(String((await post(srv, '/api/command', { text: 'hello' })).body.reply)),
        String(saved.body.ok));
   } finally { await srv.stop(); }
 }
 
-/* ── 5. OPTIONAL GEMINI ACCOUNTING DOES NOT GATE CHAT ───────────────────────
- * Gemini provider calls are counted for diagnostics; no app-imposed cap blocks
- * them. A real Google 429 stops that provider key, but local chat/features remain
- * available and provider-state changes do not post unsolicited chat notices. */
+/* ── 5. THE COUNT WARNS, ONLY GOOGLE STOPS ───────────────────────────────────
+ * The owner's rule: the app never blocks itself. It counts every outbound call
+ * (one unit per question), warns past SUPPER_GEMINI_DAILY_WARN, and keeps
+ * going. The only thing that stops a call is a real 429 from Google — and that
+ * is said plainly as Google's doing, until local midnight.                    */
 {
   const MODELS = { 'harness-text-model': { } };
   const readCounter = (srv) => JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'quota.json'), 'utf-8'));
@@ -508,13 +506,13 @@ function freePort() {
     ok('count: past the warning level the calls STILL go out — nothing blocks', second.body.ok === true && third.body.ok === true && third.body.quota.used === 3,
        `second=${second.body.ok} third=${third.body.ok} used=${third.body.quota?.used}`);
     ok('count: …and Google really was called every time', srv.stub.calls.filter((c) => c.kind === 'generate').length === 3, `generates=${srv.stub.calls.filter((c) => c.kind === 'generate').length}`);
-    ok('count: diagnostics report the warning level without gating a call', third.body.quota.pastWarn === true && third.body.quota.warnAt === 1 && /SUPPER_GEMINI_DAILY_WARN/.test(third.body.quota.warnSource), JSON.stringify({ pastWarn: third.body.quota.pastWarn, warnAt: third.body.quota.warnAt }));
-    ok('count: the terminal warning says this call is being sent', /warning level of 1/.test(srv.log()) && /call is being sent/.test(srv.log()), (srv.log().match(/.*warning level of 1.*/) || [''])[0].slice(0, 140));
+    ok('count: Settings reports it as past the warning level', third.body.quota.pastWarn === true && third.body.quota.warnAt === 1 && /SUPPER_GEMINI_DAILY_WARN/.test(third.body.quota.warnSource), JSON.stringify({ pastWarn: third.body.quota.pastWarn, warnAt: third.body.quota.warnAt }));
+    ok('count: the terminal warned, and said the call still goes through', /warning level of 1/.test(srv.log()) && /still goes through/.test(srv.log()), (srv.log().match(/.*warning level of 1.*/) || [''])[0].slice(0, 140));
     ok('count: the old refusal is gone', !/I am not calling Gemini/.test(JSON.stringify([first.body, second.body, third.body])), 'no "I am not calling Gemini" anywhere');
     const chat = await post(srv, '/api/command', { text: 'tell me about the reactor coolant' });
     ok('count: the dialogue answers too, past the level', /answered by harness-text-model/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 60));
     const settings = await get(srv, '/api/settings/gemini-key');
-    ok('count: the diagnostic endpoint exposes total and per-key counts', settings.body.quota.used === 4 && settings.body.quota.perKey['1'] === 4 && settings.body.quota.perKey['2'] === 0, JSON.stringify(settings.body.quota.perKey));
+    ok('count: Settings shows total and per-key counts', settings.body.quota.used === 4 && settings.body.quota.perKey['1'] === 4 && settings.body.quota.perKey['2'] === 0, JSON.stringify(settings.body.quota.perKey));
     ok('count: …and which key is active', settings.body.activeKey && settings.body.activeKey.slot === 1 && settings.body.activeKey.tail === 'cdef', JSON.stringify(settings.body.activeKey));
   } finally { await srv.stop(); }
 
@@ -543,21 +541,17 @@ function freePort() {
   const srv3 = await startDashboard({ models: { 'harness-text-model': { rateLimited: true } }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'rate-limited' });
   try {
     const brain = await get(srv3, '/api/brain-check');
-    ok('429: the diagnostic failure is concise and does not expose quota details', brain.body.ok === false && brain.body.code === 'rate-limited' && /not accepting Gemini requests right now/i.test(String(brain.body.error)) && !/429|quota|midnight|second key/i.test(String(brain.body.error)), String(brain.body.error).slice(0, 140));
-    ok('429: the provider error remains under the short-warning limit', String(brain.body.error).length <= 120, `${String(brain.body.error).length} characters`);
+    ok('429: reported as Google stopping us, not as a key problem and not as the app', brain.body.ok === false && brain.body.code === 'rate-limited' && /Google stopping us/.test(String(brain.body.error)) && /not this app/.test(String(brain.body.error)) && !/invalid|refused the key/i.test(String(brain.body.error)), String(brain.body.error).slice(0, 140));
+    ok('429: …and it says no second key is set', /No second key is set/.test(String(brain.body.error)), 'offers the second key');
     const after = readCounter(srv3);
     ok('429: the counter records that Google stopped key 1 today', after.google_stopped && after.google_stopped['1'] && after.google_stopped['1'].reason === 'quota', JSON.stringify(after.google_stopped));
     const sent = srv3.stub.calls.filter((c) => c.kind === 'generate').length;
     const next = await get(srv3, '/api/brain-check');
     ok('429: the next call is refused before it is sent — Google stopped us until midnight', next.body.ok === false && next.body.code === 'google-stopped' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `${next.body.code}; generates still ${sent}`);
-    ok('429: the stopped-provider response stays short and task-scoped', /not accepting Gemini requests right now/i.test(String(next.body.error)) && !/offline|quota|midnight|key 1 was stopped/i.test(String(next.body.error)), String(next.body.error).slice(0, 160));
+    ok('429: …and the message blames Google, names the time, and promises midnight', /Google, not this app/.test(String(next.body.error)) && /key 1 was stopped at \d\d:\d\d/.test(String(next.body.error)) && /local midnight/.test(String(next.body.error)), String(next.body.error).slice(0, 160));
     ok('429: …and the count is not pretended to be used up', next.body.quota.used === 1 && next.body.quota.stoppedByGoogle === true, JSON.stringify({ used: next.body.quota.used, stoppedByGoogle: next.body.quota.stoppedByGoogle }));
     const chat = await post(srv3, '/api/command', { text: 'explain how a transistor works' });
-    // A 429 stops this Gemini provider key, not the chat. The normal reply path
-    // may use local knowledge or the open web and does not announce status changes.
-    ok('429: the chat does NOT stop — it answers anyway, without a model', !/Google has stopped our calls for today/.test(String(chat.body.reply)) && String(chat.body.reply).trim().length > 0 && !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 120));
-    ok('429: …and the reply is not a wall of provider error or quota talk', !/RESOURCE_EXHAUSTED/.test(String(chat.body.reply)) && !/quota/i.test(String(chat.body.reply)) && !/\boffline\b/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 140));
-    ok('429: …and it offers the local way forward (teach it, or wait for midnight)', /learn:/i.test(String(chat.body.reply)), 'offers "learn:"');
+    ok('429: the dialogue says the same — Google stopped us', /Google has stopped our calls for today/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
     // Local answers never go near the gate.
     const time = await post(srv3, '/api/command', { text: 'what time is it' });
     ok('429: local answers still work while Google has stopped us (the time)', !/Google/.test(String(time.body.reply)) && /\d/.test(String(time.body.reply)), String(time.body.reply).slice(0, 80));
@@ -568,38 +562,9 @@ function freePort() {
     ok('429: …and the drafting desk', /draft|email/i.test(String(draft.body.reply)) && !/Google has stopped/.test(String(draft.body.reply)), String(draft.body.reply).slice(0, 80));
     ok('429: …none of which counted or called Google', readCounter(srv3).used === 1 && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `used=${readCounter(srv3).used}`);
     const settings = await get(srv3, '/api/settings/gemini-key');
-    ok('429: the diagnostic API reports the provider stop', settings.body.quota.stoppedByGoogle === true && settings.body.activeKey.stoppedByGoogle === true && /GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
+    ok('429: Settings says Google stopped us', settings.body.quota.stoppedByGoogle === true && settings.body.activeKey.stoppedByGoogle === true && /GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
     ok('429: the terminal says Google stopped key 1 and no second key is set', /Google stopped key 1/.test(srv3.log()) && /no second key is set/.test(srv3.log()), (srv3.log().match(/.*Google stopped key 1.*/) || [''])[0].slice(0, 160));
   } finally { await srv3.stop(); }
-
-  // (e) THE STOP FOLLOWS GOOGLE'S DAY: it survives this computer's local
-  // midnight and ends only at midnight Pacific. (The app used to clear it at
-  // local midnight — nine hours early for the owner in UTC+2 — so the first
-  // call after "resume" 429'd again, straight after a message that said calls
-  // had resumed.)
-  const pacific = await startDashboard({ models: { 'harness-text-model': { rateLimited: true } }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'pacific-stop' });
-  try {
-    const first = await get(pacific, '/api/brain-check');
-    ok('pacific: the 429 records a stop on key 1', first.body.ok === false && first.body.code === 'rate-limited' && readCounter(pacific).google_stopped['1'], String(first.body.code));
-    const qfile = path.join(pacific.cwd, 'runtime', 'quota.json');
-    // Roll THIS COMPUTER'S day back one day (a local midnight just passed),
-    // keeping the stop recorded now — Google's day has not changed.
-    const rolled = JSON.parse(fs.readFileSync(qfile, 'utf-8'));
-    const y = new Date(Date.now() - 24 * 3600_000);
-    const pad = (n) => String(n).padStart(2, '0');
-    rolled.day = `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`;
-    fs.writeFileSync(qfile, JSON.stringify(rolled));
-    const next = await get(pacific, '/api/brain-check');
-    ok('pacific: a new LOCAL day does not lift Google\'s stop', next.body.code === 'google-stopped', String(next.body.code));
-    ok('pacific: the API response stays concise while the provider stop is enforced', /not accepting Gemini requests right now/i.test(String(next.body.error)) && next.body.code === 'google-stopped', String(next.body.error).slice(0, 120));
-    // Age the stop to 48 hours ago — a previous Pacific day — and the key is tried again.
-    const aged = JSON.parse(fs.readFileSync(qfile, 'utf-8'));
-    const sent = pacific.stub.calls.filter((c) => c.kind === 'generate').length;
-    aged.google_stopped['1'].at = new Date(Date.now() - 48 * 3600_000).toISOString();
-    fs.writeFileSync(qfile, JSON.stringify(aged));
-    const again = await get(pacific, '/api/brain-check');
-    ok('pacific: once midnight Pacific has passed, the key really is tried again', again.body.code === 'rate-limited' && pacific.stub.calls.filter((c) => c.kind === 'generate').length === sent + 1, `${again.body.code}; generates ${sent} -> ${pacific.stub.calls.filter((c) => c.kind === 'generate').length}`);
-  } finally { await pacific.stop(); }
 }
 
 /* ── 5b. THE SECOND KEY: Google stops key 1, key 2 carries on ─────────────── */
@@ -615,7 +580,7 @@ function freePort() {
   });
   try {
     const before = await get(two, '/api/settings/gemini-key');
-    ok('two keys: the settings API reports both keys by their last four characters and source',
+    ok('two keys: Settings shows both keys by their last four characters and source',
        before.body.tail === 'cdef' && before.body.key2 && before.body.key2.present === true && before.body.key2.tail === '3210' && before.body.key2.source === 'config/api_keys.json',
        JSON.stringify({ key1: before.body.tail, key2: before.body.key2 && before.body.key2.tail, source: before.body.key2 && before.body.key2.source }));
     ok('two keys: key 1 is the active one to begin with', before.body.activeKey.slot === 1, JSON.stringify(before.body.activeKey));
@@ -634,7 +599,7 @@ function freePort() {
     ok('two keys: the NEXT call goes straight out on key 2 — key 1 is not tried again today', next.body.ok === true && nextCalls.length >= 1 && nextCalls.every((c) => c.key === KEY2), nextCalls.map((c) => `…${String(c.key).slice(-4)}`).join(','));
     ok('two keys: …and the brain check names key 2 as the one that answered', next.body.keySlot === 2 && next.body.keyTail === '3210', `key ${next.body.keySlot} …${next.body.keyTail}`);
     const settings = await get(two, '/api/settings/gemini-key');
-    ok('two keys: the diagnostic API reports key 2 active, with the reason', settings.body.activeKey.slot === 2 && /Google stopped the first one/.test(settings.body.activeKey.reason), settings.body.activeKey.reason.slice(0, 120));
+    ok('two keys: Settings shows key 2 active, with the reason', settings.body.activeKey.slot === 2 && /Google stopped the first one/.test(settings.body.activeKey.reason), settings.body.activeKey.reason.slice(0, 120));
     ok('two keys: …and the calls counted per key', settings.body.quota.perKey['1'] === 1 && settings.body.quota.perKey['2'] === 2 && settings.body.quota.used === 3, JSON.stringify(settings.body.quota.perKey));
     ok('two keys: …and when the switch happened', typeof settings.body.quota.switchedAt === 'string' && settings.body.quota.googleStopped['1'] && !settings.body.quota.googleStopped['2'], JSON.stringify({ switchedAt: settings.body.quota.switchedAt, stopped: settings.body.quota.googleStopped }));
     ok('two keys: it is NOT reported as Google stopping us — key 2 is still working', settings.body.quota.stoppedByGoogle === false && !/GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
@@ -653,12 +618,12 @@ function freePort() {
     const brain = await get(both, '/api/brain-check');
     const sent = both.stub.calls.filter((c) => c.kind === 'generate');
     ok('both stopped: key 1 then key 2 were both tried', sent.some((c) => c.key === KEY1) && sent.some((c) => c.key === KEY2), sent.map((c) => `…${String(c.key).slice(-4)}`).join(','));
-    ok('both stopped: the provider error stays concise', brain.body.ok === false && brain.body.code === 'rate-limited' && /not accepting Gemini requests right now/i.test(String(brain.body.error)) && !/key 1 was stopped|key 2 was stopped|quota|midnight/i.test(String(brain.body.error)), String(brain.body.error).slice(0, 140));
+    ok('both stopped: the report says Google stopped us, for both keys', brain.body.ok === false && brain.body.code === 'rate-limited' && /key 1 was stopped at/.test(String(brain.body.error)) && /key 2 was stopped at/.test(String(brain.body.error)), String(brain.body.error).slice(0, 200));
     ok('both stopped: the terminal says both are stopped — Google, not the app', /key 2 is stopped too|key 1 is stopped too/.test(both.log()) && /GOOGLE HAS STOPPED US/.test(both.log()), (both.log().match(/.*GOOGLE HAS STOPPED US.*/) || [''])[0].slice(0, 160));
     const after = await get(both, '/api/brain-check');
     ok('both stopped: the next call is refused before it is sent', after.body.code === 'google-stopped' && both.stub.calls.filter((c) => c.kind === 'generate').length === sent.length, after.body.code);
     const settings = await get(both, '/api/settings/gemini-key');
-    ok('both stopped: the diagnostic API reports both provider stops', settings.body.quota.stoppedByGoogle === true && settings.body.quota.googleStopped['1'] && settings.body.quota.googleStopped['2'], settings.body.quota.summary.slice(0, 120));
+    ok('both stopped: Settings says so', settings.body.quota.stoppedByGoogle === true && settings.body.quota.googleStopped['1'] && settings.body.quota.googleStopped['2'], settings.body.quota.summary.slice(0, 120));
     ok('both stopped: …and each key shows the one call Google saw from it', settings.body.quota.perKey['1'] === 1 && settings.body.quota.perKey['2'] === 1, JSON.stringify(settings.body.quota.perKey));
     const time = await post(both, '/api/command', { text: 'what is the date today' });
     ok('both stopped: local answers still work', /\d/.test(String(time.body.reply)) && !/Google/.test(String(time.body.reply)), String(time.body.reply).slice(0, 80));
@@ -676,7 +641,7 @@ function freePort() {
     ok('rejected key 1: key 2 answers', brain.body.ok === true && brain.body.keySlot === 2, `ok=${brain.body.ok} key=${brain.body.keySlot}`);
     ok('rejected key 1: …and the terminal says why', /Google rejected the key itself/.test(rejected.log()) && /Switching to key 2/.test(rejected.log()), (rejected.log().match(/.*Google stopped key 1.*/) || [''])[0].slice(0, 160));
     const settings = await get(rejected, '/api/settings/gemini-key');
-    ok('rejected key 1: the diagnostic API records the provider reason', settings.body.quota.googleStopped['1'] && settings.body.quota.googleStopped['1'].reason === 'key-rejected', JSON.stringify(settings.body.quota.googleStopped['1']));
+    ok('rejected key 1: Settings records the reason', settings.body.quota.googleStopped['1'] && settings.body.quota.googleStopped['1'].reason === 'key-rejected', JSON.stringify(settings.body.quota.googleStopped['1']));
   } finally { await rejected.stop(); }
 
   // (d) a second key from ./.env is found and named as coming from there
@@ -707,12 +672,12 @@ function freePort() {
     ok('save key 2: written as gemini_api_key_2 in config/api_keys.json', saved.status === 200 && saved.body.slot === 2 && file.gemini_api_key_2 === KEY2, JSON.stringify(saved.body).slice(0, 120));
     ok('save key 2: …without touching the first key or the names', file.gemini_api_key === KEY1 && file.assistant_name === 'Tessa', JSON.stringify(file).slice(0, 120));
     const after = await get(srv, '/api/settings/gemini-key');
-    ok('save key 2: the diagnostic API reports it by its last four characters and source', after.body.key2.present === true && after.body.key2.tail === '3210' && after.body.key2.source === 'config/api_keys.json', JSON.stringify(after.body.key2));
+    ok('save key 2: Settings reports it by its last four characters and source', after.body.key2.present === true && after.body.key2.tail === '3210' && after.body.key2.source === 'config/api_keys.json', JSON.stringify(after.body.key2));
     ok('save key 2: …and the first key is still the active one', after.body.activeKey.slot === 1 && after.body.quota.hasSecondKey === true, JSON.stringify(after.body.activeKey));
     const removed = await post(srv, '/api/settings/gemini-key', { slot: 2, clear: true });
     const fileAfter = JSON.parse(fs.readFileSync(path.join(srv.cwd, 'config', 'api_keys.json'), 'utf-8'));
     ok('remove key 2: gone from the file, first key untouched', removed.status === 200 && removed.body.cleared === true && !('gemini_api_key_2' in fileAfter) && fileAfter.gemini_api_key === KEY1, JSON.stringify(removed.body).slice(0, 100));
-    ok('remove key 2: …and the diagnostic API reports none', (await get(srv, '/api/settings/gemini-key')).body.key2.present === false, 'none');
+    ok('remove key 2: …and Settings says there is none', (await get(srv, '/api/settings/gemini-key')).body.key2.present === false, 'none');
   } finally { await srv.stop(); }
 
   // A GEMINI_API_KEY_2 already in ./.env shadows a saved second key — and the save says so.
@@ -729,252 +694,106 @@ function freePort() {
   } finally { await shadow.stop(); }
 }
 
-/* ── 5d. SUPPORTED DASHBOARD SPEECH USES THE APP-LOCAL SERVICE ─────────────── */
+/* ── 5d. THE VOICE IS LOCAL: it never calls Gemini and never counts ─────────── */
 {
   const srv = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'voice-local' });
   try {
     await post(srv, '/api/voice/speak', { text: 'Good day, sir. All systems are online.' });
     await post(srv, '/api/voice/transcribe', { rate: 48000, pcm: Buffer.alloc(48000 * 2).toString('base64') });
     await post(srv, '/api/voice/stop', {});
-    ok('voice: speech requests stay on the app-local service path', srv.stub.calls.length === 0, `unrelated provider calls=${srv.stub.calls.length}`);
+    ok('voice: speaking and hearing never reach Gemini', srv.stub.calls.length === 0, `stub calls=${srv.stub.calls.length}`);
     ok('voice: …and never count', !fs.existsSync(path.join(srv.cwd, 'runtime', 'quota.json')), 'no runtime/quota.json was written');
     const settings = await get(srv, '/api/settings/gemini-key');
-    const voiceStatus = await get(srv, '/api/system-status');
-    ok('the text-key response contains no speech configuration',
-      !Object.hasOwn(settings.body, 'voiceModel') && !Object.hasOwn(settings.body, 'voiceModelSource'),
-      'key settings and speech settings are separate');
-    ok('local voice readiness comes from the local service status',
-      typeof voiceStatus.body.voiceLocal?.speakReady === 'boolean' && typeof voiceStatus.body.voiceLocal?.hearReady === 'boolean',
-      JSON.stringify(voiceStatus.body.voiceLocal));
-    ok('local service status stays separate from provider diagnostics',
-      !Object.hasOwn(voiceStatus.body, 'offline') && !Object.hasOwn(voiceStatus.body, 'brain'),
-      'provider state has its own diagnostic routes');
+    ok('voice: Settings names the local voice, not a Gemini model', /Kokoro/.test(String(settings.body.voiceModel)) && /local_voice/.test(String(settings.body.voiceModelSource)), `${settings.body.voiceModel} — ${settings.body.voiceModelSource}`);
     const empty = await post(srv, '/api/voice/speak', { text: '   ' });
     ok('voice: empty text is refused politely', empty.body.code === 'empty', JSON.stringify(empty.body).slice(0, 80));
   } finally { await srv.stop(); }
 }
 
-/* ── 5e. Gemini unavailability: chat and local tools stay usable ────────────
- * The owner's rule, proved end to end:
- *   - a provider/quota failure does not stop chat or print unsolicited notices;
- *   - local tools keep working, and separately implemented web tools are not
- *     blocked solely because Gemini is unavailable;
- *   - diagnostics may report connection state, but the page has no status gate;
- *   - the manual local-only switch suppresses model calls and survives restart. */
-{
-  const readCounter = (srv) => (fs.existsSync(path.join(srv.cwd, 'runtime', 'quota.json'))
-    ? JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'quota.json'), 'utf-8')) : { used: 0 });
-
-  // (a) Google stopped BOTH keys: Gemini is unavailable, but chat and other paths continue.
-  const spent = await startDashboard({
-    models: { 'harness-text-model': { rateLimitedKeys: [KEY1, KEY2] }, 'harness-image-model': { picture: true } },
-    env: { SUPPER_TEXT_MODEL: 'harness-text-model' },
-    config: { gemini_api_key_2: KEY2 },
-    name: 'offline-quota',
-  });
-  try {
-    const chat = await post(spent, '/api/command', { text: 'explain how a transistor works' });
-    const sentAfterQuota = spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length;
-    ok('offline: the chat answers instead of stopping', chat.status === 200 && String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 90));
-    const state = await get(spent, '/api/offline');
-    ok('offline API: Gemini unavailability identifies Google\'s 429, not the app', state.body.offline === true && state.body.reason === 'google-stopped' && /429/.test(String(state.body.why)), `${state.body.reason} — ${String(state.body.why).slice(0, 70)}`);
-    ok('offline: …and lists what still works and what is refused', Array.isArray(state.body.works) && state.body.works.length > 3 && Array.isArray(state.body.refused) && state.body.refused.length > 2, `${state.body.works.length} work / ${state.body.refused.length} refused`);
-    const status = await get(spent, '/api/system-status');
-    ok('system status contains no text-provider diagnostics', !Object.hasOwn(status.body, 'offline') && !Object.hasOwn(status.body, 'brain'), JSON.stringify(Object.keys(status.body)));
-    const settings = await get(spent, '/api/settings/gemini-key');
-    ok('offline: the settings diagnostic API includes provider state', settings.body.offline && settings.body.offline.offline === true, String(settings.body.offline && settings.body.offline.summary).slice(0, 90));
-
-    // Separate web tools remain available; these requests do not spend Gemini calls.
-    const research = await post(spent, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
-    // A spent Gemini quota used to switch the internet off entirely. It does
-    // not: research gathering is not a Gemini call, so the task simply starts.
-    ok('offline: Internet Research still runs — a quota is not a block on the internet', research.status === 202 || research.status === 200, `status=${research.status} ${String(research.body.error || research.body.task?.id || '').slice(0, 60)}`);
-    const picture = await post(spent, '/api/ai/image', { prompt: 'a teapot, glass, studio light' });
-    // A picture is FOUND when it cannot be drawn: Pexels/Pixabay with a key,
-    // Commons/Openverse without. In this sandbox there is no route out, so what
-    // is proved here is that the refusal is honest and says nothing about quota.
-    ok('offline: AI pictures fall back to a found photograph, with no quota talk', picture.status === 200 ? Boolean(picture.body.found) : !/offline|quota/i.test(String(picture.body.error)), `status=${picture.status} ${String(picture.body.error || picture.body.url || '').slice(0, 70)}`);
-    const researchChat = await post(spent, '/api/command', { text: 'research the history of the steam engine' });
-    ok('offline: …and by chat, research still starts', /started|Research/i.test(String(researchChat.body.reply)) && !/needs the internet/.test(String(researchChat.body.reply)), String(researchChat.body.reply).slice(0, 100));
-
-    // Local work carries on, and costs nothing at all.
-    const local = await post(spent, '/api/command', { text: 'what time is it' });
-    ok('offline: local answers still work (the time)', /\d/.test(String(local.body.reply)) && !/offline/i.test(String(local.body.reply)), String(local.body.reply).slice(0, 70));
-    const room = await post(spent, '/api/command', { text: 'open the files room' });
-    ok('offline: …and local PC commands are not swallowed by a topic question', /files room/.test(String(room.body.reply)), String(room.body.reply).slice(0, 80));
-    const learn = await post(spent, '/api/command', { text: 'learn: the coolant pump is in bay three' });
-    const recall = await post(spent, '/api/command', { text: 'where is the coolant pump' });
-    ok('offline: …and the knowledge base answers for free', /bay three/.test(String(recall.body.reply)) && /Learned/.test(String(learn.body.reply)), String(recall.body.reply).slice(0, 70));
-    const draft = await post(spent, '/api/command', { text: 'draft an email to Pepper about the reactor review' });
-    ok('offline: …and the drafting desk writes here', /draft/i.test(String(draft.body.reply)) && /no AI/i.test(String(draft.body.reply)), String(draft.body.reply).slice(0, 80));
-    const small = await post(spent, '/api/command', { text: 'hello' });
-    ok('offline: …and small talk stays small talk', /Good day/.test(String(small.body.reply)), String(small.body.reply).slice(0, 60));
-    ok('offline: none of that reached Google or counted a call', spent.stub.calls.filter((c) => c.kind === 'generate' || c.kind === 'stream').length === sentAfterQuota && readCounter(spent).used === 2, `stub=${spent.stub.calls.length} used=${readCounter(spent).used}`);
-    ok('offline: quota exhaustion does not add an unsolicited chat/status announcement',
-      !/This is a warning, not a block|Gemini is back\./.test(spent.log()), 'no dashboard announcement');
-    const who = await post(spent, '/api/command', { text: 'are you offline' });
-    // It says what is missing (a model) and what still works — including the
-    // open web, which used to be wrongly listed among the casualties.
-    ok('offline: an explicit status request reports Gemini state and open-web availability', /Gemini is unavailable/i.test(String(who.body.reply)) && /open web/i.test(String(who.body.reply)), String(who.body.reply).slice(0, 120));
-    // The owner's switch is only half the decision: it cannot lift Google's 429.
-    // (It used to — "come back online" reported ONLINE while both keys were
-    // still stopped, so the next question was sent, 429'd, and the app kept
-    // claiming to be online.)
-    const undo = await post(spent, '/api/offline', { on: false });
-    ok('offline: "come back online" cannot undo Google\'s 429', undo.body.offline === true && undo.body.reason === 'google-stopped', `${undo.body.offline} / ${undo.body.reason}`);
-    ok('offline: …and says Gemini remains unavailable without promising a reset time', /Gemini is still unavailable/i.test(String(undo.body.message)) && !/midnight/i.test(String(undo.body.message)), String(undo.body.message).slice(0, 120));
-  } finally { await spent.stop(); }
-
-  // (b) The owner's Gemini-only switch: disable it, then return to automatic.
-  const manual = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'offline-manual' });
-  try {
-    const online = await get(manual, '/api/offline');
-    ok('Gemini switch: provider starts available', online.body.offline === false && online.body.reason === null, `${online.body.offline} / ${online.body.reason}`);
-    const before = manual.stub.calls.length;
-    const on = await post(manual, '/api/offline', { on: true });
-    ok('Gemini switch: disabling Gemini keeps local and web paths available', on.body.offline === true && on.body.reason === 'manual' && on.body.forced === true && /Gemini calls are disabled/i.test(on.body.message) && /open-web tools remain available/i.test(on.body.message), `${on.body.reason} — ${on.body.message}`);
-    const chat = await post(manual, '/api/command', { text: 'explain how a transistor works' });
-    ok('offline switch: the chat still answers, and calls no model', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && manual.stub.calls.length === before, String(chat.body.reply).slice(0, 90));
-    const research = await post(manual, '/api/research/tasks', { question: 'What is the history of the steam engine?' });
-    ok('offline switch: …and the internet is still available to it', research.status === 202 || research.status === 200, `status=${research.status}`);
-    ok('offline switch: …and nothing was counted', !fs.existsSync(path.join(manual.cwd, 'runtime', 'quota.json')), 'no counter file written');
-    ok('offline switch: it is remembered in runtime/offline.json', fs.existsSync(path.join(manual.cwd, 'runtime', 'offline.json')) && JSON.parse(fs.readFileSync(path.join(manual.cwd, 'runtime', 'offline.json'), 'utf-8')).forced === true, 'runtime/offline.json');
-    const reEnable = await post(manual, '/api/command', { text: 'come back online' });
-    ok('text-answer switch: "come back online" returns to automatic control', /back under automatic control/i.test(String(reEnable.body.reply)) && !fs.existsSync(path.join(manual.cwd, 'runtime', 'offline.json')), String(reEnable.body.reply).slice(0, 100));
-    const after = await post(manual, '/api/command', { text: 'explain how a transistor works' });
-    ok('offline switch: …and the next question reaches Gemini again', after.body.reply === 'answered by harness-text-model' && manual.stub.calls.length === before + 1, String(after.body.reply).slice(0, 70));
-    const goOffline = await post(manual, '/api/command', { text: 'go offline' });
-    ok('Gemini switch: explicit chat command disables provider calls', /Gemini calls are disabled/i.test(String(goOffline.body.reply)) && /come back online/i.test(String(goOffline.body.reply)), String(goOffline.body.reply).slice(0, 100));
-  } finally { await manual.stop(); }
-
-  // (c) SUPPER_OFFLINE=1: Gemini calls are disabled from boot by the legacy setting.
-  const boot = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model', SUPPER_OFFLINE: '1' }, name: 'offline-boot' });
-  try {
-    const state = await get(boot, '/api/offline');
-    ok('Gemini switch from boot: SUPPER_OFFLINE=1 disables provider calls', state.body.offline === true && state.body.reason === 'manual', `${state.body.reason}`);
-    const chat = await post(boot, '/api/command', { text: 'explain how a transistor works' });
-    ok('offline from boot: …and no model is called', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && boot.stub.calls.length === 0, `stub calls=${boot.stub.calls.length}`);
-    ok('offline from boot: no Gemini status announcement is pushed at startup',
-      !/This is a warning, not a block|Gemini is back\./.test(boot.log()), 'no dashboard announcement');
-  } finally { await boot.stop(); }
-
-  // (d) No key at all. The switch cannot invent one: returning to automatic
-  // must continue reporting Gemini as unavailable.
-  const noKey = await startDashboard({ models: { 'harness-text-model': {} }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'offline-no-key', writeConfigFile: false });
-  try {
-    ok('no key: startup emits no unsolicited offline/quota announcement',
-      !/This is a warning, not a block|Gemini is back\./.test(noKey.log()), noKey.log().slice(-120));
-    const state = await get(noKey, '/api/offline');
-    ok('no key: the status API remains available without gating chat', state.body.offline === true && state.body.reason === 'no-key', `${state.body.offline} / ${state.body.reason}`);
-    const chat = await post(noKey, '/api/command', { text: 'explain how a transistor works' });
-    ok('no key: …and answers from the open web instead of failing', String(chat.body.reply).trim().length > 0 && !/\boffline\b/i.test(String(chat.body.reply)) && noKey.stub.calls.length === 0, `stub calls=${noKey.stub.calls.length}`);
-    const undo = await post(noKey, '/api/offline', { on: false });
-    ok('no key: "come back online" cannot invent a key', undo.body.offline === true && undo.body.reason === 'no-key', `${undo.body.offline} / ${undo.body.reason}`);
-    ok('no key: …and the switch says Gemini remains unavailable', /Gemini is still unavailable/i.test(String(undo.body.message)), String(undo.body.message).slice(0, 120));
-    const still = await get(noKey, '/api/offline');
-    ok('no key: the status API still reports local mode without gating chat', still.body.offline === true, `${still.body.offline}`);
-  } finally { await noKey.stop(); }
-}
-
-/* ── 6. Provider settings and app-local speech checks in the real page ───── */
+/* ── 6. Settings → "The Brain" and the voice check, in the real page ──────── */
 {
   let JSDOM = null;
   if (!HTTP_ONLY) {
     try { ({ JSDOM } = await import('jsdom')); } catch { /* handled below */ }
   }
   if (!JSDOM) {
-    console.log('      (page checks skipped — install the project dev dependencies to enable jsdom checks)');
+    console.log('      (page checks skipped — install jsdom in a scratch folder: npm i --no-save jsdom@24)');
   } else {
-    const MODELS = { 'harness-text-model': {} };
+    const MODELS = { 'harness-text-model': { } };
     const srv = await startDashboard({ models: MODELS, name: 'page' });
     try {
       const pageHtml = await (await fetch(srv.url('/'))).text();
-      ok('the server fills the assistant name into the page', pageHtml.includes('Tessa — Chat'), pageHtml.slice(0, 60).replace(/\n/g, ' '));
+      ok('the server fills the assistant name into the page', pageHtml.includes('Tessa — Autonomous Workspace'), pageHtml.slice(0, 60).replace(/\n/g, ' '));
       const handScript = fs.readFileSync(path.join(REPO, 'dashboard/static/hand-gestures.js'), 'utf8');
       const html = pageHtml.replace('<script src="/static/hand-gestures.js"></script>', `<script>${handScript}</script>`);
       const { VirtualConsole } = await import('jsdom');
-      const virtualConsole = new VirtualConsole();
+      const virtualConsole = new VirtualConsole();          // jsdom's canvas warning is not our business
       virtualConsole.on('jsdomError', () => {});
-      const requests = [];
-      const dom = new JSDOM(html, {
-        url: srv.url('/'), runScripts: 'dangerously', pretendToBeVisual: false, virtualConsole,
-        // Install browser-facing stubs before the inline page script runs. Its
-        // startup voice/build probe fires during parsing, not after construction.
-        beforeParse(window) {
-          window.fetch = (input, init = {}) => {
-            const absolute = typeof input === 'string' ? new URL(input, srv.url('/')).toString() : input;
-            const pathName = new URL(absolute, srv.url('/')).pathname;
-            requests.push({ path: pathName, method: init.method || 'GET' });
-            // No audio device/model is present in this harness. Make the local voice
-            // boundary fail fast instead of starting hardware or waiting on a model.
-            if (pathName === '/api/voice/speak') {
-              return Promise.resolve(new Response(JSON.stringify({ ok: false, code: 'no-speaker', message: 'hardware is not attached in this test' }), {
-                status: 503, headers: { 'Content-Type': 'application/json' },
-              }));
-            }
-            return fetch(absolute, init);
-          };
-          window.WebSocket = class { constructor() { this.readyState = 3; } send() {} close() {} };
-          window.scrollTo = () => {};
-        },
-      });
+      const dom = new JSDOM(html, { url: srv.url('/'), runScripts: 'dangerously', pretendToBeVisual: false, virtualConsole });
       const { window } = dom;
+      window.fetch = (input, init) => {
+        const absolute = typeof input === 'string' ? new URL(input, srv.url('/')).toString() : input;
+        return fetch(absolute, init);
+      };
+      window.WebSocket = class { constructor() { this.readyState = 3; } send() {} close() {} };
+      window.scrollTo = () => {};
       await sleep(400);
 
-      const status = (await get(srv, '/api/system-status')).body;
       const buildLine = window.document.getElementById('jarvis-build-line');
-      ok('Settings → Voice shows the page and server build marker',
-        typeof status.build === 'string' && buildLine.textContent.includes(`page ${status.build}`),
-        `server=${status.build}; line=${buildLine.textContent.slice(0, 110)}`);
-      ok('the build line reports only local voice readiness', /app-local voice/.test(buildLine.textContent) && !/provider|quota|offline/i.test(buildLine.textContent),
-        buildLine.textContent.slice(0, 130));
-      ok('the chat UI has no offline/Gemini banner or brain icon',
-        !window.document.getElementById('offline-banner') && !window.document.body.textContent.includes('🧠'), 'no banner or brain icon');
-      const chatWorkspace = window.document.getElementById('chat-workspace');
-      const chatWindow = window.document.getElementById('win-chat');
-      const chatFeed = window.document.getElementById('chat-feed');
-      ok('the conversation is the primary full-height workspace',
-        chatWorkspace?.tagName === 'MAIN' && chatWorkspace.contains(chatWindow)
-          && chatWorkspace.contains(chatFeed) && chatWindow.classList.contains('primary-chat')
-          && window.getComputedStyle(chatWorkspace).position === 'fixed',
-        `main=${chatWorkspace?.tagName}; mounted=${Boolean(chatWorkspace?.contains(chatWindow))}`);
-      ok('the main screen has no telemetry card or always-on status pill',
-        !window.document.getElementById('win-telemetry') && !window.document.getElementById('status-pill'),
-        'conversation has the available screen area');
-      const filesWindow = window.document.getElementById('win-tree');
-      const filesStartHidden = filesWindow?.style.display === 'none';
-      window.toggleWindow('win-tree');
-      const filesOpenOnRequest = filesWindow?.style.display === 'flex';
-      window.toggleWindow('win-tree');
-      ok('the Files workspace stays out of chat until opened, and remains available on request',
-        filesStartHidden && filesOpenOnRequest && filesWindow?.style.display === 'none',
-        `initially hidden=${filesStartHidden}; opens=${filesOpenOnRequest}`);
-      ok('the conversation log and message field are accessible',
-        chatFeed?.getAttribute('aria-live') === 'polite'
-          && window.document.getElementById('chat-input')?.getAttribute('aria-label') === 'Message JARVIS',
-        'polite conversation log; labelled message input');
-      ok('voice is automatic with no engine selector or remote voice list',
-        !window.document.getElementById('sel-voice-engine') && !/online voice/i.test(window.document.body.textContent), 'automatic local-only voice');
-      ok('Settings keeps one optional Gemini key field, not a multi-key panel',
-        Boolean(window.document.getElementById('gemini-key-input'))
-          && !window.document.getElementById('gemini-key2-input')
-          && !window.document.getElementById('gemini-key2-status'), 'one optional key field');
+      // The marker is only worth printing if it proves the PAGE and the SERVER
+      // are the same build. Hard-coding the string here would pass on a stale
+      // page and fail on every honest bump, so the server's own marker is asked
+      // for and the two are compared.
+      const serverBuild = (await get(srv, '/api/system-status')).body.build;
+      ok('the server reports the build it is running', typeof serverBuild === 'string' && serverBuild.length > 0, String(serverBuild));
+      ok('…and the folder it reads its settings from',
+         /configRoot/.test(JSON.stringify((await get(srv, '/api/system-status')).body)), String((await get(srv, '/api/system-status')).body.configRoot));
+      ok('Settings → Voice shows the build marker', /Build page/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
+      ok('…with the assistant\'s configured name', /Tessa/.test(buildLine.textContent), buildLine.textContent.slice(0, 90));
 
       await window.refreshGeminiKeyStatus();
-      const keyStatus = window.document.getElementById('gemini-key-status').textContent;
-      ok('the text-answer key status follows the saved-key state',
-        /Optional Gemini key saved|No Gemini key saved/.test(keyStatus), keyStatus.slice(0, 100));
+      await sleep(150);
+      ok('…and once the server answers, the line compares the page with the server',
+         new RegExp(`page and server both ${serverBuild.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`).test(buildLine.textContent),
+         `server=${serverBuild} line=${buildLine.textContent.slice(0, 110)}`);
+      ok('…so a stale page would be called out instead of silently lying',
+         !/BUT THE SERVER IS/.test(buildLine.textContent), buildLine.textContent.slice(0, 110));
+      ok('…and it names the folder the server reads its settings from',
+         new RegExp(path.basename(srv.cwd)).test(buildLine.textContent), buildLine.textContent.slice(0, 170));
+      const status = window.document.getElementById('gemini-key-status').textContent;
+      ok('Settings → "The Brain" shows the key\'s source', /config\/api_keys\.json/.test(status), status.slice(0, 110));
+      ok('…and the model in use', new RegExp(String((await get(srv, '/api/settings/gemini-key')).body.model)).test(status), status.slice(0, 140));
+      ok('…and the day\'s count in the Voice line', /Gemini calls? today/.test(buildLine.textContent) && /key 1:/.test(buildLine.textContent), buildLine.textContent.slice(-160));
+      const status2 = window.document.getElementById('gemini-key2-status').textContent;
+      ok('Settings → "The Brain" has the second-key line, and says none is set (optional)', /no second key set/.test(status2) && /gemini_api_key_2/.test(status2), status2.slice(0, 120));
+      const callsLine = window.document.getElementById('gemini-calls-status').textContent;
+      ok('…and the count line names the active key, per-key counts and the warning level', /Active key: 1/.test(callsLine) && /key 1: \d+, key 2: \d+/.test(callsLine) && /Warning level 20/.test(callsLine) && /has not stopped any key/.test(callsLine), callsLine.slice(0, 200));
+      ok('…and the second-key note about a different Google account/project is on the page', /different Google account\/project/.test(window.document.body.textContent), 'note present');
+      ok('…and the second-key input and its Save/Remove buttons exist', Boolean(window.document.getElementById('gemini-key2-input')) && typeof window.clearGeminiKey2 === 'function', 'input + remove');
+      // Save a second key THROUGH THE PAGE, and read the page's own report.
+      window.document.getElementById('gemini-key2-input').value = KEY2;
+      await window.saveGeminiKey(2);
+      await sleep(300);
+      const status2b = window.document.getElementById('gemini-key2-status').textContent;
+      ok('the page saves the second key and reports it by its last four characters', /…3210/.test(status2b) && /standing by/.test(status2b) && /config\/api_keys\.json \(gemini_api_key_2\)/.test(status2b), status2b.slice(0, 140));
+      await window.clearGeminiKey2();
+      await sleep(300);
+      ok('…and removes it again', /no second key set/.test(window.document.getElementById('gemini-key2-status').textContent), 'removed');
 
-      const modelCallsBefore = srv.stub.calls.filter((c) => c.kind === 'stream' || c.kind === 'generate').length;
       await window.runVoiceCheck();
-      const bubbles = [...window.document.querySelectorAll('.chat-bubble.speaker-system')].map((b) => b.textContent);
-      const voiceCheck = bubbles.find((text) => /Voice check — output:/.test(text)) || '';
-      ok('the voice check describes local speaking and listening paths',
-        /Voice check — output:/.test(voiceCheck) && /input: app-local faster-whisper/.test(voiceCheck), voiceCheck.slice(0, 150));
-      ok('the voice check uses only the app-local speaker route',
-        requests.some((r) => r.path === '/api/voice/speak' && r.method === 'POST')
-          && srv.stub.calls.filter((c) => c.kind === 'stream' || c.kind === 'generate').length === modelCallsBefore,
-        `voice calls=${requests.filter((r) => r.path === '/api/voice/speak').length}; model calls unchanged`);
+      await sleep(300);
+      const bubbles = [...window.document.querySelectorAll('.chat-bubble.speaker-system')].map((b) => b.textContent).join('\n');
+      ok('the voice check measures the brain with a real call', /Brain call: OK/.test(bubbles), (bubbles.match(/Brain call:.*/) || [''])[0].slice(0, 120));
+      ok('…and prints the model in use', /answered in \d+ ms/.test(bubbles) && new RegExp(String((await get(srv, '/api/settings/gemini-key')).body.model)).test(bubbles), (bubbles.match(/Brain call:.*/) || [''])[0].slice(0, 140));
+      ok('…and the key\'s source in the senses check', /config\/api_keys\.json/.test(bubbles), (bubbles.match(/Brain key:.*/) || [''])[0].slice(0, 120));
+      ok('…and a failed brain names the model, not the connection', /withdrawn|key is fine|FAILED/.test(bubbles), 'checked');
+
+      // Diagnostics still measures the brain (the button is gone from the main
+      // screen — the function stays for the voice command and this check).
+      window.requestSystemDiagnostics();
+      await sleep(400);
+      const after = [...window.document.querySelectorAll('.chat-bubble.speaker-system')].map((b) => b.textContent).join('\n');
+      ok('diagnostics still measures the brain with a real call', /Brain call: OK/.test(after), (after.match(/Brain call:.*/) || [''])[0].slice(0, 110));
     } finally { await srv.stop(); }
   }
 }
@@ -1027,10 +846,9 @@ function freePort() {
     ok('speed: a Gemini 3 model gets thinkingLevel, not the deprecated thinkingBudget',
        streamCall && streamCall.thinkingLevel === 'LOW' && streamCall.thinkingBudget === undefined,
        streamCall ? `thinkingLevel=${streamCall.thinkingLevel} thinkingBudget=${streamCall.thinkingBudget}` : 'no streaming call');
-    ok('speed: chat has no app-level output-token cap, so full replies are preserved',
-       streamCall && streamCall.body && streamCall.body.generationConfig
-         && !Object.hasOwn(streamCall.body.generationConfig, 'maxOutputTokens'),
-       streamCall ? JSON.stringify(streamCall.body.generationConfig) : 'no call');
+    ok('speed: the answer length is capped so it is written sooner',
+       streamCall && streamCall.body && streamCall.body.generationConfig && streamCall.body.generationConfig.maxOutputTokens > 0,
+       streamCall ? JSON.stringify(streamCall.body.generationConfig).slice(0, 100) : 'no call');
 
     // A model that refuses the thinking setting must still answer — with the
     // speed settings retried away, rather than the model written off.
@@ -1080,6 +898,10 @@ function freePort() {
     } finally { await noStream.stop(); }
   } finally { await srv.stop(); }
 }
+
+/* ── 9. (The server voice used to be checked here. The voice is local now —
+ *      Kokoro speaks, faster-whisper hears — and section 5d proves it never
+ *      calls Gemini and never counts.)                                        */
 
 /* ── 10. THE LOCAL KNOWLEDGE BASE — the same one the previous JARVIS used ────
  * The owner's rule: the AI is used as little as possible. A question the store
@@ -1157,8 +979,8 @@ function freePort() {
     // 7. the local-first guard: a computer task with no local tool never silently spends a call
     const before = srv.stub.calls.length;
     const task = await post(srv, '/api/command', { text: 'install a printer driver and set the default paper size' });
-    ok('local first: an unsupported computer task is identified clearly', /cannot perform/i.test(String(task.body.reply)) && /local tools/i.test(String(task.body.reply)), String(task.body.reply).slice(0, 110));
-    ok('local first: the unsupported task does not silently call Gemini', !/use the AI/i.test(String(task.body.reply)) && srv.stub.calls.length === before,
+    ok('local first: a computer task is answered honestly, not with an AI call', /no local tool/.test(String(task.body.reply)), String(task.body.reply).slice(0, 110));
+    ok('local first: …and it offers the choice instead of spending the call', /use the AI/.test(String(task.body.reply)) && srv.stub.calls.length === before,
        `calls ${before} -> ${srv.stub.calls.length}`);
     const forced = await post(srv, '/api/command', { text: 'install a printer driver and set the default paper size — use the AI' });
     ok('local first: saying "use the AI" spends exactly one call', /answered by harness-text-model/.test(String(forced.body.reply)) && srv.stub.calls.length === before + 1,
@@ -1177,6 +999,9 @@ function freePort() {
     ok('knowledge: the startup line reports the store', /local knowledge: \d+ answers ready/.test(log), (log.match(/local knowledge:.*/) || [''])[0].slice(0, 110));
   } finally { await srv.stop(); }
 }
+
+/* ── 11. (The voice's own Gemini budget is no longer exercised: the local voice
+ *       spends nothing. See 5d.)                                              */
 
 /* ── 12. THE LOOK AND THE LOCAL DRAFTING DESK ───────────────────────────────
  * Two things the owner asked for, proved against the real server: (a) the gold
@@ -1216,10 +1041,8 @@ function freePort() {
     ok('…but the top row still carries what is used daily',
        /id="btn-toggle-hands"/.test(page) && /id="btn-toggle-cam"/.test(page) && /toggleRooms\(\)/.test(page) && /id="btn-toggle-settings"/.test(page),
        'My Hands, Camera, Rooms, Settings');
-    const diagnostic = await post(srv, '/api/command', { text: 'status' });
-    ok('…and explicit diagnostics remain available through a chat command',
-       /Real telemetry/.test(String(diagnostic.body.reply)) && /Gemini provider/.test(String(diagnostic.body.reply)),
-       String(diagnostic.body.reply).split('\n').slice(0, 4).join(' | '));
+    ok('…and the two actions the buttons carried are still there by voice',
+       /function doWake\(\)/.test(page) && /function requestSystemDiagnostics\(\)/.test(page), 'doWake + diagnostics kept');
 
     // Importing lives in the Files window, not in the typing row.
     ok('files: the typing row has no attach button left',
@@ -1299,8 +1122,7 @@ function freePort() {
 
     const draftingStatus = await get(srv, '/api/system-status');
     ok('drafting: the status reports the desk', draftingStatus.body.drafts && draftingStatus.body.drafts.count === 2, 'drafts.count');
-    const unsupportedTask = await post(srv, '/api/command', { text: 'book a flight to Durban for Friday' });
-    ok('…and the honest guard names available local tools without claiming to book it', /cannot perform/i.test(String(unsupportedTask.body.reply)) && /drafts/.test(String(unsupportedTask.body.reply)) && !/booked|reservation confirmed/i.test(String(unsupportedTask.body.reply)), String(unsupportedTask.body.reply).slice(0, 120));
+    ok('…and the honest guard now points at it', /drafting desk/.test(String((await post(srv, '/api/command', { text: 'book a flight to Durban for Friday' })).body.reply)), 'no local tool message');
 
     // (c) the camera and the tools, by voice, for nothing
     const beforeVoice = srv.stub.calls.length;
@@ -1315,6 +1137,9 @@ function freePort() {
     ok('…and none of those four cost a call', srv.stub.calls.length === beforeVoice, `calls=${srv.stub.calls.length - beforeVoice}`);
   } finally { await srv.stop(); }
 }
+
+/* ── 13. (The Gemini voice model's retirement rules no longer apply: the voice
+ *       is local. See 5d.)                                                    */
 
 /* ── 14. A STORED ANSWER FROM ANOTHER MODEL NEVER ANSWERS SILENTLY ───────────
  * Every Gemini answer is kept with the model that produced it. An entry with no
@@ -1377,122 +1202,6 @@ function freePort() {
     ok('offline stored answer: …and are labelled out of date, with the model that made them named as unrecorded',
        /could not be reached just now/.test(reply) && /no longer records/.test(reply), reply.slice(-140));
   } finally { await offline.stop(); }
-}
-
-/* ── 15. EVERY KEYED SUPPLIER TAKES A KEY, NOT JUST THE FIRST TWO ─────────────
- * POST /api/settings/image-keys used to hardcode 'pexels' and 'pixabay' while
- * four more keyed suppliers were added. A Jamendo, Geoapify, LocationIQ or
- * Thingiverse key was refused with a 400, so those four suppliers could never be
- * given a key from Settings — while the key-free suppliers behind them answered
- * anyway, and nothing looked wrong. The list is now the one in config, so a new
- * keyed supplier cannot be left out by forgetting a second place. */
-{
-  const srv = await startDashboard({ models: { 'harness-text-model': { } }, name: 'supplier-keys' });
-  try {
-    const SUPPLIERS = ['pexels', 'pixabay', 'jamendo', 'geoapify', 'locationiq', 'thingiverse'];
-    // keys is an ARRAY of {service,label,present,tail,detail} — one entry per
-    // supplier — not an object keyed by service.
-    const present = (keys, service) => (Array.isArray(keys) ? keys.find((k) => k.service === service) : null);
-    let accepted = 0;
-    for (const service of SUPPLIERS) {
-      const saved = await post(srv, '/api/settings/image-keys', { service, key: `harness-${service}-key-0000` });
-      const row = present(saved.body.keys, service);
-      ok(`supplier keys: ${service} can be saved and is then reported present`, saved.status === 200 && saved.body.ok === true && row?.present === true,
-        `status=${saved.status} ${saved.body.error || `present=${row?.present} tail=${row?.tail || ''}`}`);
-      if (saved.status === 200 && row?.present === true) accepted += 1;
-    }
-    ok('supplier keys: all six are accepted, not two of six', accepted === SUPPLIERS.length, `${accepted}/${SUPPLIERS.length}`);
-
-    // An unknown name is still refused, and the answer now names the real list
-    // rather than two services.
-    const bogus = await post(srv, '/api/settings/image-keys', { service: 'not-a-supplier', key: 'x' });
-    ok('supplier keys: an unknown supplier is refused, naming the real list',
-      bogus.status === 400 && /jamendo/.test(String(bogus.body.error)) && /thingiverse/.test(String(bogus.body.error)),
-      String(bogus.body.error).slice(0, 110));
-
-    // And a saved key can be taken back out again — every one of them.
-    let cleared = 0;
-    for (const service of SUPPLIERS) {
-      const gone = await post(srv, '/api/settings/image-keys', { service, clear: true });
-      if (gone.status === 200 && present(gone.body.keys, service)?.present === false) cleared += 1;
-    }
-    ok('supplier keys: and every one can be removed again', cleared === SUPPLIERS.length, `${cleared}/${SUPPLIERS.length}`);
-
-    // The registration area must offer a row for each, including the place
-    // suppliers, which used to fill the label map and then be dropped.
-    const sources = await get(srv, '/api/web/sources');
-    const ids = [...(sources.body.sources || []), ...(sources.body.placeSources || [])].map((s) => s.id);
-    const missing = SUPPLIERS.filter((s) => !ids.includes(s));
-    ok('supplier keys: every keyed supplier has a row in the registration area',
-      sources.status === 200 && missing.length === 0, missing.length ? `missing: ${missing.join(', ')}` : `${ids.length} rows`);
-
-    // Every kind must have a word to be spoken about by. The page used to keep
-    // its own copy of these, and that copy was missing `model`, so the two
-    // suppliers of 3D models were described as supplying "model". The words now
-    // come from the server with the list, and the page keeps no copy.
-    const words = sources.body.kindWords || {};
-    const kinds = sources.body.kinds || [];
-    const wordless = kinds.filter((k) => !words[k]);
-    ok('supplier keys: every kind has a word in the interface', wordless.length === 0 && words.model === '3D models',
-      wordless.length ? `no word for: ${wordless.join(', ')}` : `${Object.keys(words).length} kinds described`);
-    const pageHtml = await (await fetch(srv.url('/'))).text();
-    ok('supplier keys: …and the page takes them from the server rather than its own copy',
-      /KIND_WORDS = info\.kindWords/.test(pageHtml) && !/KIND_WORDS = \{ image: 'pictures'/.test(pageHtml),
-      /KIND_WORDS = \{ image:/.test(pageHtml) ? 'the hardcoded copy is still there' : 'page reads the server');
-
-    // The page must draw a row for each of those, place suppliers included.
-    const html = await (await fetch(srv.url('/'))).text();
-    ok('supplier keys: the page renders the place suppliers too',
-      /everySource = \[\.\.\.info\.sources, \.\.\.\(info\.placeSources \|\| \[\]\)\]/.test(html),
-      html.includes('placeSources') ? 'loop found' : 'loop missing');
-  } finally { await srv.stop(); }
-}
-
-/* ── 16. WHAT THE FILE COMMANDS AND "LOOK UP" ACTUALLY SEARCH FOR ─────────────
- * Three things the owner would say out loud, checked by what the reply says it
- * searched for:
- *   1. "find me a picture of A LION" searched for "a lion" — the article that
- *      belongs to the noun was captured with the subject and quoted back, and a
- *      supplier given "a lion" ranks worse than one given "lion".
- *   2. "look up photosynthesis" never reached the web search at all: it fell
- *      through to the question path, which searched for the phrase INCLUDING the
- *      words "look up" and then echoed them back. The README promises
- *      "look up ..." works.
- *   3. "look up a picture of a lion" fell through too, and echoed the whole
- *      sentence — it is a picture request, not a web search. */
-{
-  const srv = await startDashboard({ models: { 'harness-text-model': { } }, name: 'command-words' });
-  try {
-    // What did the reply say it looked for?
-    const subjectOf = async (text) => {
-      const r = await post(srv, '/api/command', { text });
-      const m = String(r.body.reply).match(/\u201c([^\u201d]*)\u201d/);
-      return m ? m[1] : null;
-    };
-
-    // 1. the article is scaffolding, not part of the subject — but only a LEADING
-    // one, so "a red lion cub" keeps every word that belongs to it.
-    ok('commands: "a picture of a lion" searches for lion, not "a lion"', (await subjectOf('find me a picture of a lion')) === 'lion', String(await subjectOf('find me a picture of a lion')));
-    ok('commands: "a picture of the reactor" searches for reactor', (await subjectOf('find me a picture of the reactor')) === 'reactor', String(await subjectOf('find me a picture of the reactor')));
-    ok('commands: …but "a red lion cub" keeps all its words', (await subjectOf('find me a picture of a red lion cub')) === 'red lion cub', String(await subjectOf('find me a picture of a red lion cub')));
-    ok('commands: …and a plain plural is untouched', (await subjectOf('find me a picture of lions')) === 'lions', String(await subjectOf('find me a picture of lions')));
-    for (const [text, want] of [['find me a video of a lion', 'lion'], ['find me a book about a lion', 'lion'], ['find me a 3d model of a lion', 'lion']]) {
-      ok(`commands: the article goes in "${text.split(' ').slice(-3).join(' ')}" too`, (await subjectOf(text)) === want, String(await subjectOf(text)));
-    }
-
-    // 2. the bare forms reach the web search, and search for the subject only.
-    for (const [text, want] of [['look up photosynthesis', 'photosynthesis'], ['google photosynthesis', 'photosynthesis'], ['search for photosynthesis', 'photosynthesis']]) {
-      ok(`commands: "${text}" reaches the web and searches "${want}"`, (await subjectOf(text)) === want, String(await subjectOf(text)));
-    }
-    ok('commands: "look up the capital of France" drops the article', (await subjectOf('look up the capital of France')) === 'capital of France', String(await subjectOf('look up the capital of France')));
-    ok('commands: "search the web for X" still works as before', (await subjectOf('search the web for benoni')) === 'benoni', String(await subjectOf('search the web for benoni')));
-
-    // 3. "look up" and "google" are verbs the file commands accept, so a file
-    // request phrased that way finds a file rather than echoing the sentence.
-    for (const [text, want] of [['look up a picture of a lion', 'lion'], ['google a video of waves', 'waves'], ['look up a book about dune', 'dune'], ['google a 3d model of a gear', 'gear']]) {
-      ok(`commands: "${text}" is a file request, not a web search`, (await subjectOf(text)) === want, String(await subjectOf(text)));
-    }
-  } finally { await srv.stop(); }
 }
 
 /* ── summary ─────────────────────────────────────────────────────────────── */

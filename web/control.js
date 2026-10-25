@@ -48,7 +48,7 @@
 
   const TIER_LABEL = { safe: "runs without asking", confirm: "needs your OK", blocked: "never runs here" };
 
-  // ---------- Gemini count chip: a warning gauge, never an on/off switch ----
+  // ---------- Gemini budget chip ----------
   function renderQuota(b) {
     if (!el.quota) return;
     if (!b) {
@@ -56,13 +56,12 @@
       el.quota.className = "quota-chip";
       return;
     }
-    // The count never refuses a call — only Google's own 429 does, and even
-    // then the app answers locally. So the chip warns; it never says "off".
     let cls = "ok";
-    let text = `Gemini today: ${b.used} · warning level ${b.limit}`;
-    if (b.offline) { cls = "warn"; text = `OFFLINE — local only (${b.offline_reason || "the internet is not being used"})`; }
-    else if (b.unreadable) { cls = "warn"; text = "Gemini count kept in memory only"; }
-    else if (b.past_warn) { cls = "warn"; text = `⚠ Gemini today: ${b.used}, past the warning level of ${b.limit}`; }
+    let text = `Gemini today: ${b.used}/${b.limit}`;
+    if (!b.enabled) { cls = "bad"; text = "Gemini calls are off (budget 0)"; }
+    else if (b.unreadable) { cls = "bad"; text = "Gemini paused: budget file unreadable"; }
+    else if (b.remaining === 0) { cls = "bad"; text = `Gemini today: ${b.used}/${b.limit} (used up)`; }
+    else if (b.remaining <= Math.max(3, Math.ceil(b.limit * 0.2))) { cls = "warn"; }
     el.quota.textContent = text;
     el.quota.className = `quota-chip ${cls}`;
     el.quota.title = `${b.note} Resets at ${b.resets}.`;
@@ -234,15 +233,14 @@
     row(list, "Sourced research records", brain.research_count ?? "unknown");
     row(list, "Verified backups", brain.backup ? brain.backup.count : "unknown");
 
-    list = section("Gemini count");
+    list = section("Gemini budget");
     const b = d.gemini_budget;
     if (b) {
-      row(list, "Calls today", b.used);
-      row(list, "Warning level", b.limit);
-      row(list, "State", b.offline ? `OFFLINE — local only (${b.offline_reason || ""})` : "online, and the count never blocks a call");
+      row(list, "Used today", `${b.used} of ${b.limit}`);
+      row(list, "Remaining", b.remaining);
       row(list, "Resets", b.resets);
       row(list, "Note", b.note);
-      if (b.unreadable) row(list, "Note", "the count file could not be read, so the count is kept in memory only — nothing is blocked");
+      if (b.unreadable) row(list, "Problem", "budget file unreadable; Gemini paused until local midnight");
       if (!b.saved) row(list, "Problem", "count could not be saved; it is kept in memory only");
     }
 

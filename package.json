@@ -10,7 +10,7 @@
     "start": "tsx server.ts",
     "test:brain": "node --import tsx --test tests/brain.node.test.ts",
     "test:knowledge": "node --import tsx --test tests/knowledge.node.test.ts",
-    "test:node": "node --import tsx --test tests/*.node.test.ts tests/*.node.test.mjs tests/hand-gestures.test.mjs"
+    "test:node": "node --import tsx --test tests/*.node.test.ts tests/*.node.test.mjs"
   },
   "dependencies": {
     "@google/genai": "latest",
@@ -25,7 +25,6 @@
     "@types/node": "^22.10.2",
     "@types/ws": "^8.5.13",
     "esbuild": "^0.24.2",
-    "jsdom": "^24.1.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }

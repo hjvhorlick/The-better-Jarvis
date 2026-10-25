@@ -161,15 +161,12 @@ def test_a_script_is_written_and_counted():
     assert budget.snapshot()["used"] >= 1
 
 
-def test_a_script_is_refused_while_offline_not_by_the_count():
-    # The app's own count never blocks (0 is "never warn"); Google's 429 does.
-    budget = DailyBudget(0, path=None)
-    budget.mark_exhausted()
-    app = create_app(serve_ui=False, budget=budget)
+def test_a_script_is_refused_once_the_day_is_spent():
+    app = create_app(serve_ui=False, budget=DailyBudget(0, path=None))
     c = TestClient(app, base_url=LOCAL)
     r = c.post("/api/media/script", json={"brief": "the ocean", "seconds": 30})
     assert r.status_code == 400
-    assert "offline" in r.json()["detail"] and "needs the internet" in r.json()["detail"]
+    assert "allowance" in r.json()["detail"]
 
 
 def test_an_empty_brief_is_refused_before_jarvis_is_asked():

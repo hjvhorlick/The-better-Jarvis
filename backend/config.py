@@ -81,20 +81,12 @@ DEFAULT_DAILY_BUDGET = 20
 
 
 def get_daily_budget() -> int:
-    """The level at which the day's call count starts WARNING (never a block).
-
-    SUPPER_GEMINI_DAILY_WARN is the setting; the old SUPPER_GEMINI_DAILY_BUDGET
-    is honoured as the same warning level — it used to be a hard limit that
-    refused calls Google would still have answered, which is exactly the
-    "the chat stopped" behaviour the owner does not want. 0 means "never warn".
-    """
-    for setting in ("SUPPER_GEMINI_DAILY_WARN", "SUPPER_GEMINI_DAILY_BUDGET"):
-        raw = os.environ.get(setting, "").strip()
-        if not raw:
-            continue
-        try:
-            value = int(raw)
-        except ValueError:
-            return DEFAULT_DAILY_BUDGET
-        return value if value >= 0 else DEFAULT_DAILY_BUDGET
-    return DEFAULT_DAILY_BUDGET
+    """Gemini calls per local day this app may make (SUPPER_GEMINI_DAILY_BUDGET). 0 turns them off."""
+    raw = os.environ.get("SUPPER_GEMINI_DAILY_BUDGET", "").strip()
+    if not raw:
+        return DEFAULT_DAILY_BUDGET
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_DAILY_BUDGET
+    return value if value >= 0 else DEFAULT_DAILY_BUDGET

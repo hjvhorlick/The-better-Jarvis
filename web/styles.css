@@ -891,12 +891,10 @@ select option { background: #191a1e; color: var(--jg-gold-bright); }
               0 18px 36px -22px rgba(0, 0, 0, 0.9);
 }
 
-/* Room tools start closed and the top-bar switch reveals or hides every room's
-   strip. Flat has a second, independent drawer: honor its `hidden` attribute
-   even though the visible drawer itself is laid out as flex. */
+/* The room tools are visible on first open, so the environment is usable
+   straight away. The Tools switch only hides or restores their strip. */
 body:not(.show-tools) .env-tools { display: none; }
 body:not(.show-tools) .flat-drawer { display: none; }
-.flat-drawer[hidden] { display: none; }
 .env-tool { padding: 7px 12px; font-size: 13px; }
 
 /* A thin yellow line around a room's own frames, and a long shadow for depth. */

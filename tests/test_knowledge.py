@@ -385,20 +385,13 @@ def test_with_no_key_the_stored_answer_is_used_and_labelled_out_of_date(isolated
     assert a.models.calls == []                                     # nothing was spent
 
 
-def test_offline_still_gives_the_stored_answer_labelled(isolated, tmp_path, monkeypatch):
-    """Google's 429 puts the app offline — and a stored answer still helps.
-
-    A zero WARNING level is no longer a block on calls (it only warns), so the
-    offline state is what this test needs: Google's own 429.
-    """
+def test_a_spent_budget_still_gives_the_stored_answer_labelled(isolated, tmp_path, monkeypatch):
     store = _store(tmp_path)
     store.learn("what is a bloom filter", "An answer from an older model.", model="gemini-2.5-flash")
-    a = _agent(tmp_path, store=store, monkeypatch=monkeypatch)
-    a.budget.mark_exhausted()
+    a = _agent(tmp_path, store=store, monkeypatch=monkeypatch, limit=0)
     out = a.agent.handle("what is a bloom filter")
     assert out["source"] == "knowledge" and "could not be reached just now" in out["reply"]
-    assert a.models.calls == []                                   # nothing left the machine
-    assert a.budget.snapshot()["used"] == 0                       # …and nothing was counted
+    assert a.models.calls == []
 
 
 # ----- the two halves share one file -----

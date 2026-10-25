@@ -392,22 +392,19 @@ def scenering_payload(script: dict) -> dict:
 
 
 def script_from_brief(chat, budget, brief: str, seconds: int, aspect: str) -> dict:
-    """Ask Jarvis for a script, counting it against the day's Gemini count.
+    """Ask Jarvis for a script, counting it against the day's Gemini budget.
 
-    The count only warns — it never refuses. The one thing that does refuse is
-    the app being offline (Google's own 429, no key, or the owner's switch), and
-    then the owner is told rather than a request being made that cannot succeed.
+    Budget first: if the day's allowance is spent, the owner is told rather than
+    a request being made that will only fail.
     """
     brief = (brief or "").strip()
     if not brief:
         raise MediaError("Say what the video is about.")
     if not (5 <= seconds <= 600):
         raise MediaError("Ask for a video between 5 and 600 seconds.")
-    if budget.offline or not budget.try_spend():
-        raise MediaError(f"Writing that script needs the internet, and the app is offline — "
-                         f"{budget.offline_reason()}. Nothing was fetched and nothing was counted. "
-                         "It comes back at midnight Pacific — Google's own quota reset — or as "
-                         "soon as a working key is set.")
+    if not budget.try_spend():
+        raise MediaError("Today's Gemini allowance is spent. It resets at local midnight, "
+                         "or set SUPPER_GEMINI_DAILY_BUDGET higher.")
     try:
         raw = chat.complete(
             prompt=(f"Write a {seconds}-second short video script, {aspect} framing, about: {brief}\n\n"

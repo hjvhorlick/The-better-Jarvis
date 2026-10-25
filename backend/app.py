@@ -406,46 +406,30 @@ def create_app(chat_service: ChatService | None = None, serve_ui: bool = True,
     def provider_test() -> dict:
         if not config.get_gemini_api_key():
             raise HTTPException(status_code=503, detail="No Gemini API key is configured.")
-        # A probe is the one place a refusal is the honest answer: it exists to
-        # test the provider, so when the app is offline there is nothing to test.
-        # The app's own count never refuses it — it only warns.
-        if budget.offline:
-            raise HTTPException(status_code=429,
-                                detail=f"The app is offline ({budget.offline_reason()}); no test request "
-                                       "was sent. The chat and every local feature still work.")
-        budget.try_spend()
-        warning = budget.warn()
+        if not budget.try_spend():
+            raise HTTPException(status_code=429, detail="Today's Gemini budget is used up; no test request was sent.")
         try:
-            result = chat.probe()
+            return chat.probe()
         except BackendNotConfigured as exc:
             raise HTTPException(status_code=503, detail=str(exc))
         except UpstreamError as exc:
             if exc.quota:
                 budget.mark_exhausted()
-                raise HTTPException(status_code=429,
-                                    detail="Google reports its quota is reached, so the app is now "
-                                           "OFFLINE (local only) until midnight Pacific — Google's own "
-                                           "quota reset. This is Google stopping us, not this app's "
-                                           "count. The chat keeps working.")
+                raise HTTPException(status_code=429, detail="Gemini reports its limit is reached for now.")
             raise HTTPException(status_code=502, detail=str(exc))
-        if warning and isinstance(result, dict):
-            result = {**result, "warning": warning}
-        return result
 
     @app.post("/api/chat")
     def post_chat(body: ChatIn) -> dict:
         if not is_known(body.workspace):
             raise HTTPException(status_code=400, detail="unknown workspace")
         try:
-            # The chat never fails because of the provider: an unavailable
-            # Gemini makes the agent answer LOCALLY (offline mode) instead.
             return agent.handle(body.text, workspace=body.workspace,
                                 conversation_id=body.conversation_id, topic_id=body.topic_id)
         except BrainStorageError as e:
             raise HTTPException(status_code=503, detail=str(e))
         except BackendNotConfigured as e:
             raise HTTPException(status_code=503, detail=str(e))
-        except TooManyPending as e:
+        except (BudgetExhausted, TooManyPending) as e:
             raise HTTPException(status_code=429, detail=str(e))
         except UpstreamError as e:
             raise HTTPException(status_code=502, detail=str(e))

@@ -1,12 +1,5 @@
 # Installing and starting JARVIS
 
-> **Scope:** The instructions below describe the separate legacy Python app and its
-> Python-based installer. The supported app is the Node dashboard (`server.ts` +
-> `dashboard/static/app.html`), launched with `./start_jarvis.sh` or `npm start` on
-> port 3000; see `README.md` and `docs/LOCAL_VOICE.md` for that runtime. Do not use
-> the Python UI, its launch instructions, or its voice paths to change the supported
-> dashboard unless the owner asks.
-
 JARVIS runs on your own computer and you use it in a web browser. There is no installer
 program (no `.exe` or `.dmg`). Instead, a starter file sets everything up the first time
 and starts the app after that.
@@ -131,8 +124,8 @@ The phone page and approving from a phone have not been tested on real phones ye
 - **The install stopped partway.** Run the starter again. It picks up where it left off.
 - **Something is wrong after an update.** Run the starter with `--check`, then start it again.
   The starter installs the packages again whenever the package lists change.
-- **`run.sh` compatibility alias.** It delegates to `start_jarvis.sh` and starts the supported
-  Node dashboard; use `./start_jarvis.sh` directly for new launches.
+- **The old `run.sh` file.** It has a fixed path from an older computer and is kept only for
+  reference. Use the starter files above instead.
 
 ## Tested and not tested
 
