@@ -597,8 +597,8 @@ for (const [name, errName] of [['a blocked frame', 'NotAllowedError'], ['no devi
   const told = [...dead.doc.querySelectorAll('.chat-bubble.speaker-system')].map((b) => b.textContent).join('\n');
   ok('dead voice: the silence is reported and the server voice offered',
      /never made a sound/i.test(told) && /server voice/i.test(told), told.slice(0, 160));
-  ok('dead voice: the report offers the server voice as a button',
-     [...dead.doc.querySelectorAll('.bubble-action-btn')].some((b) => /server voice/i.test(b.textContent)),
+  ok('dead voice: the report offers the server voice in words only, no button in the chat',
+     [...dead.doc.querySelectorAll('.bubble-action-btn')].length === 0 && /server voice/i.test(told),
      JSON.stringify([...dead.doc.querySelectorAll('.bubble-action-btn')].map((b) => b.textContent)));
 
   // And the owner can simply choose it: the setting is remembered.

@@ -22,7 +22,7 @@ import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { writeFileSync, unlinkSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -260,8 +260,397 @@ test('nothing can be moved behind the conversation or the header', () => {
   }
   // Every way a window can move must use the clamp.
   assert.ok(script.includes('const pos = clampToStage(activeDragWin'), 'dragging is not clamped');
-  assert.ok(script.includes('const spot = clampToStage(win'), 'opening a window from the header is not clamped');
+  assert.ok(script.includes('const spot = placeWindowClear(win') && script.includes('clampToStage(win, left, top)'),
+    'opening a window from the header is not clamped (placeWindowClear must clamp it into the room, clear of other windows)');
   assert.ok(script.includes('const handPos = clampToStage(handGrabbedWin'), 'My Hands is not clamped');
   assert.ok(script.includes('const box = stageBox();'), 'resizing is not clamped');
   assert.ok(script.includes('keepWindowsInRoom();'), 'nothing pulls stray windows back on boot');
+});
+
+/**
+ * The JARVIS connection belongs to startup, not to any button.
+ *
+ * This loads app.html in jsdom WITHOUT its external scripts, so
+ * window.JarvisHandGestures never exists — the exact failure that used to
+ * kill the second half of startup and make it look as though only the
+ * My Hands button could start JARVIS. The connection must open on load
+ * anyway, startup must run to the end, and pressing My Hands afterwards
+ * must not create the JARVIS connection (it controls hand tracking only).
+ * The button must also keep the same class as every other button in its
+ * row: this fix adds no new UI and changes no styling.
+ */
+test('the JARVIS connection starts on load by itself; My Hands never starts it', async () => {
+  const html = APP_HTML();
+  const sockets = [];
+  const fetches = [];
+  const errors = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', (e) => errors.push(String((e.detail && e.detail.message) || e.message || e)));
+
+  const dom = new JSDOM(html, {
+    url: 'http://localhost:3000/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    virtualConsole,
+    beforeParse(w) {
+      w.WebSocket = class {
+        constructor(url) {
+          this.url = String(url);
+          this.readyState = 0;
+          this._listeners = {};
+          sockets.push(this);
+          setTimeout(() => {
+            this.readyState = 1;
+            if (typeof this.onopen === 'function') this.onopen();
+            (this._listeners.open || []).forEach((f) => f());
+          }, 1);
+        }
+        addEventListener(type, fn) { (this._listeners[type] ||= []).push(fn); }
+        send() {}
+        close() { this.readyState = 3; }
+      };
+      w.WebSocket.OPEN = 1;
+      w.fetch = async (url) => {
+        fetches.push(String(url));
+        return { ok: true, status: 200, json: async () => ({ roots: [], present: false, entries: [] }) };
+      };
+      w.CryptoJS = {
+        SHA256: () => ({}),
+        lib: { WordArray: { random: () => ({ toString: () => '' }) } },
+        AES: { encrypt: () => ({ ciphertext: { toString: () => '' } }) },
+        enc: { Utf8: { parse: (x) => x }, Hex: {} }, mode: { CBC: {} }, pad: { Pkcs7: {} },
+      };
+      const gradient = { addColorStop() {} };
+      w.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
+        get: (_t, prop) => (prop === 'createRadialGradient' || prop === 'createLinearGradient'
+          ? () => gradient
+          : prop === 'measureText' ? () => ({ width: 0 }) : () => {}),
+        set: () => true,
+      });
+      Object.defineProperty(w.navigator, 'mediaDevices', { value: {
+        getUserMedia: async () => ({ getTracks: () => [{ stop() {} }], getVideoTracks: () => [{ stop() {} }], getAudioTracks: () => [{ stop() {} }] }),
+        enumerateDevices: async () => [],
+      } });
+      w.speechSynthesis = { getVoices: () => [], speak() {}, cancel() {}, pause() {}, resume() {}, paused: false, addEventListener() {} };
+      w.SpeechSynthesisUtterance = class {};
+      w.AudioContext = class {
+        constructor() { this.state = 'running'; this.sampleRate = 16000; this.destination = {}; this.currentTime = 0; }
+        createMediaStreamSource() { return { connect() {} }; }
+        createScriptProcessor() { return { connect() {}, disconnect() {} }; }
+        createGain() { return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+        createOscillator() { return { frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, type: '', connect() {}, start() {}, stop() {} }; }
+        createAnalyser() { return { fftSize: 0, frequencyBinCount: 0, connect() {}, getByteTimeDomainData() {}, getFloatTimeDomainData() {} }; }
+        resume() { return Promise.resolve(); }
+        close() { return Promise.resolve(); }
+      };
+      w.HTMLMediaElement.prototype.play = async () => {};
+      w.addEventListener('error', (e) => errors.push(String(e.message || e)));
+    },
+  });
+
+  const w = dom.window;
+  try {
+    await sleep(900);   // let startup finish; nothing has been clicked
+
+    const mainSockets = () => sockets.filter((s) => s.url.includes('/ws?token='));
+    assert.equal(mainSockets().length, 1,
+      'the JARVIS connection must open by itself when the application starts, with no button press');
+    assert.equal(w.document.getElementById('status-txt').textContent, 'Active',
+      'the status pill must show the live connection before anything is pressed');
+    assert.ok(!errors.some((e) => e.includes('createGestureEngine') || e.includes('JarvisHandGestures')),
+      `a missing hand-tracking library must never break startup; page errors were: ${errors.join(' | ')}`);
+    assert.ok(fetches.some((u) => u.includes('/api/files/roots')),
+      'startup must run to the end (desktop build) even when the hand-tracking library is missing');
+
+    // My Hands keeps the common look of its row: same class as Camera, no inline styling of its own.
+    const btnHands = w.document.getElementById('btn-toggle-hands');
+    const btnCam = w.document.getElementById('btn-toggle-cam');
+    assert.ok(btnHands && btnCam, 'the HUD row buttons must exist');
+    assert.equal(btnHands.className, btnCam.className,
+      'the My Hands button must look like the other buttons in its row');
+    assert.equal(btnHands.getAttribute('style'), null,
+      'the My Hands button must not carry styling of its own');
+
+    // Pressing My Hands must not start (or restart) the JARVIS connection.
+    assert.equal(typeof w.toggleMyHandsTracking, 'function');
+    btnHands.click();
+    await sleep(300);
+    assert.equal(mainSockets().length, 1,
+      'the My Hands button must only control My Hands, never the JARVIS connection');
+    assert.ok(w.document.getElementById('hud-toast').textContent.includes('My Hands is unavailable'),
+      'with the tracking library missing, My Hands reports itself unavailable and JARVIS carries on');
+  } finally {
+    w.close();
+  }
+});
+
+/**
+ * The owner's palette and window rules, pinned down:
+ *  - every word on the transparent glass is bright yellow (with the dark
+ *    halo), because dull words on see-through glass are unreadable;
+ *  - there is no pink anywhere ("pink and yellow does not go");
+ *  - green stays only where it means on/good;
+ *  - the Brain is its own window with its own home beside Settings, and a
+ *    window opened from the header steps clear of windows already open
+ *    instead of landing on top of them.
+ */
+test('bright yellow words, no pink anywhere, and Brain opens clear of Settings', () => {
+  const html = APP_HTML();
+  const glass = readFileSync(join(ROOT, 'dashboard', 'static', 'jarvis-glass.css'), 'utf-8');
+  const brainCss = readFileSync(join(ROOT, 'dashboard', 'static', 'brain.css'), 'utf-8');
+
+  const pinks = ['#f43f5e', '#fb7185', '#fecdd3', '#ff6b6b', '#ffb86b', '#ff9c8b', '#c084fc', '--rose'];
+  for (const [name, text] of [['app.html', html], ['jarvis-glass.css', glass], ['brain.css', brainCss]]) {
+    for (const pink of pinks) {
+      assert.ok(!text.toLowerCase().includes(pink), `${name} still uses ${pink}: pink and yellow do not go together`);
+    }
+  }
+
+  assert.ok(glass.includes('--jg-text-soft: #ffe45c'), 'the quieter words must still be bright yellow');
+  assert.ok(glass.includes('--jg-text-faint: #ffd60a'), 'labels and counts must be bright yellow');
+  assert.ok(html.includes('text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85)'),
+    'glass windows need the dark halo so the writing stays clear on transparency');
+  assert.ok(brainCss.includes('.brain-status.ok { color: #a7edb3; }'), 'green means on/good, and it stays');
+
+  const brainTag = html.match(/id="win-brain" style="([^"]*)"/);
+  const settingsTag = html.match(/id="win-settings" style="([^"]*)"/);
+  assert.ok(brainTag && settingsTag, 'both windows must exist');
+  const brainLeft = parseInt(/left:\s*(\d+)px/.exec(brainTag[1])[1], 10);
+  const setLeft = parseInt(/left:\s*(\d+)px/.exec(settingsTag[1])[1], 10);
+  const setWidth = parseInt(/width:\s*(\d+)px/.exec(settingsTag[1])[1], 10);
+  assert.ok(brainLeft >= setLeft + setWidth,
+    `Brain must open beside Settings, not on top of it (brain left ${brainLeft}, settings ends at ${setLeft + setWidth})`);
+  const { document } = new JSDOM(html).window;
+  const brainWindow = document.getElementById('win-brain');
+  const settingsWindow = document.getElementById('win-settings');
+  assert.equal(brainWindow.parentElement.id, 'workspace-stage',
+    'the Brain window must be a direct workspace window, not a child of Settings');
+  assert.equal(settingsWindow.querySelectorAll('.glass-window').length, 0,
+    'Settings must not contain any nested glass window');
+  assert.equal(document.querySelectorAll('.glass-window .glass-window').length, 0,
+    'no glass window may be nested inside another glass window');
+
+  const script = APP_SCRIPT();
+  assert.ok(script.includes('function placeWindowClear'), 'opened windows must be placed clear of each other');
+  assert.ok(script.includes('placeWindowClear(win, win.offsetLeft, win.offsetTop)'),
+    'toggleWindow must place the newly opened window clear of the ones already open');
+});
+
+/**
+ * The voice is not a switch, and no button turns it on.
+ *
+ * Every browser forbids a page from making sound before its first touch
+ * (click, tap or key, anywhere). The old code burned a pre-touch reply on
+ * that locked voice AND marked the voice dead for the whole session
+ * (synthDead) — so JARVIS stayed silent until the owner happened to click
+ * something that reset it, which looked exactly like an on button (first
+ * My Hands, then Settings). Now the words are held, the voice is never
+ * bricked by a lock, and the first touch anywhere speaks the held words.
+ */
+test('words spoken before the first touch are held (not dropped, not fatal) and said on any first touch', async () => {
+  const html = APP_HTML();
+  const spoken = [];
+  const errors = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', (e) => errors.push(String((e.detail && e.detail.message) || e.message || e)));
+
+  const dom = new JSDOM(html, {
+    url: 'http://localhost:3000/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    virtualConsole,
+    beforeParse(w) {
+      w.WebSocket = class {
+        constructor(url) { this.url = String(url); this.readyState = 1; }
+        addEventListener() {}
+        send() {}
+        close() { this.readyState = 3; }
+      };
+      w.WebSocket.OPEN = 1;
+      w.fetch = async () => ({ ok: true, status: 200, json: async () => ({ roots: [], present: false, entries: [] }) });
+      w.CryptoJS = {
+        SHA256: () => ({}),
+        lib: { WordArray: { random: () => ({ toString: () => '' }) } },
+        AES: { encrypt: () => ({ ciphertext: { toString: () => '' } }) },
+        enc: { Utf8: { parse: (x) => x }, Hex: {} }, mode: { CBC: {} }, pad: { Pkcs7: {} },
+      };
+      const gradient = { addColorStop() {} };
+      w.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
+        get: (_t, prop) => (prop === 'createRadialGradient' || prop === 'createLinearGradient'
+          ? () => gradient
+          : prop === 'measureText' ? () => ({ width: 0 }) : () => {}),
+        set: () => true,
+      });
+      Object.defineProperty(w.navigator, 'mediaDevices', { value: {
+        getUserMedia: async () => ({ getTracks: () => [{ stop() {} }], getVideoTracks: () => [{ stop() {} }], getAudioTracks: () => [{ stop() {} }] }),
+        enumerateDevices: async () => [],
+      } });
+      const voice = { name: 'Daniel', lang: 'en-GB', localService: true, default: true };
+      w.speechSynthesis = {
+        paused: false,
+        getVoices: () => [voice],
+        speak(u) { spoken.push(u.text); if (u.onstart) u.onstart(); setTimeout(() => u.onend && u.onend(), 1); },
+        cancel() {}, pause() {}, resume() {},
+      };
+      w.SpeechSynthesisUtterance = class { constructor(text) { this.text = text; } };
+      w.AudioContext = class {
+        constructor() { this.state = 'running'; this.sampleRate = 16000; this.destination = {}; this.currentTime = 0; }
+        createMediaStreamSource() { return { connect() {} }; }
+        createScriptProcessor() { return { connect() {}, disconnect() {} }; }
+        createGain() { return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+        createOscillator() { return { frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, type: '', connect() {}, start() {}, stop() {} }; }
+        createAnalyser() { return { fftSize: 0, frequencyBinCount: 0, connect() {}, getByteTimeDomainData() {}, getFloatTimeDomainData() {} }; }
+        resume() { return Promise.resolve(); }
+        close() { return Promise.resolve(); }
+      };
+      w.HTMLMediaElement.prototype.play = async () => {};
+      w.addEventListener('error', (e) => errors.push(String(e.message || e)));
+    },
+  });
+
+  const w = dom.window;
+  const probe = (expr) => w.eval(expr);
+  try {
+    await sleep(900);
+    assert.equal(spoken.length, 0, 'nothing may be spoken before any reply exists');
+    assert.equal(probe('pageActivated()'), false, 'the page starts untouched');
+
+    // A reply arrives before any click or key: it must be HELD.
+    w.speakReply('Good evening, sir.');
+    await sleep(350);
+    assert.equal(spoken.length, 0, 'a locked browser voice must not be attempted before the first touch');
+    assert.equal(probe('Speech.held'), true, 'the waiting words must be marked held, not dropped');
+    assert.equal(probe('Voice.synthDead'), false, 'a pre-touch reply must never brick the voice');
+    assert.ok(String(probe('earStatusText()')).includes('no button needed'),
+      'the status line must honestly say the voice waits for the first touch anywhere');
+
+    // ONE touch - on empty page body, not on any button - releases the words.
+    w.document.body.dispatchEvent(new w.MouseEvent('pointerdown', { bubbles: true }));
+    await sleep(400);
+    assert.equal(probe('pageActivated()'), true, 'any touch anywhere counts as the browser unlock');
+    assert.equal(spoken[0], 'Good evening, sir.', 'the held words are spoken first on unlock');
+    assert.ok(!spoken.some((t) => t.includes('Voice online')),
+      'no announcement on top of real waiting words: the touch was plumbing, not a switch');
+    assert.equal(probe('Speech.held'), false, 'nothing stays held after the unlock');
+    assert.equal(probe('Voice.synthDead'), false, 'the voice is alive and well after the unlock');
+  } finally {
+    w.close();
+  }
+});
+
+test('the chat carries words, not buttons', () => {
+  const html = APP_HTML();
+  assert.ok(!html.includes('bubble-action-btn'),
+    'no button may be rendered inside a chat bubble (fewer buttons, no clutter)');
+  assert.ok(!html.includes("label: '↗ Open in New Tab'"),
+    'no Open-in-New-Tab button may be offered into the chat; the fix is explained in words');
+  const script = APP_SCRIPT();
+  assert.ok(script.includes('function micReport(text)'), 'microphone reports are words only');
+});
+
+/**
+ * My Hands is ONE switch, pointer included.
+ *
+ * With no camera available, My Hands falls back to the mouse pointer. That
+ * fallback used to leave handTrackingActive false, so pressing the button
+ * again could only start it again - the pointer never went away (only the
+ * hidden V key stopped it), and the message even said "V to toggle"
+ * without ever saying why a pointer had appeared at all. Now the first
+ * press explains plainly (no camera here -> mouse is the hand -> same
+ * button switches it off) and the second press switches it off.
+ */
+test('My Hands is one switch: the no-camera pointer comes on with a clear message and goes away on the second press', async () => {
+  const html = APP_HTML();
+  const errors = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('jsdomError', (e) => errors.push(String((e.detail && e.detail.message) || e.message || e)));
+
+  const stillHand = { present: true, pinching: false, fist: false, pulling: false, scaling: false, turning: false };
+  const dom = new JSDOM(html, {
+    url: 'http://localhost:3000/',
+    runScripts: 'dangerously',
+    pretendToBeVisual: true,
+    virtualConsole,
+    beforeParse(w) {
+      w.WebSocket = class {
+        constructor(url) { this.url = String(url); this.readyState = 0; this._l = {};
+          setTimeout(() => { this.readyState = 1; if (this.onopen) this.onopen(); (this._l.open || []).forEach((f) => f()); }, 1); }
+        addEventListener(t, f) { (this._l[t] ||= []).push(f); }
+        send() {}
+        close() { this.readyState = 3; }
+      };
+      w.WebSocket.OPEN = 1;
+      w.fetch = async () => ({ ok: true, status: 200, json: async () => ({ roots: [], present: false, entries: [] }) });
+      w.JarvisHandGestures = {
+        createGestureEngine: () => ({ updateFrame: () => stillHand, updateHands: () => stillHand, getState: () => stillHand, loseHand: () => {} }),
+        summarizeHand: () => ({ pinchGate: 0.3, pinchRatio: 1, pinchSignature: true, handGarbage: false, aspect: 1, indexReach: 1, backMean: 1, openness: 1 }),
+      };
+      w.CryptoJS = {
+        SHA256: () => ({}),
+        lib: { WordArray: { random: () => ({ toString: () => '' }) } },
+        AES: { encrypt: () => ({ ciphertext: { toString: () => '' } }) },
+        enc: { Utf8: { parse: (x) => x }, Hex: {} }, mode: { CBC: {} }, pad: { Pkcs7: {} },
+      };
+      const gradient = { addColorStop() {} };
+      w.HTMLCanvasElement.prototype.getContext = () => new Proxy({}, {
+        get: (_t, prop) => (prop === 'createRadialGradient' || prop === 'createLinearGradient'
+          ? () => gradient
+          : prop === 'measureText' ? () => ({ width: 0 }) : () => {}),
+        set: () => true,
+      });
+      Object.defineProperty(w.navigator, 'mediaDevices', { value: {
+        getUserMedia: async () => { const e = new Error('no camera here'); e.name = 'NotFoundError'; throw e; },
+        enumerateDevices: async () => [],
+      } });
+      w.speechSynthesis = { getVoices: () => [], speak() {}, cancel() {}, pause() {}, resume() {}, paused: false, addEventListener() {} };
+      w.SpeechSynthesisUtterance = class {};
+      w.AudioContext = class {
+        constructor() { this.state = 'running'; this.sampleRate = 16000; this.destination = {}; this.currentTime = 0; }
+        createMediaStreamSource() { return { connect() {} }; }
+        createScriptProcessor() { return { connect() {}, disconnect() {} }; }
+        createGain() { return { gain: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, connect() {} }; }
+        createOscillator() { return { frequency: { value: 0, setValueAtTime() {}, exponentialRampToValueAtTime() {} }, type: '', connect() {}, start() {}, stop() {} }; }
+        createAnalyser() { return { fftSize: 0, frequencyBinCount: 0, connect() {}, getByteTimeDomainData() {}, getFloatTimeDomainData() {} }; }
+        resume() { return Promise.resolve(); }
+        close() { return Promise.resolve(); }
+      };
+      w.HTMLMediaElement.prototype.play = async () => {};
+      w.addEventListener('error', (e) => errors.push(String(e.message || e)));
+    },
+  });
+
+  const w = dom.window;
+  const probe = (expr) => w.eval(expr);
+  try {
+    await sleep(900);
+    const btn = w.document.getElementById('btn-toggle-hands');
+    const cursor = w.document.getElementById('hand-cursor');
+    const status = () => w.document.getElementById('txt-hands-status').textContent;
+    assert.ok(btn, 'the My Hands button must exist');
+    assert.equal(probe('mouseHandActive'), false, 'starts off');
+    assert.notEqual(cursor.style.display, 'block', 'no pointer before My Hands is pressed');
+
+    btn.click();                       // first press: on (mouse-pointer fallback, no camera)
+    await sleep(600);
+    assert.equal(probe('mouseHandActive'), true, 'the fallback pointer is on');
+    assert.equal(probe('handTrackingActive'), false, 'no camera loop is running without a camera');
+    assert.equal(cursor.style.display, 'block', 'the pointer is visible');
+    assert.ok(btn.classList.contains('active'), 'the button itself shows My Hands is on');
+    assert.match(status(), /My Hands: On \(mouse pointer/, 'the status says why the pointer is there');
+    assert.match(w.document.getElementById('hud-toast').textContent, /no camera here[\s\S]*Press My Hands again to switch it off/i,
+      'one clear message: why it is there, and the same button switches it off');
+
+    btn.click();                       // second press: the SAME button switches it off
+    await sleep(300);
+    assert.equal(probe('mouseHandActive'), false, 'the pointer is switched off by the second press');
+    assert.equal(cursor.style.display, 'none', 'the pointer is gone from the screen');
+    assert.ok(!btn.classList.contains('active'), 'the button no longer shows on');
+    assert.equal(status(), 'My Hands: Off');
+    void errors;
+  } finally {
+    w.close();
+  }
 });
