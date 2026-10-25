@@ -173,3 +173,58 @@ test('the whole Rooms page toggles every room tool strip on every press', async 
     window.close();
   }
 });
+
+/**
+ * The voice visualiser — the ring that shows whether JARVIS is listening,
+ * thinking or speaking.
+ *
+ * It went missing once already in this project's other shell: the code that
+ * drove it survived, the element it drove did not, and the app silently stopped
+ * reporting its own voice state. So the element AND the code that reads the real
+ * voice state are both checked here.
+ */
+test('the voice visualiser is in the conversation frame', () => {
+  const html = readFileSync(join(ROOT, 'dashboard', 'static', 'app.html'), 'utf-8');
+  const window_ = html.slice(html.indexOf('id="win-chat"'), html.indexOf('<!-- PANEL 3'));
+  assert.ok(window_.includes('id="voice-orb"'), 'the voice visualiser element is missing from the chat frame');
+  assert.ok(window_.includes('id="voice-orb-canvas"'), 'the visualiser has no canvas to draw on');
+  assert.ok(window_.includes('id="voice-orb-label"'), 'the visualiser has no label saying what the voice is doing');
+  // At the top of the conversation: above the messages, then the input.
+  assert.ok(window_.indexOf('id="voice-orb"') < window_.indexOf('id="chat-feed"'),
+    'the visualiser must sit above the conversation, not below it');
+  assert.ok(window_.includes('role="status"') && window_.includes('aria-live="polite"'),
+    'the visualiser is the voice status, so it must be announced');
+});
+
+test('the visualiser is driven by the real voice state, not a timer', () => {
+  const html = readFileSync(join(ROOT, 'dashboard', 'static', 'app.html'), 'utf-8');
+  const script = inlineScripts(html).filter((s) => s.trim()).join('\n');
+  for (const fn of ['voiceOrbState', 'voiceOrbPaint', 'voiceOrbTick', 'voiceOrbStart']) {
+    assert.ok(script.includes(`function ${fn}`), `${fn} is missing: nothing would draw the visualiser`);
+  }
+  // Every state it reports comes from something real:
+  const stateFn = script.slice(script.indexOf('function voiceOrbState'), script.indexOf('function voiceOrbMeasure'));
+  for (const source of ['Speech.busy', 'VoiceOrb.mic', '_muted', 'Ear.problem', 'Ear.ready']) {
+    assert.ok(stateFn.includes(source), `the visualiser no longer reads ${source}, so its state can lie`);
+  }
+  // "JARVIS is talking" must come from the speech queue that only empties when
+  // playback has finished — the same flag the ears use to stop listening.
+  assert.ok(stateFn.includes("'speaking'"), 'there is no speaking state');
+  // The microphone's own loudness feeds the bars while he listens.
+  assert.ok(script.includes('VoiceOrb.mic ='), 'the microphone level never reaches the visualiser');
+  // And it is actually started at boot, or nothing draws at all.
+  assert.ok(/voiceOrbStart\(\);\s*\/\//.test(script), 'voiceOrbStart() is never called on boot');
+});
+
+test('the visualiser and the ears bar agree about who is talking', () => {
+  const html = readFileSync(join(ROOT, 'dashboard', 'static', 'app.html'), 'utf-8');
+  const css = html.slice(html.indexOf('<style>'), html.indexOf('</style>'));
+  for (const state of ['listening', 'hearing', 'thinking', 'speaking', 'muted', 'error']) {
+    assert.ok(css.includes(`.voice-orb[data-state="${state}"]`),
+      `the visualiser has no colour for the "${state}" state, so the states look identical`);
+  }
+  // The ears bar is the mute button; it was styled to appear but never shown.
+  const script = inlineScripts(html).filter((s) => s.trim()).join('\n');
+  assert.ok(script.includes("bar.classList.add('show')"),
+    'the ears bar is never shown, so the mute button cannot be reached');
+});

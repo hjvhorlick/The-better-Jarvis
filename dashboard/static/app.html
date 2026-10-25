@@ -50,6 +50,9 @@
       --text-muted: var(--jg-text-faint, #a99a63);
 
       --header-h: 56px;
+      /* The conversation is a column down the left of the room; the rest of the
+         glass (the stage, the tools, the rooms) stays visible beside it. */
+      --chat-w: clamp(230px, 21vw, 350px);
       /* Sharp corners: the frames are cut glass, not rounded tiles. */
       --radius-panel: var(--jg-radius, 3px);
       --radius-control: var(--jg-radius, 3px);
@@ -176,7 +179,10 @@
 
     /* ── USER-OPENED WORKSPACE TOOLS ── */
     #workspace-stage {
-      position: absolute; top: var(--header-h); left: 0; right: 0; bottom: 0;
+      /* The tools live in the room beside the conversation: the stage begins at
+         the chat's right edge and below the header, so nothing dragged inside it
+         can ever sit over the chat or under the header. */
+      position: absolute; top: var(--header-h); left: var(--chat-w); right: 0; bottom: 0;
       overflow: hidden; z-index: 30; pointer-events: none;
     }
     #workspace-stage .glass-window { pointer-events: auto; }
@@ -433,6 +439,47 @@
     }
     .listen-bar-btn:hover { background: rgba(255, 255, 255, 0.26); }
     @keyframes listenPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+    /* ── THE VOICE VISUALISER ────────────────────────────────────────────────
+       A ring of bars around a small core. The bars move with the microphone
+       when JARVIS is listening and with his own voice when he is speaking, so
+       "he is talking" and "he can hear you" are never guesswork. One colour per
+       state: gold when he speaks, emerald when he hears you, amber while he
+       thinks, dim when muted, rose on a problem. */
+    .voice-orb {
+      flex-shrink: 0;
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px 9px;
+      border-bottom: var(--jg-line-width, 1px) solid var(--jg-line-soft, rgba(255, 214, 10, 0.28));
+      background: rgba(12, 13, 16, 0.30);
+      color: var(--jg-text-soft, #e7cf7d);
+      transition: background 0.25s ease, color 0.25s ease;
+    }
+    .voice-orb-canvas {
+      flex-shrink: 0; width: 52px; height: 52px; display: block;
+      filter: drop-shadow(0 0 6px var(--orb-glow, rgba(255, 214, 10, 0.35)));
+    }
+    .voice-orb-text {
+      display: flex; flex-direction: column; gap: 2px;
+      min-width: 0; overflow: hidden;
+    }
+    .voice-orb-label {
+      font-size: 11px; font-weight: 800; letter-spacing: 1.6px;
+      text-transform: uppercase; color: var(--orb-colour, var(--jg-text, #ffe066));
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .voice-orb-sub {
+      font-size: 10.5px; line-height: 1.3; color: var(--jg-text-faint, #a99a63);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    /* Each state owns one colour. Bright gold speaking, emerald hearing. */
+    .voice-orb { --orb-colour: var(--jg-text, #ffe066); --orb-glow: rgba(255, 214, 10, 0.30); }
+    .voice-orb[data-state="listening"] { --orb-colour: #6ee7b7; --orb-glow: rgba(52, 211, 153, 0.34); }
+    .voice-orb[data-state="hearing"]   { --orb-colour: #34d399; --orb-glow: rgba(52, 211, 153, 0.55); background: rgba(52, 211, 153, 0.10); }
+    .voice-orb[data-state="thinking"]  { --orb-colour: #fbbf24; --orb-glow: rgba(251, 191, 36, 0.45); }
+    .voice-orb[data-state="speaking"]  { --orb-colour: #ffd60a; --orb-glow: rgba(255, 214, 10, 0.70); background: rgba(255, 214, 10, 0.10); }
+    .voice-orb[data-state="muted"]     { --orb-colour: #a99a63; --orb-glow: rgba(169, 154, 99, 0.20); }
+    .voice-orb[data-state="error"]     { --orb-colour: #fb7185; --orb-glow: rgba(244, 63, 94, 0.45); }
 
     /* The live bubble while an answer is being written/streamed in */
     .chat-bubble.streaming .bubble-header::after {
@@ -696,17 +743,22 @@
     #hud-toast.show {
       opacity: 1; transform: translateX(-50%) translateY(0);
     }
-    /* The conversation is the main screen; tools stay in the compact header. */
+    /* The conversation is a column down the LEFT of the room; tools and the
+       rooms open beside it, so nothing is ever covered by the chat. */
     #chat-workspace {
-      position: fixed; inset: var(--header-h) 0 0;
-      z-index: 20; display: flex; justify-content: center;
-      min-width: 0; padding: 12px clamp(8px, 2vw, 24px);
+      /* Bolted to the header: no gap, no drag, always on screen. Its own stacking
+         level sits below the tools stage, so a tool window is never hidden
+         behind it. */
+      position: fixed; top: var(--header-h); bottom: 0; left: 0;
+      width: var(--chat-w); max-width: 100vw;
+      z-index: 25; display: flex; justify-content: flex-start;
+      min-width: 0; padding: 0 0 10px clamp(8px, 1.4vw, 14px);
       background: transparent; border: 0; box-shadow: none;
       backdrop-filter: none; -webkit-backdrop-filter: none;
       pointer-events: none;
     }
     #chat-content {
-      display: flex; width: min(100%, 1240px); height: 100%; min-width: 0; min-height: 0;
+      display: flex; width: 100%; height: 100%; min-width: 0; min-height: 0;
       pointer-events: auto;
     }
     #chat-content .glass-window.primary-chat {
@@ -719,7 +771,7 @@
       backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
       -webkit-backdrop-filter: blur(var(--jg-panel-frost)) saturate(104%) brightness(0.98);
       border: var(--jg-line-width) solid var(--jg-line);
-      border-radius: var(--jg-radius);
+      border-top: none; border-radius: 0 0 var(--jg-radius) var(--jg-radius);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14),
                   0 0 var(--jg-glow-size) var(--jg-glow),
                   0 18px 40px -18px rgba(0, 0, 0, 0.72);
@@ -740,19 +792,20 @@
     #chat-content .chat-container { height: 100%; display: flex; flex-direction: column; }
     #chat-content .chat-feed {
       flex: 1 1 auto; min-height: 0; overflow-y: auto;
-      padding: clamp(18px, 2.5vw, 34px); gap: 14px; touch-action: pan-y;
+      padding: clamp(14px, 1.6vw, 24px); gap: 12px; touch-action: pan-y;
     }
     #chat-content .chat-bubble {
-      max-width: min(86%, 820px); padding: 14px 18px;
-      font-size: 15px; line-height: 1.65; border-radius: 12px;
+      max-width: 100%; padding: 12px 15px;
+      font-size: 14px; line-height: 1.6; border-radius: 12px;
+      overflow-wrap: anywhere;
     }
     #chat-content .chat-bubble.speaker-system { font-size: 12px; }
     #chat-content .bubble-header { font-size: 10px; letter-spacing: 1.2px; }
     #chat-content .code-block { font-size: 13px; padding: 12px; }
-    #chat-content .chat-footer { padding: 14px clamp(14px, 2.5vw, 28px) 18px; gap: 10px; }
-    #chat-content .chat-input { min-width: 0; min-height: 48px; padding: 12px 15px; font-size: 16px; }
-    #chat-content .chat-btn { min-height: 48px; padding: 12px 18px; font-size: 13px; }
-    #chat-content .listen-bar { padding: 8px 14px; font-size: 12px; }
+    #chat-content .chat-footer { padding: 10px clamp(12px, 1.4vw, 18px) 14px; gap: 8px; }
+    #chat-content .chat-input { min-width: 0; min-height: 46px; padding: 11px 13px; font-size: 15px; }
+    #chat-content .chat-btn { min-height: 46px; padding: 11px 15px; font-size: 12px; }
+    #chat-content .listen-bar { padding: 7px 12px; font-size: 11px; }
     #chat-content .listen-bar-btn { padding: 6px 12px; font-size: 11px; }
     #spatial-status-hud { display: none; }
 
@@ -920,8 +973,12 @@
       .hud-center-controls { gap: 4px; margin-left: auto; }
       .hud-toggle-btn { gap: 4px; padding: 7px 8px; font-size: 10px; }
       .hud-toggle-btn > span:not(.btn-icon) { display: none; }
-      #chat-workspace { padding: 8px; }
-      #chat-content .chat-feed { padding: 16px 12px; gap: 10px; }
+      :root { --chat-w: 100vw; }
+      #chat-workspace { width: 100vw; padding: 0 8px 8px; }
+      #chat-content .glass-window.primary-chat { border-top: none; }
+      #workspace-stage { left: 0; }
+      #win-rooms { left: 0 !important; border-left: var(--jg-line-width) solid var(--jg-line); }
+      #chat-content .chat-feed { padding: 14px 12px; gap: 10px; }
       #chat-content .chat-bubble { max-width: 94%; padding: 12px 14px; font-size: 14px; }
       #chat-content .chat-footer { padding: 10px 10px 12px; gap: 8px; }
       #chat-content .chat-input { padding: 11px 12px; }
@@ -988,6 +1045,18 @@
     <!-- Primary conversation; mounted into the main workspace below. -->
     <div class="glass-window" id="win-chat">
       <div class="window-body chat-container">
+        <!-- THE VOICE VISUALISER. The one place that shows at a glance what the
+             voice is doing: standing by, listening, hearing you, thinking, or
+             speaking. It is part of the conversation frame, so it is always on
+             screen — no window can be dropped on top of it. -->
+        <div class="voice-orb" id="voice-orb" data-state="idle" role="status" aria-live="polite">
+          <canvas class="voice-orb-canvas" id="voice-orb-canvas" width="96" height="96" aria-hidden="true"></canvas>
+          <div class="voice-orb-text">
+            <span class="voice-orb-label" id="voice-orb-label">Standing by</span>
+            <span class="voice-orb-sub" id="voice-orb-sub">JARVIS is ready</span>
+          </div>
+        </div>
+
         <div class="chat-feed" id="chat-feed" role="log" aria-label="Conversation" aria-live="polite" aria-relevant="additions text"></div>
 
         <!-- THE EARS: always visible while the microphone is on. It says what the
@@ -1010,7 +1079,7 @@
     </div>
 
     <!-- PANEL 3: PC FILE ENVIRONMENT TREE -->
-    <div class="glass-window" id="win-tree" style="top: 24px; left: 864px; display: none;">
+    <div class="glass-window" id="win-tree" style="top: 24px; left: calc(100% - 384px); display: none;">
       <div class="window-header" onpointerdown="startWindowDrag(event, 'win-tree')">
         <div class="window-title-group">
           <span class="window-icon">📂</span>
@@ -1040,7 +1109,7 @@
     </div>
 
     <!-- PANEL 4: FILE INSPECTOR & CODE VIEWER -->
-    <div class="glass-window" id="win-inspector" style="top: 220px; left: 450px; display: none;">
+    <div class="glass-window" id="win-inspector" style="top: 220px; left: 24px; display: none;">
       <div class="window-header" onpointerdown="startWindowDrag(event, 'win-inspector')">
         <div class="window-title-group">
           <span class="window-icon">📄</span>
@@ -1067,7 +1136,7 @@
     </div>
 
     <!-- PANEL 5: WORKSPACE SETTINGS & MY HANDS -->
-    <div class="glass-window" id="win-settings" style="top: 80px; left: 200px; width: 440px; display: none;">
+    <div class="glass-window" id="win-settings" style="top: 24px; left: 24px; width: 440px; display: none;">
       <div class="window-header" onpointerdown="startWindowDrag(event, 'win-settings')">
         <div class="window-title-group">
           <span class="window-icon">⚙️</span>
@@ -1362,10 +1431,11 @@
     <div id="chat-content"></div>
   </main>
 
-  <!-- Full-screen workspaces are available on request; the chat returns on close. -->
-  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:0; right:0; bottom:0;
+  <!-- Full-screen workspaces are available on request; they open BESIDE the
+       conversation column on the left, never over it. -->
+  <div id="win-rooms" style="display:none; position:fixed; top:var(--header-h); left:var(--chat-w); right:0; bottom:0;
        z-index:900; background:transparent;
-       border:1px solid var(--jg-line); border-right:none;
+       border:1px solid var(--jg-line); border-left:none; border-right:none;
        box-shadow:0 0 var(--jg-glow-size) var(--jg-glow);
        transform:translateX(105%); transition:transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);">
     <iframe id="rooms-frame" title="JARVIS Rooms" style="width:100%; height:100%; border:0; background:transparent;"></iframe>
@@ -1380,7 +1450,7 @@
     // ── Authentication & Security ──────────────────────────────────────────
     // The page build marker: shown in Settings → Voice, so a stale page is obvious.
     // Bump this on every change to this file.
-    const JARVIS_BUILD = '2026-10-14-chat-first-local-voice-3';
+    const JARVIS_BUILD = '2026-10-25-voice-visualiser';
     const _authToken  = sessionStorage.getItem('jarvis_token') || 'jarvis-live-session-token';
     const _sessionKey = sessionStorage.getItem('jarvis_key') || 'JARVIS';
     // The names come from the app's own settings (config/api_keys.json →
@@ -1819,6 +1889,7 @@
       {
         try {
           if (m.type === 'stream') {
+            if (m.speaker === 'jarvis' && m.replay !== true) VoiceOrb.thinkingUntil = 0;
             // The HTTP response may win the race. If it already completed this
             // id, a late stream frame is a duplicate, not a new answer.
             if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) return;
@@ -1830,6 +1901,7 @@
               else speakStreamed(m.id, m.text);
             }
           } else if (m.type === 'log') {
+            if (m.speaker === 'jarvis' && m.replay !== true) VoiceOrb.thinkingUntil = 0;
             if (m.speaker === 'user' && m.id && localEchoes.has(m.id)) {
               localEchoes.delete(m.id);          // our own command, already on screen
             } else if (m.speaker === 'jarvis' && m.id && renderedReplies.has(m.id)) {
@@ -2008,6 +2080,8 @@
       const requestId = 'cmd-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
       localEchoes.set(requestId, Date.now());
       appendChat('user', txt);
+      // From here until the reply lands, the visualiser says "thinking".
+      VoiceOrb.thinkingUntil = performance.now() + 120000;
       const enc = _encrypt(txt);
       const body = Object.assign(enc ? { enc } : { text: txt }, { requestId });
       // Replies normally arrive on the websocket as they are written. If that
@@ -2020,6 +2094,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
       }).then((r) => (r.ok ? r.json() : null)).then((data) => {
+        VoiceOrb.thinkingUntil = 0;
         if (!data || !data.reply) return;
         const id = data.id || requestId;
         const live = liveStreamBubble(id);
@@ -2057,6 +2132,7 @@
           }, 700);
         }
       }).catch(() => {
+        VoiceOrb.thinkingUntil = 0;
         if (!socketWasUp) {
           const id = requestId;
           if (!liveStreamBubble(id)) appendChat('system', 'The server did not answer — is JARVIS still running on port 3000?');
@@ -2398,6 +2474,38 @@
       win.classList.add('focused');
     }
 
+    // ── THE ROOM BESIDE THE CHAT ─────────────────────────────────────────────
+    // The conversation and the header are fixed furniture. Every movable tool
+    // lives inside #workspace-stage, which starts at the chat's right edge and
+    // below the header, so a window can never be dragged over either of them.
+    function stageBox() {
+      const st = document.getElementById('workspace-stage');
+      if (!st) return { left: 0, top: 0, w: window.innerWidth, h: window.innerHeight, el: null };
+      const r = st.getBoundingClientRect();
+      return { left: r.left, top: r.top, w: st.clientWidth, h: st.clientHeight, el: st };
+    }
+    function clampToStage(win, left, top) {
+      const box = stageBox();
+      const maxL = Math.max(8, box.w - win.offsetWidth - 8);
+      const maxT = Math.max(8, box.h - 60);
+      return {
+        left: Math.min(Math.max(8, left), maxL),
+        top: Math.min(Math.max(8, top), maxT)
+      };
+    }
+    // After a resize (or when the chat column changes width) every open window
+    // is nudged back inside the room, so none is ever left under the chat.
+    function keepWindowsInRoom() {
+      document.querySelectorAll('#workspace-stage .glass-window').forEach(win => {
+        if (win.classList.contains('primary-chat')) return;
+        if (win.style.display === 'none') return;
+        const p = clampToStage(win, win.offsetLeft, win.offsetTop);
+        win.style.left = `${p.left}px`;
+        win.style.top = `${p.top}px`;
+      });
+    }
+    window.addEventListener('resize', keepWindowsInRoom);
+
     function startWindowDrag(e, winId) {
       if (e.target.closest('.win-btn') || e.target.closest('.chat-input') || e.target.closest('.tree-search') || e.target.closest('input') || e.target.closest('button') || e.target.closest('select')) return;
       const win = document.getElementById(winId);
@@ -2425,10 +2533,9 @@
       if (!activeDragWin) return;
       const dx = e.clientX - dragStartX;
       const dy = e.clientY - dragStartY;
-      const newL = Math.max(8, Math.min(window.innerWidth - activeDragWin.offsetWidth - 8, initialLeft + dx));
-      const newT = Math.max(8, Math.min(window.innerHeight - 60, initialTop + dy));
-      activeDragWin.style.left = `${newL}px`;
-      activeDragWin.style.top = `${newT}px`;
+      const pos = clampToStage(activeDragWin, initialLeft + dx, initialTop + dy);
+      activeDragWin.style.left = `${pos.left}px`;
+      activeDragWin.style.top = `${pos.top}px`;
 
       // Track velocity for tactile release fling
       const now = performance.now();
@@ -2477,8 +2584,9 @@
 
     function onWindowResizeMove(e) {
       if (!activeResizeWin) return;
-      const nw = Math.max(260, Math.min(window.innerWidth - activeResizeWin.offsetLeft - 16, initialWidth + (e.clientX - resizeStartX)));
-      const nh = Math.max(180, Math.min(window.innerHeight - activeResizeWin.offsetTop - 16, initialHeight + (e.clientY - resizeStartY)));
+      const box = stageBox();
+      const nw = Math.max(260, Math.min(box.w - activeResizeWin.offsetLeft - 8, initialWidth + (e.clientX - resizeStartX)));
+      const nh = Math.max(180, Math.min(box.h - activeResizeWin.offsetTop - 8, initialHeight + (e.clientY - resizeStartY)));
       activeResizeWin.style.width = `${nw}px`;
       activeResizeWin.style.height = `${nh}px`;
     }
@@ -2505,6 +2613,10 @@
       if (!win) return;
       if (win.style.display === 'none') {
         win.style.display = 'flex';
+        // Opened from the header: land inside the room, never under the chat.
+        const spot = clampToStage(win, win.offsetLeft, win.offsetTop);
+        win.style.left = `${spot.left}px`;
+        win.style.top = `${spot.top}px`;
         bringToFront(win);
         FoleyAudio.grab();
         // Optional provider settings load only when the owner opens Settings.
@@ -3382,13 +3494,18 @@
             handGrabbedWin = win;
             bringToFront(win);
             win.classList.add('grabbed');
-            grabOffsetX = cursorX - win.offsetLeft;
-            grabOffsetY = cursorY - win.offsetTop;
+            const grabBox = stageBox();
+            grabOffsetX = cursorX - grabBox.left - win.offsetLeft;
+            grabOffsetY = cursorY - grabBox.top - win.offsetTop;
             FoleyAudio.grab();
           }
         } else {
-          handGrabbedWin.style.left = `${Math.max(8, Math.min(window.innerWidth - handGrabbedWin.offsetWidth - 8, cursorX - grabOffsetX))}px`;
-          handGrabbedWin.style.top = `${Math.max(8, Math.min(window.innerHeight - 60, cursorY - grabOffsetY))}px`;
+          const moveBox = stageBox();
+          const handPos = clampToStage(handGrabbedWin,
+            cursorX - moveBox.left - grabOffsetX,
+            cursorY - moveBox.top - grabOffsetY);
+          handGrabbedWin.style.left = `${handPos.left}px`;
+          handGrabbedWin.style.top = `${handPos.top}px`;
         }
       } else {
         if (handGrabbedWin) {
@@ -3445,8 +3562,9 @@
           handGrabbedWin = win;
           bringToFront(win);
           win.classList.add('grabbed');
-          grabOffsetX = x - win.offsetLeft;
-          grabOffsetY = y - win.offsetTop;
+          const dwellBox = stageBox();
+          grabOffsetX = x - dwellBox.left - win.offsetLeft;
+          grabOffsetY = y - dwellBox.top - win.offsetTop;
           FoleyAudio.grab();
           resetDwell();
         }
@@ -3743,6 +3861,199 @@
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
     };
 
+    /* ══ THE VOICE VISUALISER ═══════════════════════════════════════════════
+       The ring at the top of the conversation. It is driven by what is really
+       happening, not by a decoration timer:
+
+         listening / hearing — the microphone's own loudness (Ear frames)
+         speaking            — the local voice service is playing a reply. The
+                               request answers only when playback has finished,
+                               so Speech.busy is true for exactly that window.
+         thinking            — a command has been sent and no reply has landed.
+         muted / error       — the microphone is off, or its report says why.
+
+       Colours live in CSS (`data-state`), so the ring follows the gold glass
+       look instead of inventing a second palette. */
+
+    const VoiceOrb = {
+      el: null, canvas: null, g: null,
+      state: '', level: 0, mic: 0, thinkingUntil: 0,
+      started: false, lastPaint: 0, colour: '#ffe066',
+      reduced: false,
+      text: {
+        idle:      ['Standing by', 'JARVIS is ready'],
+        listening: ['Listening', 'Microphone open — just speak'],
+        hearing:   ['Hearing you', 'Go on, sir'],
+        thinking:  ['Thinking', 'Working on your reply'],
+        speaking:  ['Speaking', 'JARVIS is talking'],
+        muted:     ['Muted', 'The microphone is off'],
+        error:     ['Voice problem', 'The microphone needs attention'],
+      },
+      colours: {
+        idle: '#ffe066', listening: '#6ee7b7', hearing: '#34d399',
+        thinking: '#fbbf24', speaking: '#ffd60a', muted: '#a99a63', error: '#fb7185',
+      },
+    };
+
+    /** What the voice is doing right now, most important first. */
+    function voiceOrbState() {
+      if (Speech.busy || Speech.queue.length > 0) return 'speaking';
+      if (performance.now() < VoiceOrb.thinkingUntil) return 'thinking';
+      if (_muted) return 'muted';
+      if (Ear.problem) return 'error';
+      if (Ear.ready && VoiceOrb.mic > 0.18) return 'hearing';
+      if (Ear.ready) return 'listening';
+      return 'idle';
+    }
+
+    /** Size the canvas to the pixel grid so the ring stays sharp. */
+    function voiceOrbMeasure() {
+      const c = VoiceOrb.canvas;
+      if (!c) return;
+      const box = c.getBoundingClientRect();
+      const side = Math.max(24, Math.round(Math.min(box.width, box.height) || 52));
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      if (c.width !== Math.round(side * dpr) || c.height !== Math.round(side * dpr)) {
+        c.width = Math.round(side * dpr);
+        c.height = Math.round(side * dpr);
+      }
+      VoiceOrb.g = c.getContext('2d');
+      if (VoiceOrb.g) VoiceOrb.g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    /** One frame. `level` is smoothed so the bars swell and settle like a voice. */
+    function voiceOrbPaint(now) {
+      const g = VoiceOrb.g, c = VoiceOrb.canvas;
+      if (!g || !c) return;
+      const dpr = Math.min(3, window.devicePixelRatio || 1);
+      const side = c.width / dpr;
+      const cx = side / 2, cy = side / 2;
+      const outer = side / 2 - 1.5;
+      const state = VoiceOrb.state;
+      const t = now / 1000;
+
+      let target = 0.05;
+      if (state === 'speaking') {
+        // Syllables: two slow waves multiplied, so it never looks like a loop.
+        const wobble = Math.abs(Math.sin(t * 8.4) * Math.sin(t * 3.1 + 1.1));
+        target = 0.34 + 0.62 * wobble;
+      } else if (state === 'hearing' || state === 'listening') {
+        target = 0.08 + VoiceOrb.mic * 0.92;
+      } else if (state === 'thinking') {
+        target = 0.20 + 0.10 * Math.sin(t * 2.4);
+      } else if (state === 'error') {
+        target = 0.14;
+      }
+      // Fast attack, slow release: a voice, not a flicker.
+      VoiceOrb.level += (target - VoiceOrb.level) * (target > VoiceOrb.level ? 0.45 : 0.10);
+      const level = VoiceOrb.reduced ? Math.max(VoiceOrb.level, 0.2) : VoiceOrb.level;
+
+      g.clearRect(0, 0, side, side);
+
+      const colour = VoiceOrb.colours[state] || VoiceOrb.colours.idle;
+
+      // The quiet bed: a thin ring that is always there, so "standing by" is
+      // still visibly on.
+      g.beginPath();
+      g.arc(cx, cy, outer - 6, 0, Math.PI * 2);
+      g.strokeStyle = colour;
+      g.globalAlpha = 0.22;
+      g.lineWidth = 1;
+      g.stroke();
+
+      // The bars: a circle of them, each with its own phase, so the ring moves
+      // like sound and not like a spinner.
+      const bars = 32;
+      g.globalAlpha = 0.95;
+      g.strokeStyle = colour;
+      g.lineCap = 'round';
+      g.lineWidth = Math.max(1.4, side / 34);
+      const inner = outer - 7;
+      for (let i = 0; i < bars; i++) {
+        const phase = i * 0.9;
+        const wobble =
+          Math.abs(Math.sin(i * 0.55 + t * (state === 'speaking' ? 7.4 : 3.2) + phase)) *
+          Math.abs(Math.sin(i * 0.21 - t * 2.3 + 0.7));
+        const len = 1.4 + level * (side * 0.30) * (0.35 + 0.65 * wobble);
+        const angle = (i / bars) * Math.PI * 2 - Math.PI / 2;
+        const x1 = cx + Math.cos(angle) * inner;
+        const y1 = cy + Math.sin(angle) * inner;
+        const x2 = cx + Math.cos(angle) * (inner + len);
+        const y2 = cy + Math.sin(angle) * (inner + len);
+        g.globalAlpha = 0.35 + 0.65 * wobble;
+        g.beginPath();
+        g.moveTo(x1, y1);
+        g.lineTo(x2, y2);
+        g.stroke();
+      }
+
+      // The core: a filled centre that breathes with the level, and a halo
+      // while JARVIS is actually speaking.
+      const coreR = side * 0.13 + level * side * 0.06;
+      const halo = g.createRadialGradient(cx, cy, 0, cx, cy, coreR * 2.6);
+      halo.addColorStop(0, colour);
+      halo.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      g.globalAlpha = state === 'speaking' ? 0.55 : 0.32;
+      g.fillStyle = halo;
+      g.beginPath();
+      g.arc(cx, cy, coreR * 2.6, 0, Math.PI * 2);
+      g.fill();
+
+      g.globalAlpha = 1;
+      g.fillStyle = colour;
+      g.beginPath();
+      g.arc(cx, cy, coreR * 0.62, 0, Math.PI * 2);
+      g.fill();
+
+      // A slow sweep around the bed while he speaks: the one moving highlight.
+      if (state === 'speaking' || state === 'thinking') {
+        g.globalAlpha = 0.85;
+        g.strokeStyle = colour;
+        g.lineWidth = Math.max(1.6, side / 26);
+        g.beginPath();
+        g.arc(cx, cy, outer - 6, t * (state === 'speaking' ? 2.6 : 1.3), t * (state === 'speaking' ? 2.6 : 1.3) + Math.PI * 0.55);
+        g.stroke();
+      }
+      g.globalAlpha = 1;
+    }
+
+    /** State changes update the words and the colour; the drawing runs on. */
+    function voiceOrbTick(now) {
+      if (!VoiceOrb.started) return;
+      const state = voiceOrbState();
+      if (state !== VoiceOrb.state) {
+        VoiceOrb.state = state;
+        const pair = VoiceOrb.text[state] || VoiceOrb.text.idle;
+        if (VoiceOrb.el) VoiceOrb.el.setAttribute('data-state', state);
+        const label = document.getElementById('voice-orb-label');
+        const sub = document.getElementById('voice-orb-sub');
+        if (label && label.textContent !== pair[0]) label.textContent = pair[0];
+        if (sub) {
+          const detail = state === 'error' && Ear.problem ? Ear.problem : pair[1];
+          if (sub.textContent !== detail) sub.textContent = detail;
+        }
+      }
+      // 30 frames a second is smooth to the eye and cheap next to the camera.
+      if (now - VoiceOrb.lastPaint >= 33 || VoiceOrb.reduced) {
+        VoiceOrb.lastPaint = now;
+        voiceOrbPaint(now);
+      }
+      requestAnimationFrame(voiceOrbTick);
+    }
+
+    function voiceOrbStart() {
+      if (VoiceOrb.started) return;
+      VoiceOrb.el = document.getElementById('voice-orb');
+      VoiceOrb.canvas = document.getElementById('voice-orb-canvas');
+      if (!VoiceOrb.el || !VoiceOrb.canvas) return;   // no visualiser: never fatal
+      try { VoiceOrb.reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches; } catch (_) {}
+      voiceOrbMeasure();
+      VoiceOrb.started = true;
+      requestAnimationFrame(voiceOrbTick);
+      window.addEventListener('resize', voiceOrbMeasure);
+    }
+    window.voiceOrbStart = voiceOrbStart;
+
     // speechSynthesis has its own queue. Keep every page request in one ordered
     // lane so a settings preview cannot cancel or time out behind a reply.
     const BrowserSpeech = { tail: Promise.resolve() };
@@ -3967,6 +4278,18 @@
       if (text) text.textContent = earStatusText();
       const mute = document.getElementById('listen-mute-btn');
       if (mute) mute.textContent = _muted ? '🎙 Unmute' : '🔇 Mute';
+      // The bar is the mute switch, so it is on screen whenever the microphone
+      // is meant to be open (or silenced on purpose). Its last state was never
+      // applied before, which left the button invisible.
+      const bar = document.getElementById('listen-bar');
+      if (bar) {
+        const speaking = Speech.busy || Speech.queue.length > 0;
+        const hearing = VoiceOrb.mic > 0.18;
+        bar.classList.add('show');
+        bar.classList.toggle('speaking', speaking && !_muted);
+        bar.classList.toggle('hearing', !speaking && hearing && !_muted);
+        bar.classList.toggle('muted', _muted);
+      }
     }
 
     /* ── Ears ───────────────────────────────────────────────────────────── */
@@ -3990,10 +4313,14 @@
     function earFrame(input) {
       // While JARVIS is speaking, muted, or waiting for an answer, nothing is
       // heard — so JARVIS never hears its own voice.
-      if (earGated()) { earDropSentence(); return; }
+      if (earGated()) { earDropSentence(); VoiceOrb.mic = VoiceOrb.mic * 0.6; return; }
       let sum = 0;
       for (let i = 0; i < input.length; i++) sum += input[i] * input[i];
       const rms = Math.sqrt(sum / input.length);
+      // The microphone's real loudness, for the voice visualiser: a fast rise
+      // and a slow fall, so the bars follow a voice instead of flickering.
+      const heard = Math.min(1, rms * 14);
+      VoiceOrb.mic = heard > VoiceOrb.mic ? heard : VoiceOrb.mic * 0.86 + heard * 0.14;
       const loud = rms > Math.max(Ear.noise * 3, 0.008);
       const now = performance.now();
       if (!Ear.inSentence) {
@@ -4418,6 +4745,7 @@
 
     document.addEventListener('pointerdown', earGesture, true);
     document.addEventListener('keydown', earGesture, true);
+    voiceOrbStart();            // the ring at the top of the conversation
     initVoices();               // list this browser's voices, ready before the first reply
     refreshVoiceServerInfo();   // …and say whether this computer's own voice service is up
     setTimeout(listenStart, 900);
@@ -4656,6 +4984,10 @@
         host.appendChild(chat);
       }
     })();
+
+    // With the conversation bolted to the header, every tool window is nudged
+    // into the room beside it — never under the chat, never under the header.
+    keepWindowsInRoom();
 
     // The owner's glass numbers are on screen from the first paint: they are
     // applied here, and again every time a slider moves.
