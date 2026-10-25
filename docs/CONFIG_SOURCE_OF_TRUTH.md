@@ -63,12 +63,12 @@ still had calls to give. That refusal is gone.
 |---|---|
 | Every outbound QUESTION counts one unit (retries over models and thinking settings are free) | `config.ts: spendGeminiCall()` |
 | Counted in total AND per key: `runtime/quota.json` = `{"day", "used", "keys": {"1", "2"}, "google_stopped": {"1", "2"}, "switched_at"}` — `{day, used}` first, the shape `backend/quota.py` reads | `readBrainCounter()` / `writeBrainCounter()` |
-| Reset at local midnight | same |
-| Past `SUPPER_GEMINI_DAILY_WARN` (default 20; an old `SUPPER_GEMINI_DAILY_BUDGET` is honoured as the warning level) the terminal, the dialogue (a system line) and Settings WARN — the call still goes through | `resolveDailyWarn()`, `onQuotaEvent()` |
+| Reset at local midnight (the count; a 429's cooldown runs on its own 10-minute clock) | same |
+| Past `SUPPER_GEMINI_DAILY_WARN` (default 20; an old `SUPPER_GEMINI_DAILY_BUDGET` is honoured as the warning level) the terminal, the dialogue (a SHORT system line) and Settings WARN — the call still goes through | `resolveDailyWarn()`, `onQuotaEvent()` |
 | A counter file that exists but cannot be read: the count continues in memory for the day, the file is left alone, and Settings says the file could not be read — nothing is blocked | `readBrainCounter()` |
-| A real `429` from Google stops THAT key until local midnight; Google rejecting a key does the same | `markKeyStoppedByGoogle()` |
-| If the second key (`gemini_api_key_2` / `GEMINI_API_KEY_2`) is set and not stopped, it takes over for the rest of the day — the same question is retried on it at once (counted as one call on key 2, the one exception to "one unit per question", because Google counts it against key 2) | `runBrain()` / `runBrainStream()` |
-| Only when EVERY key we have is stopped are calls refused before they are sent — code `google-stopped`, and the message says Google did it, not this app | `resolveActiveKey()`, `explainBrainFailure()` |
+| A real `429` from Google cools THAT key down for 10 minutes (`QUOTA_STOP_COOLDOWN_MS`), then it is tried again — Google's per-minute limits clear in seconds and its daily quota resets at midnight Pacific, so a stop must never last into the next local day. Google rejecting a key pauses it until local midnight (only a new key fixes that) | `stopStillBlocks()`, `markKeyStoppedByGoogle()` |
+| If the second key (`gemini_api_key_2` / `GEMINI_API_KEY_2`) is set and not cooling down, it takes over at once — the same question is retried on it (counted as one call on key 2, the one exception to "one unit per question", because Google counts it against key 2) | `runBrain()` / `runBrainStream()` |
+| Only when EVERY key we have is cooling down are calls refused before they are sent — code `google-stopped` — and the CHAT gets one SHORT line saying Google did it, not this app; the long story stays in the terminal and Settings | `resolveActiveKey()`, `explainBrainFailure()` |
 | Voice (Kokoro / faster-whisper on this computer) and local answers (knowledge, time, reminders, drafts, small talk, memory) never reach the gate and never count | they never call `runBrain()` |
 
 Settings → "The Brain" shows both keys by their last four characters and
@@ -98,11 +98,11 @@ sentence. The rules:
 | What Google said | Code | What the dashboard says |
 |---|---|---|
 | `404 NOT_FOUND`, "no longer available" | `model-unavailable` | "The model name was withdrawn, sir — my key is fine, so do not change it." … names `SUPPER_TEXT_MODEL` / `GEMINI_MODEL`, the app's current model and its alias fallback |
-| `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — names which key (1 or 2), where it came from and its last four characters; if the other key is set, it takes over for the day |
-| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own quota — "Google stopping us, not this app"; that key is stopped until local midnight, the second key takes over if set |
+| `401`/`403`, `API_KEY_INVALID` | `key-rejected` | the key itself is refused — a short line: "Google rejected the Gemini key itself, sir — paste a working key in Settings → The Brain."; if the other key is set, it takes over; the rejected key waits until local midnight |
+| `429`, `RESOURCE_EXHAUSTED` | `rate-limited` | Google's own quota — one short line: "Gemini limit reached — Google answered 429 on key N (its quota, not this app). I retry in a few minutes."; the second key takes over if set; the key retries after its 10-minute cooldown |
 | `ENOTFOUND`, `ECONNREFUSED`, "fetch failed" | `connection` | the call never left the machine; neither key nor model is at fault |
 | no key anywhere | `no-key` | names every place checked: `GEMINI_API_KEY` (including `./.env`) and `config/api_keys.json` → `gemini_api_key` |
-| Google has stopped every key we have today | `google-stopped` | refused before it is sent: "Google has stopped our calls for today — Google, not this app", with the time each key was stopped and local midnight as the reset |
+| Google has stopped every key we have right now | `google-stopped` | refused before it is sent, in one short line: "Gemini limit reached, sir — Google has stopped every key for now (429, not this app). I answer from what is kept here and retry shortly." |
 
 Never returned or logged: the key itself. Only the last four characters, its
 source, and the file it was read from.

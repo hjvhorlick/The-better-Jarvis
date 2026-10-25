@@ -1525,7 +1525,7 @@
                  only when Google refuses the first key with a 429 (its quota) or
                  rejects it does the second one take over, for the rest of the
                  local day. Saved as gemini_api_key_2 in the same file. -->
-            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after local midnight. <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one and goes back to the first key when its cooldown is over (a 429 cools the key down for 10 minutes; a rejected key waits until local midnight). <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key2-input" autocomplete="off" spellcheck="false" placeholder="AIza… (second key, from another Google account/project)"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
@@ -1535,9 +1535,10 @@
             <span class="settings-desc" id="gemini-key2-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
-                 real 429 from Google stops calls, and only until local midnight. -->
+                 real 429 from Google can pause a key — for a 10-minute cooldown,
+                 then it is tried again. -->
             <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
-            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until local midnight, and the message then says plainly that Google stopped us.</span>
+            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can pause a call is Google itself: a real 429 cools that key down for 10 minutes and then it is tried again, and the chat message then is a short line saying Google stopped us.</span>
           </div>
         </div>
 
@@ -2037,7 +2038,7 @@
             return `key ${s} stopped by Google at ${hhmm} (${st.reason === 'quota' ? 'a real 429, its quota' : 'it rejected the key'})`;
           });
           const googleLine = q.stoppedByGoogle
-            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at local midnight.'
+            ? 'GOOGLE HAS STOPPED US (a real 429 — not this app). Each key retries after its 10-minute cooldown.'
             : stops.length ? stops.join('; ') : 'Google has not stopped any key today.';
           const warnLine = q.warnAt > 0
             ? (q.pastWarn ? `⚠ at or past your warning level of ${q.warnAt} (${q.warnSource}) — only a warning, nothing is blocked.` : `Warning level ${q.warnAt} (${q.warnSource}).`)
@@ -4578,7 +4579,7 @@
     };
 
     const Speech = {
-      busy: false, controller: null, held: false,   // held: words waiting for the browser's first-touch audio unlock
+      busy: false, busySince: 0, controller: null, held: false,   // held: words waiting for the browser's first-touch audio unlock
       queue: [], generation: 0, streams: new Map(), spoken: new Set(),
     };
 
@@ -4896,6 +4897,7 @@
     function recogRestartSoon() {
       clearTimeout(Listen.restart);
       Listen.restart = setTimeout(() => {
+        Listen.restart = 0;
         if (Listen.paused || _muted || Voice.recogFatal) return;
         if (hearEngine() === 'browser' && !Listen.recog) recogSpawn();
       }, 350);
@@ -4978,6 +4980,7 @@
     function recogPause() {
       Listen.paused = true;
       clearTimeout(Listen.restart);
+      Listen.restart = 0;
       recogStop();
       renderEar();
     }
@@ -5188,7 +5191,7 @@
         source.connect(proc);
         proc.connect(silent);
         silent.connect(ctx.destination);
-        Object.assign(Ear, { ctx, stream, proc, rate: ctx.sampleRate, ready: true, problem: '' });
+        Object.assign(Ear, { ctx, stream, proc, rate: ctx.sampleRate, ready: true, problem: '', everOpened: true });
       } catch (err) {
         const why = micExplain(err);
         Ear.problem = why.short;
@@ -5204,6 +5207,47 @@
       if (Ear.ctx && Ear.ctx.state === 'suspended') Ear.ctx.resume().catch(() => {});
       if (!_muted && !listenRunning()) listenStart();
     }
+
+    /* ── The ears' watchdog ───────────────────────────────────────────────
+       "Always listening" must survive ANY failure. Three things used to be
+       able to close the ears and never open them again, leaving the page
+       looking awake while the microphone was dead (the owner had to type):
+       a mouth stuck "busy" after a voice error, a recogniser that died
+       without firing onend, and a raw microphone whose stream ended
+       silently. Every 3 seconds this checks each one and simply restarts
+       it — a stuck state now lasts seconds, not the whole session. */
+    function synthActiveNow() {
+      try { return !!(Voice.synth && (Voice.synth.speaking || Voice.synth.pending || Voice.synth.paused)); } catch (_) { return false; }
+    }
+    function earWatchdog() {
+      // 1) The mouth claims a sentence is in progress, but nothing is
+      //    speaking and nothing is queued: the busy flag is a leftover from
+      //    a failure. Take it off and release the ears.
+      if (Speech.busy && !Speech.queue.length && !Speech.controller && !synthActiveNow()
+          && Date.now() - (Speech.busySince || 0) > 15000) {
+        console.warn('[voice] watchdog: the mouth was stuck busy — releasing the ears.');
+        Speech.busy = false;
+        Speech.held = false;
+        recogResume();
+        renderEar();
+      }
+      if (_muted || Speech.busy || Speech.queue.length || document.hidden) return;
+      // 2) The browser ear: if nothing is listening and nothing is pending,
+      //    start it — whether onend was lost, or a restart timer never fired.
+      if (hearEngine() === 'browser') {
+        if (!Listen.paused && !Voice.recogFatal && !Listen.recog && !Listen.active && !Listen.restart) {
+          console.warn('[voice] watchdog: the browser ear was down — starting it again.');
+          recogSpawn();
+        }
+      // 3) The server ear: it opened before, so permission is known-good —
+      //    a silently ended stream is reopened. (A refused mic sets
+      //    Ear.problem, and a problem on screen is never fought in a loop.)
+      } else if ((Ear.everOpened || Voice.engine === 'server') && !Ear.ready && !Ear.starting && !Ear.problem) {
+        console.warn('[voice] watchdog: the server ear was down — opening it again.');
+        earStart();
+      }
+    }
+    setInterval(earWatchdog, 3000);
 
     /* ── Mouth ──────────────────────────────────────────────────────────── */
     // Two engines, tried in the order this page is set to use them. The browser
@@ -5283,34 +5327,44 @@
     async function speakViaServer(text, gen) {
       const controller = new AbortController();
       Speech.controller = controller;
-      let data = null;
+      // The hard stop. The server times its own voice out at 180 s; this abort
+      // is the client's backstop for a connection that hangs instead (a proxy
+      // stall, the voice service dying mid-sentence). Without it, one hung
+      // request held Speech.busy — and the paused ears — until the page was
+      // reloaded, and the owner had to type.
+      const hardStop = setTimeout(() => { try { controller.abort(); } catch (_) {} }, 200000);
       try {
-        const res = await _authFetch('/api/voice/speak', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text: text.slice(0, 1400) }),
-          signal: controller.signal,
-        });
-        data = await res.json();
-      } catch (err) {
-        if (gen !== Speech.generation || (err && err.name === 'AbortError')) return 'aborted';
-        voiceProblem('Neither voice could speak. This browser: '
-          + (Voice.synthProblem || 'no reason recorded')
-          + ' This computer: the local voice is not answering — its messages are in the server console, marked [local-voice]. The reply is in the chat.');
-        return 'failed';
+        let data = null;
+        try {
+          const res = await _authFetch('/api/voice/speak', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text: text.slice(0, 1400) }),
+            signal: controller.signal,
+          });
+          data = await res.json();
+        } catch (err) {
+          if (gen !== Speech.generation || (err && err.name === 'AbortError')) return 'aborted';
+          voiceProblem('Neither voice could speak. This browser: '
+            + (Voice.synthProblem || 'no reason recorded')
+            + ' This computer: the local voice is not answering — its messages are in the server console, marked [local-voice]. The reply is in the chat.');
+          return 'failed';
+        } finally {
+          if (Speech.controller === controller) Speech.controller = null;
+        }
+        if (gen !== Speech.generation) return 'aborted';
+        if (!data || !data.ok) {
+          const browserNote = Voice.synthProblem ? `This browser: ${Voice.synthProblem} ` : '';
+          const why = (data && data.message) || 'the local voice gave no reason';
+          if (Voice.engine === 'server') appendChat('system', `This computer\u2019s voice could not speak: ${why}`);
+          voiceProblem(`JARVIS could not speak. ${browserNote}This computer: ${why}. The reply is in the chat.`);
+          return 'failed';
+        }
+        Ear.problem = '';
+        return 'ok';
       } finally {
-        if (Speech.controller === controller) Speech.controller = null;
+        clearTimeout(hardStop);   // the sentence ended (or the hard stop fired) — either way the timer goes
       }
-      if (gen !== Speech.generation) return 'aborted';
-      if (!data || !data.ok) {
-        const browserNote = Voice.synthProblem ? `This browser: ${Voice.synthProblem} ` : '';
-        const why = (data && data.message) || 'the local voice gave no reason';
-        if (Voice.engine === 'server') appendChat('system', `This computer\u2019s voice could not speak: ${why}`);
-        voiceProblem(`JARVIS could not speak. ${browserNote}This computer: ${why}. The reply is in the chat.`);
-        return 'failed';
-      }
-      Ear.problem = '';
-      return 'ok';
     }
 
     async function pumpSpeech() {
@@ -5325,12 +5379,25 @@
         return;
       }
       Speech.busy = true;
+      Speech.busySince = Date.now();
       recogPause();          // the browser's ear must not hear JARVIS's own voice
       renderEar();
       const gen = Speech.generation;
-      const outcome = await speakOne(next, gen);
+      let outcome;
+      try {
+        outcome = await speakOne(next, gen);
+      } catch (err) {
+        // A mouth problem must never take the ears down with it. This used to
+        // be the one unwrapped await: an exception here left Speech.busy true
+        // and the ears paused FOREVER — "when I talk nothing happens, so I
+        // must type". Report it, clear it, listen on.
+        console.warn('[voice] speakOne failed:', err);
+        voiceProblem(`JARVIS stayed quiet for one sentence (voice problem: ${err instanceof Error ? err.message : err}). The words are in the chat; the ears stay open.`);
+        outcome = 'failed';
+      } finally {
+        if (gen === Speech.generation) Speech.busy = false;
+      }
       if (gen !== Speech.generation) return;     // stopSpeaking() has already cleared everything
-      Speech.busy = false;
       if (outcome === 'held') {
         // Back to the front of the line, untouched. noteActivation() says
         // them on the first touch; refreshVoiceServerInfo() says them at

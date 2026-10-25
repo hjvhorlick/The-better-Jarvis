@@ -487,8 +487,9 @@ function freePort() {
 /* ── 5. THE COUNT WARNS, ONLY GOOGLE STOPS ───────────────────────────────────
  * The owner's rule: the app never blocks itself. It counts every outbound call
  * (one unit per question), warns past SUPPER_GEMINI_DAILY_WARN, and keeps
- * going. The only thing that stops a call is a real 429 from Google — and that
- * is said plainly as Google's doing, until local midnight.                    */
+ * going. The only thing that stops a call is a real 429 from Google — said
+ * plainly as Google's doing, in a SHORT chat line, with a 10-minute cooldown
+ * and then the key is tried again (never a whole silent day).               */
 {
   const MODELS = { 'harness-text-model': { } };
   const readCounter = (srv) => JSON.parse(fs.readFileSync(path.join(srv.cwd, 'runtime', 'quota.json'), 'utf-8'));
@@ -537,21 +538,40 @@ function freePort() {
     ok('damaged counter: …and the damaged file was left alone, not overwritten', fs.readFileSync(path.join(srv2.cwd, 'runtime', 'quota.json'), 'utf-8') === '{not json at all', 'untouched');
   } finally { await srv2.stop(); }
 
-  // (d) a real 429 from Google, one key only: Google stops us until midnight
+  // (d) a real 429 from Google, one key only: a SHORT chat line, a 10-minute cooldown
   const srv3 = await startDashboard({ models: { 'harness-text-model': { rateLimited: true } }, env: { SUPPER_TEXT_MODEL: 'harness-text-model' }, name: 'rate-limited' });
   try {
     const brain = await get(srv3, '/api/brain-check');
-    ok('429: reported as Google stopping us, not as a key problem and not as the app', brain.body.ok === false && brain.body.code === 'rate-limited' && /Google stopping us/.test(String(brain.body.error)) && /not this app/.test(String(brain.body.error)) && !/invalid|refused the key/i.test(String(brain.body.error)), String(brain.body.error).slice(0, 140));
-    ok('429: …and it says no second key is set', /No second key is set/.test(String(brain.body.error)), 'offers the second key');
+    ok('429: reported as Google stopping us, not as a key problem and not as the app', brain.body.ok === false && brain.body.code === 'rate-limited' && /429/.test(String(brain.body.error)) && /not this app/.test(String(brain.body.error)) && !/invalid|refused the key/i.test(String(brain.body.error)), String(brain.body.error).slice(0, 140));
+    ok('429: …and the chat line stays SHORT (the owner asked for short limit messages)', String(brain.body.error).length < 200 && !/Google said:/.test(String(brain.body.error)), `length=${String(brain.body.error).length}`);
     const after = readCounter(srv3);
     ok('429: the counter records that Google stopped key 1 today', after.google_stopped && after.google_stopped['1'] && after.google_stopped['1'].reason === 'quota', JSON.stringify(after.google_stopped));
     const sent = srv3.stub.calls.filter((c) => c.kind === 'generate').length;
     const next = await get(srv3, '/api/brain-check');
-    ok('429: the next call is refused before it is sent — Google stopped us until midnight', next.body.ok === false && next.body.code === 'google-stopped' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `${next.body.code}; generates still ${sent}`);
-    ok('429: …and the message blames Google, names the time, and promises midnight', /Google, not this app/.test(String(next.body.error)) && /key 1 was stopped at \d\d:\d\d/.test(String(next.body.error)) && /local midnight/.test(String(next.body.error)), String(next.body.error).slice(0, 160));
+    ok('429: within the cooldown the next call is refused before it is sent', next.body.ok === false && next.body.code === 'google-stopped' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `${next.body.code}; generates still ${sent}`);
+    ok('429: …and that line is short too, blames Google, and promises a retry', String(next.body.error).length < 200 && /not this app/.test(String(next.body.error)) && /retry/i.test(String(next.body.error)), String(next.body.error).slice(0, 160));
     ok('429: …and the count is not pretended to be used up', next.body.quota.used === 1 && next.body.quota.stoppedByGoogle === true, JSON.stringify({ used: next.body.quota.used, stoppedByGoogle: next.body.quota.stoppedByGoogle }));
     const chat = await post(srv3, '/api/command', { text: 'explain how a transistor works' });
-    ok('429: the dialogue says the same — Google stopped us', /Google has stopped our calls for today/.test(String(chat.body.reply)), String(chat.body.reply).slice(0, 100));
+    ok('429: the dialogue says the same — a short limit line, Google not the app', /Gemini limit reached/.test(String(chat.body.reply)) && /not this app/.test(String(chat.body.reply)) && String(chat.body.reply).length < 200, `${String(chat.body.reply).slice(0, 100)} (length ${String(chat.body.reply).length})`);
+    // The cooldown: Google's quota resets on Google's clock (per-minute limits
+    // clear in seconds; the daily quota at midnight PACIFIC) — so after the
+    // cooldown the key is tried again, even though the local day has not turned.
+    const counterFile = path.join(srv3.cwd, 'runtime', 'quota.json');
+    const cooled = JSON.parse(fs.readFileSync(counterFile, 'utf-8'));
+    cooled.google_stopped['1'].at = new Date(Date.now() - 11 * 60_000).toISOString();
+    fs.writeFileSync(counterFile, JSON.stringify(cooled));
+    const retried = await get(srv3, '/api/brain-check');
+    ok('429: after the 10-minute cooldown the key is tried again — no all-day block', retried.body.ok === false && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 1, `generates now ${srv3.stub.calls.filter((c) => c.kind === 'generate').length} (was ${sent})`);
+    // A NEW key saved into the slot clears Google's stop on the OLD key at once
+    // (this stub 429s again, but the call must go OUT instead of being refused).
+    const reblocked = JSON.parse(fs.readFileSync(path.join(srv3.cwd, 'runtime', 'quota.json'), 'utf-8'));
+    if (reblocked.google_stopped['1']) reblocked.google_stopped['1'].at = new Date().toISOString();
+    fs.writeFileSync(path.join(srv3.cwd, 'runtime', 'quota.json'), JSON.stringify(reblocked));
+    const savedKey = await post(srv3, '/api/settings/gemini-key', { key: 'a-brand-new-harness-key' });
+    const freshKey = await get(srv3, '/api/brain-check');
+    ok('new key: saving a key clears the old key\'s stop — the next call goes out at once',
+       savedKey.body.ok === true && freshKey.body.code === 'rate-limited' && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 2,
+       `code=${freshKey.body.code} generates=${srv3.stub.calls.filter((c) => c.kind === 'generate').length} (want ${sent + 2})`);
     // Local answers never go near the gate.
     const time = await post(srv3, '/api/command', { text: 'what time is it' });
     ok('429: local answers still work while Google has stopped us (the time)', !/Google/.test(String(time.body.reply)) && /\d/.test(String(time.body.reply)), String(time.body.reply).slice(0, 80));
@@ -560,7 +580,7 @@ function freePort() {
     ok('429: …and learned knowledge', /bay three/.test(String(recall.body.reply)), `${String(learn.body.reply).slice(0, 40)} / ${String(recall.body.reply).slice(0, 60)}`);
     const draft = await post(srv3, '/api/command', { text: 'draft an email to Pepper about the reactor review' });
     ok('429: …and the drafting desk', /draft|email/i.test(String(draft.body.reply)) && !/Google has stopped/.test(String(draft.body.reply)), String(draft.body.reply).slice(0, 80));
-    ok('429: …none of which counted or called Google', readCounter(srv3).used === 1 && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent, `used=${readCounter(srv3).used}`);
+    ok('429: …none of which counted or called Google', readCounter(srv3).used === 3 && srv3.stub.calls.filter((c) => c.kind === 'generate').length === sent + 2, `used=${readCounter(srv3).used}`);
     const settings = await get(srv3, '/api/settings/gemini-key');
     ok('429: Settings says Google stopped us', settings.body.quota.stoppedByGoogle === true && settings.body.activeKey.stoppedByGoogle === true && /GOOGLE HAS STOPPED US/.test(settings.body.quota.summary), settings.body.quota.summary.slice(0, 120));
     ok('429: the terminal says Google stopped key 1 and no second key is set', /Google stopped key 1/.test(srv3.log()) && /no second key is set/.test(srv3.log()), (srv3.log().match(/.*Google stopped key 1.*/) || [''])[0].slice(0, 160));
@@ -618,7 +638,7 @@ function freePort() {
     const brain = await get(both, '/api/brain-check');
     const sent = both.stub.calls.filter((c) => c.kind === 'generate');
     ok('both stopped: key 1 then key 2 were both tried', sent.some((c) => c.key === KEY1) && sent.some((c) => c.key === KEY2), sent.map((c) => `…${String(c.key).slice(-4)}`).join(','));
-    ok('both stopped: the report says Google stopped us, for both keys', brain.body.ok === false && brain.body.code === 'rate-limited' && /key 1 was stopped at/.test(String(brain.body.error)) && /key 2 was stopped at/.test(String(brain.body.error)), String(brain.body.error).slice(0, 200));
+    ok('both stopped: the report is a SHORT line blaming Google, not the app', brain.body.ok === false && brain.body.code === 'rate-limited' && String(brain.body.error).length < 200 && /429/.test(String(brain.body.error)) && /not this app/.test(String(brain.body.error)), `${String(brain.body.error).slice(0, 140)} (length ${String(brain.body.error).length})`);
     ok('both stopped: the terminal says both are stopped — Google, not the app', /key 2 is stopped too|key 1 is stopped too/.test(both.log()) && /GOOGLE HAS STOPPED US/.test(both.log()), (both.log().match(/.*GOOGLE HAS STOPPED US.*/) || [''])[0].slice(0, 160));
     const after = await get(both, '/api/brain-check');
     ok('both stopped: the next call is refused before it is sent', after.body.code === 'google-stopped' && both.stub.calls.filter((c) => c.kind === 'generate').length === sent.length, after.body.code);
