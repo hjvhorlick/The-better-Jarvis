@@ -69,8 +69,13 @@ Ctrl/Cmd+Shift+R (or restart the server, if it is the older of the two).
 - **No self-imposed limit.** The app counts every call that goes out to Google
   (total and per key, in `runtime/quota.json`, shown in Settings → "The Brain"
   and the terminal) and **warns** past `SUPPER_GEMINI_DAILY_WARN` (default 20) —
-  it never blocks. Only a real `429` from Google stops calls, for that key until
-  local midnight, and the message then says plainly that Google stopped us.
+  it never blocks. Only a real `429` from Google can pause calls: that key then
+  cools down for 10 minutes and is tried again automatically (Google's
+  per-minute limits clear in seconds, and its daily quota resets at midnight
+  Pacific — hours before local midnight in most time zones, so a stop is never
+  allowed to run a whole day). Google rejecting a key pauses it until local
+  midnight. The chat always gets one SHORT line naming the limit — the long
+  story stays in the terminal and Settings.
 - **Second Gemini key (fallback).** Settings → "The Brain" takes an optional
   second key (`gemini_api_key_2` in `config/api_keys.json`, or
   `GEMINI_API_KEY_2`). All calls use the first key; when Google refuses it with

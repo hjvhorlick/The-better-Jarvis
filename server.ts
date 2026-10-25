@@ -439,8 +439,8 @@ function brainCaller(): BrainCaller | null {
 function researchProviderFailure(error: unknown, phase: 'search' | 'report' | 'followup'): string {
   if (error instanceof BrainError) {
     if (error.code === 'no-key') return 'Internet Research needs a Gemini API key. Add GEMINI_API_KEY or save gemini_api_key in config/api_keys.json; the key itself stays on this server.';
-    if (error.code === 'google-stopped') return 'Google has stopped our Gemini calls for today (its own quota, not this app\'s count). No further provider call was made; calls resume at local midnight.';
-    if (error.code === 'rate-limited') return 'Google reports a Gemini rate limit (429). Research stopped; try again after the provider limit resets.';
+    if (error.code === 'google-stopped') return 'Gemini limit reached (a real 429 from Google, not this app). No provider call was made; I retry after the 10-minute cooldown.';
+    if (error.code === 'rate-limited') return 'Gemini limit reached (Google 429). Research stopped; I retry after the cooldown.';
     if (error.code === 'key-rejected') return 'Gemini rejected the configured key. Check Settings → The Brain; the secret value is not shown here.';
     if (error.code === 'connection') return 'The Gemini service could not be reached. No web search is being claimed.';
     if (error.code === 'model-unavailable') return 'No available configured text model completed this request. Check SUPPER_TEXT_MODEL and model access.';
@@ -1331,7 +1331,7 @@ function realStatusReport(): string {
     `• Keys looked for in: the environment (GEMINI_API_KEY / GEMINI_API_KEY_2, including ./.env), then config/api_keys.json (gemini_api_key / gemini_api_key_2)`,
     `• Text model: ${model.model} (from ${model.source})`,
     `• Picture model: ${picture.image ? `${picture.image} (${picture.imageSource})` : 'not set — I ask your key which picture model it may use, and remember the one that works'}`,
-    `• Gemini calls today: ${quota.summary}; resets at local midnight. This count only warns — only a real 429 from Google stops calls.`,
+    `• Gemini calls today: ${quota.summary}; the count resets at local midnight and only warns — a real 429 from Google cools a key down for 10 minutes, then it is tried again.`,
     `• Conversation log: ${messageHistory.length} visible entries; durable turns use memory/recent_dialogue.json with overflow in memory/dialogue_archive.jsonl`,
     `• Stored memories: ${notes} in memory/long_term.json; migration ${brainStatus.migration?.state || 'unknown'}${brainStatus.storage_error ? ` (${brainStatus.storage_error})` : ''}`,
     `• Voice model: ${voice.model} (from ${voice.source})${voice.note}`,
@@ -1372,18 +1372,13 @@ function broadcast(payload: object) {
 }
 
 // ── The count's news, told in the terminal AND the dashboard ────────────────
-// config.ts already prints each event in the terminal. Here the same news is
-// put in the dialogue as a system line (not spoken), so the owner sees at once
-// when the count passes the warning level, when key 2 takes over, and when
-// Google has stopped us for the day — three different things, named apart.
+// config.ts already prints the long story in the terminal. Here the SHORT
+// line goes into the dialogue as a system line (not spoken), so the owner
+// sees at once when the count passes the warning level, when key 2 takes
+// over, and when Google's 429 has cooled every key down — named apart, and
+// never a wall of text in the chat.
 onQuotaEvent((event) => {
-  const text = event.kind === 'warn'
-    ? `Heads-up: ${event.message}`
-    : event.kind === 'unreadable'
-      ? `Heads-up: ${event.message}`
-      : event.switchedTo
-        ? `Key switch: ${event.message}`
-        : `Google has stopped us: ${event.message}`;
+  const text = event.kind === 'unreadable' ? `Heads-up: ${event.message}` : event.message;
   const line: LogMessage = { type: 'log', speaker: 'system', text, timestamp: Date.now() };
   messageHistory.push(line);
   saveHistory();

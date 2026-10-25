@@ -1525,7 +1525,7 @@
                  only when Google refuses the first key with a 429 (its quota) or
                  rejects it does the second one take over, for the rest of the
                  local day. Saved as gemini_api_key_2 in the same file. -->
-            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one for the rest of the day and goes back to the first key after local midnight. <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
+            <span class="settings-desc" style="margin-top: 6px;"><b>Second Gemini key — fallback</b> (optional). All calls use the first key. If Google refuses the first key with a 429 (its quota) or rejects the key, JARVIS switches to this one and goes back to the first key when its cooldown is over (a 429 cools the key down for 10 minutes; a rejected key waits until local midnight). <b>Note:</b> it only doubles the real Google allowance if it comes from a <b>different Google account/project</b> — a second key from the same project shares the same quota.</span>
             <div style="display: flex; gap: 8px; width: 100%;">
               <input type="password" id="gemini-key2-input" autocomplete="off" spellcheck="false" placeholder="AIza… (second key, from another Google account/project)"
                      style="flex:1; background:rgba(0,0,0,0.4); border:1px solid var(--glass-border); color:var(--jg-gold-pale); border-radius:8px; padding:8px 10px; font-size:12px;">
@@ -1535,9 +1535,10 @@
             <span class="settings-desc" id="gemini-key2-status">Checking…</span>
 
             <!-- THE COUNT: this app counts and warns; it never blocks. Only a
-                 real 429 from Google stops calls, and only until local midnight. -->
+                 real 429 from Google can pause a key — for a 10-minute cooldown,
+                 then it is tried again. -->
             <span class="settings-desc" id="gemini-calls-status" style="margin-top: 6px;">Checking the day's count…</span>
-            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can stop calls is Google itself: a real 429 stops that key until local midnight, and the message then says plainly that Google stopped us.</span>
+            <span class="settings-desc">The count above is this app's own tally of calls that went out to Google today (voice and local answers are free and never counted). It <b>only warns</b> when it passes the warning level (SUPPER_GEMINI_DAILY_WARN, default 20) — it never stops a call. The only thing that can pause a call is Google itself: a real 429 cools that key down for 10 minutes and then it is tried again, and the chat message then is a short line saying Google stopped us.</span>
           </div>
         </div>
 
@@ -2037,7 +2038,7 @@
             return `key ${s} stopped by Google at ${hhmm} (${st.reason === 'quota' ? 'a real 429, its quota' : 'it rejected the key'})`;
           });
           const googleLine = q.stoppedByGoogle
-            ? 'GOOGLE HAS STOPPED US for today — Google, not this app. Calls resume at local midnight.'
+            ? 'GOOGLE HAS STOPPED US (a real 429 — not this app). Each key retries after its 10-minute cooldown.'
             : stops.length ? stops.join('; ') : 'Google has not stopped any key today.';
           const warnLine = q.warnAt > 0
             ? (q.pastWarn ? `⚠ at or past your warning level of ${q.warnAt} (${q.warnSource}) — only a warning, nothing is blocked.` : `Warning level ${q.warnAt} (${q.warnSource}).`)
