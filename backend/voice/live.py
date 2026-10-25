@@ -167,10 +167,7 @@ class LiveRelay:
         try:
             while not self._stop.is_set():
                 if self.connects > 0 and not self._spend():
-                    # _spend() is the budget's try_spend(), which returns False
-                    # ONLY when the app is offline — Google's own 429, no key, or
-                    # the owner's switch. It is never this app's count refusing.
-                    self._report("offline", "the app is offline, so the server voice cannot reconnect")
+                    self._report("budget", "daily Gemini budget used up")
                     break
                 key = self._get_key()
                 if not key:

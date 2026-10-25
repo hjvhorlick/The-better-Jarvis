@@ -171,13 +171,11 @@ def test_a_model_that_declines_is_reported(project, tmp_path):
     assert "do not propose a change" in done["result"] and "this needs a human" in done["result"]
 
 
-def test_offline_means_no_request(project, tmp_path):
-    # A zero WARNING level no longer blocks anything; being offline does.
-    agent, conf, models, budget, _ = _agent(tmp_path, project, _json("x", {"backend/calc.py": GOOD_CALC}))
-    budget.mark_exhausted()
+def test_no_budget_means_no_request(project, tmp_path):
+    agent, conf, models, budget, _ = _agent(tmp_path, project, _json("x", {"backend/calc.py": GOOD_CALC}),
+                                            budget_limit=0)
     done, _ = _ask_then_answer(agent, conf)
-    assert "offline" in done["result"] and "needs the internet" in done["result"]
-    assert models.calls == []
+    assert "budget is used up" in done["result"] and models.calls == []
 
 
 def test_no_key_means_no_request(project, tmp_path):

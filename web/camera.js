@@ -65,15 +65,13 @@
     body.classList.toggle("env-cam-on", st.on);
   }
 
-  let toolsOpen = body.classList.contains("show-tools");
-
   function setTools(open) {
-    toolsOpen = Boolean(open);
-    body.classList.toggle("show-tools", toolsOpen);
+    const visible = Boolean(open);
+    body.classList.toggle("show-tools", visible);
     if (toolsToggle) {
-      toolsToggle.setAttribute("aria-pressed", toolsOpen ? "true" : "false");
-      toolsToggle.textContent = toolsOpen ? "✕ Tools" : "🧰 Tools";
-      toolsToggle.title = toolsOpen ? "Hide this room's tools" : "Show this room's tools";
+      toolsToggle.setAttribute("aria-pressed", visible ? "true" : "false");
+      toolsToggle.textContent = visible ? "✕ Tools" : "🧰 Tools";
+      toolsToggle.title = visible ? "Hide this room's tools" : "Show this room's tools";
     }
   }
 
@@ -225,9 +223,9 @@
   const toolsToggle = document.getElementById("env-tools-toggle");
   if (toolsToggle) {
     toolsToggle.addEventListener("click", () => {
-      setTools(!toolsOpen);
+      setTools(!body.classList.contains("show-tools"));
     });
-    setTools(toolsOpen);
+    setTools(body.classList.contains("show-tools"));
   }
 
   /* ---------- say hello: ask the dashboard for the glass and the picture ---- */

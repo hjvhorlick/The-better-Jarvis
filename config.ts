@@ -28,22 +28,23 @@
  *          then config/api_keys.json -> "gemini_api_key_2"
  *          The optional FALLBACK key. Every call goes out on the first key;
  *          when Google refuses the first key with a 429 (its quota) or rejects
- *          the key itself, the second key takes over until midnight Pacific,
- *          when Google's own quota resets. It only doubles the real allowance
- *          if it belongs to a different Google account/project.
+ *          the key itself, the second key takes over for the rest of the local
+ *          day. It only doubles the real allowance if it belongs to a
+ *          different Google account/project.
  *
  *   COUNT  The app COUNTS and WARNS; it never BLOCKS. Every outbound question
  *          adds one unit to runtime/quota.json (total and per key), reset at
  *          local midnight. Past SUPPER_GEMINI_DAILY_WARN (default 20) the
- *          server terminal warns; the page stays focused on chat. This count
- *          never blocks. A Gemini request is skipped when no key is usable, the
- *          owner disables Gemini, or Google refuses all configured keys; none
- *          of those conditions gates chat or separate local/open-web paths. A
- *          real 429 stops THAT key until Google's Pacific-midnight reset (not
- *          our local count reset). An unreadable counter never blocks: counting
- *          continues in memory and the terminal records the failure.
- *          SUPPER_GEMINI_DAILY_BUDGET is now only a warning level. The file
- *          keeps the {day, used} shape the engine room reads, with per-key detail.
+ *          terminal and Settings warn — the call still goes through. The only
+ *          thing that stops calls is Google itself: a real 429 marks THAT key
+ *          as stopped by Google until local midnight. When every key we have
+ *          is stopped, calls are refused with a message that says Google did
+ *          it, not this app. A counter file that cannot be read never blocks
+ *          either: the count continues in memory and Settings says the file
+ *          could not be read. (The old SUPPER_GEMINI_DAILY_BUDGET block is
+ *          gone; if that setting is still present it is read as the warning
+ *          level.) The file keeps the {day, used} shape the engine room
+ *          reads, with the per-key detail beside it.
  *
  * Provenance: written for this project (CC BY-NC 4.0, see CREDITS.md). The
  * settings order, the field names and the quota rules mirror the existing
@@ -59,6 +60,14 @@ export const API_CONFIG_PATH = path.join(REPO_ROOT, 'config', 'api_keys.json');
 export const ENV_FILE = path.join(REPO_ROOT, '.env');
 export const RUNTIME_DIR = path.join(REPO_ROOT, 'runtime');
 export const QUOTA_FILE = path.join(RUNTIME_DIR, 'quota.json');
+/**
+ * The voice gets its own counter and its own limit. Speaking is not thinking:
+ * a reply is one text call, but reading it out loud is a call per sentence, and
+ * the owner wants the server voice on ALL the time. Sharing one budget would
+ * mean twenty spoken sentences a day and no answers left — so the two are
+ * counted apart, and both are visible in Settings.
+ */
+export const VOICE_QUOTA_FILE = path.join(RUNTIME_DIR, 'voice_quota.json');
 export const MODEL_MEMORY_FILE = path.join(RUNTIME_DIR, 'dashboard_models.json');
 
 /**
@@ -94,6 +103,7 @@ export const DEFAULT_TEXT_MODEL = 'gemini-flash-latest';
  * answered.)
  */
 export const DEFAULT_DAILY_WARN = 20;
+export const DEFAULT_VOICE_BUDGET = 400;          // spoken sentences a day
 
 // The keys may already be in the shell. Note that before dotenv runs, so the
 // dashboard can say honestly whether a key came from the shell or from ./.env.
@@ -122,136 +132,6 @@ function writeFileAtomic(file: string, text: string): void {
   const tmp = `${file}.tmp`;
   fs.writeFileSync(tmp, text, { mode: 0o600 });
   fs.renameSync(tmp, file);
-}
-
-/* ── Custom suppliers ────────────────────────────────────────────────────────
- * The owner's own applications, or any website with a JSON API, can be
- * registered as a supplier here — no code change and no restart. That is the
- * point: "that website becomes a supplier of whatever items you can download"
- * should not mean asking for an edit to search/engine.ts.
- *
- * A supplier is a description, not code. It says where to ask, how to pass a
- * key if it wants one, and where in the answer the file and its title live.
- * Everything it returns is treated as untrusted text and only ever displayed.
- *
- * SECURITY: the endpoint is fetched through the same fetcher as every built-in
- * supplier, so it inherits the public-address pinning, redirect, size and
- * timeout limits. An endpoint on a private network is refused by that fetcher
- * rather than by a special rule here, which means one guard, not two.
- */
-export const SUPPLIERS_CONFIG_PATH = path.join(REPO_ROOT, 'config', 'suppliers.json');
-
-/**
- * Where the registered suppliers actually live. An override exists so a test can
- * point this at a temporary file: without it the suite writes to the owner's real
- * config/suppliers.json, which is how the first run of these tests left five
- * invented suppliers and two fake keys sitting in a real config directory.
- */
-function suppliersFile(): string {
-  const override = process.env.SUPPER_SUPPLIERS_FILE;
-  return override && override.trim() ? override.trim() : SUPPLIERS_CONFIG_PATH;
-}
-
-export interface CustomSupplier {
-  /** Stable id, used as the key slot and by `skip`. Letters, digits, dash. */
-  id: string;
-  label: string;
-  /** Which kinds of file it hands over: image, video, audio, book, model. */
-  kinds: string[];
-  /** URL to ask. `{query}` and `{limit}` are substituted, nothing else. */
-  endpoint: string;
-  /** Header the key goes in, when the supplier wants one. */
-  keyHeader?: string;
-  /** Text placed before the key in that header, e.g. "Bearer ". */
-  keyPrefix?: string;
-  /** Dot path to the array of results, e.g. "hits" or "data.items". Empty = the body is the array. */
-  listPath?: string;
-  titlePath?: string;
-  urlPath?: string;
-  thumbPath?: string;
-  authorPath?: string;
-  licensePath?: string;
-  /** The key itself, kept beside the definition so one file describes a supplier. */
-  key?: string;
-  /** One line shown in the registration area. */
-  note?: string;
-}
-
-const SUPPLIER_ID_RE = /^[a-z0-9][a-z0-9-]{1,40}$/;
-
-/** Read the custom suppliers. Never throws: a missing or broken file means none. */
-export function listCustomSuppliers(): CustomSupplier[] {
-  const file = readJsonSafe(suppliersFile());
-  const list = (file?.suppliers as unknown[] | undefined) || [];
-  if (!Array.isArray(list)) return [];
-  return list.filter((entry): entry is CustomSupplier =>
-    Boolean(entry) && typeof entry === 'object'
-    && typeof (entry as CustomSupplier).id === 'string'
-    && typeof (entry as CustomSupplier).endpoint === 'string');
-}
-
-/**
- * Register or replace a supplier. The endpoint is checked before anything is
- * written, because a supplier that cannot be asked is worse than no supplier:
- * it would sit in the chain silently failing.
- */
-export function saveCustomSupplier(input: Partial<CustomSupplier>): CustomSupplier {
-  const id = String(input.id || '').trim().toLowerCase();
-  if (!SUPPLIER_ID_RE.test(id)) throw new Error('The id must be 2-40 characters: lowercase letters, digits and dashes.');
-  const label = String(input.label || '').trim().slice(0, 60);
-  if (!label) throw new Error('Give the supplier a name to show in Settings.');
-  const endpoint = String(input.endpoint || '').trim();
-  if (!/^https?:\/\//i.test(endpoint)) throw new Error('The endpoint must start with http:// or https://.');
-  if (!endpoint.includes('{query}')) throw new Error('The endpoint must contain {query}, which is where the search text goes.');
-  const kinds = (Array.isArray(input.kinds) ? input.kinds : [])
-    .map((k) => String(k).trim().toLowerCase())
-    .filter((k) => ['image', 'video', 'audio', 'book', 'model'].includes(k));
-  if (!kinds.length) throw new Error('Say which kind of file it supplies: image, video, audio, book or model.');
-  if (!String(input.titlePath || '').trim()) throw new Error('Say where the title is in the answer, e.g. "name" or "title".');
-  if (!String(input.urlPath || '').trim()) throw new Error('Say where the file or page address is, e.g. "url" or "public_url".');
-
-  const supplier: CustomSupplier = {
-    id, label, kinds, endpoint,
-    ...(input.keyHeader ? { keyHeader: String(input.keyHeader).trim().slice(0, 80) } : {}),
-    ...(input.keyPrefix ? { keyPrefix: String(input.keyPrefix).slice(0, 20) } : {}),
-    listPath: String(input.listPath || '').trim(),
-    titlePath: String(input.titlePath).trim(),
-    urlPath: String(input.urlPath).trim(),
-    ...(input.thumbPath ? { thumbPath: String(input.thumbPath).trim() } : {}),
-    ...(input.authorPath ? { authorPath: String(input.authorPath).trim() } : {}),
-    ...(input.licensePath ? { licensePath: String(input.licensePath).trim() } : {}),
-    ...(input.key ? { key: String(input.key).trim() } : {}),
-    ...(input.note ? { note: String(input.note).trim().slice(0, 200) } : {}),
-  };
-
-  const existing = listCustomSuppliers().filter((s) => s.id !== id);
-  // New suppliers go FIRST: the owner just registered this one, so it is the one
-  // they want answered. A built-in still catches anything it misses.
-  const next = [supplier, ...existing];
-  writeFileAtomic(suppliersFile(), JSON.stringify({ suppliers: next }, null, 2) + '\n');
-  return supplier;
-}
-
-export function removeCustomSupplier(id: string): boolean {
-  const wanted = String(id).trim().toLowerCase();
-  const before = listCustomSuppliers();
-  const next = before.filter((s) => s.id !== wanted);
-  if (next.length === before.length) return false;
-  writeFileAtomic(suppliersFile(), JSON.stringify({ suppliers: next }, null, 2) + '\n');
-  return true;
-}
-
-/** A supplier as Settings shows it — the key is described, never returned. */
-export function customSupplierStatus(): Array<{ id: string; label: string; kinds: string[]; hasKey: boolean; keyTail: string | null; endpoint: string; note: string | null }> {
-  return listCustomSuppliers().map((s) => ({
-    id: s.id,
-    label: s.label,
-    kinds: [...s.kinds],
-    hasKey: Boolean(s.key),
-    keyTail: s.key ? s.key.slice(-4) : null,
-    endpoint: s.endpoint,
-    note: s.note ?? null,
-  }));
 }
 
 /** Which of the two Gemini keys: 1 is the normal one, 2 the optional fallback. */
@@ -323,7 +203,7 @@ export function resolveKeySlot(slot: KeySlot): KeyInfo {
       tail: value.slice(-4),
       slot,
       detail: slot === 2
-        ? 'read from config/api_keys.json (gemini_api_key_2) — saved by Settings → Optional Gemini access'
+        ? 'read from config/api_keys.json (gemini_api_key_2) — saved by Settings → "The Brain"'
         : 'read from config/api_keys.json (gemini_api_key) — the file the desktop app and every actions/*.py use',
     };
   }
@@ -340,103 +220,6 @@ export function resolveKeySlot(slot: KeySlot): KeyInfo {
 
 /** The first (normal) key. */
 export function resolveGeminiKey(): KeyInfo { return resolveKeySlot(1); }
-
-/* ── Image-search keys: Pexels and Pixabay ───────────────────────────────────
- * Both give a free API key, and both are read exactly like the Gemini keys: the
- * environment first, then config/api_keys.json, which is what Settings writes.
- * Neither is required. With no key at all, image search falls back to Wikimedia
- * Commons and Openverse, which need nothing — so a picture is always findable.
- */
-/**
- * A supplier that can be given a key. The name is historical — it started as
- * picture keys and now covers music and places too. Every one of these is
- * OPTIONAL: behind each keyed supplier sits at least one that needs nothing.
- */
-export type ImageService = 'pexels' | 'pixabay' | 'jamendo' | 'geoapify' | 'locationiq' | 'thingiverse';
-
-// The same six suppliers as the union above, as a value a caller can test
-// against. A union exists only at compile time, so without this the route that
-// accepts a key has to restate the names by hand — and it did, with two of the
-// six, which meant four suppliers could not be given a key at all.
-export const IMAGE_KEY_SERVICES: readonly ImageService[] = [
-  'pexels', 'pixabay', 'jamendo', 'geoapify', 'locationiq', 'thingiverse',
-];
-
-const IMAGE_SERVICES: Record<ImageService, { env: string; field: string; label: string; signup: string }> = {
-  pexels: { env: 'PEXELS_API_KEY', field: 'pexels_api_key', label: 'Pexels', signup: 'https://www.pexels.com/api/' },
-  pixabay: { env: 'PIXABAY_API_KEY', field: 'pixabay_api_key', label: 'Pixabay', signup: 'https://pixabay.com/api/docs/' },
-  // MUSIC. Neither Pexels nor Pixabay serves audio through its public API, so
-  // this is the one that does: Jamendo v3 is documented, free, and every track
-  // is Creative Commons with its own licence named in the response.
-  jamendo: { env: 'JAMENDO_CLIENT_ID', field: 'jamendo_client_id', label: 'Jamendo', signup: 'https://developer.jamendo.com/v3.0/docs' },
-  // PLACES AND ADDRESSES. Both are optional: Nominatim, Photon and Open-Meteo
-  // answer with no key at all. A key only buys a higher rate limit and
-  // structured address fields.
-  geoapify: { env: 'GEOAPIFY_API_KEY', field: 'geoapify_api_key', label: 'Geoapify', signup: 'https://www.geoapify.com/get-started/' },
-  locationiq: { env: 'LOCATIONIQ_API_KEY', field: 'locationiq_api_key', label: 'LocationIQ', signup: 'https://locationiq.com/docs' },
-  // 3D PRINTABLE MODELS. Thingiverse gives a free App Token; register an app at
-  // the developer portal and the token alone is enough to read. Commons needs
-  // nothing and hosts STL files of its own, so a missing token is not a block.
-  thingiverse: { env: 'THINGIVERSE_APP_TOKEN', field: 'thingiverse_app_token', label: 'Thingiverse', signup: 'https://www.thingiverse.com/developers' },
-};
-
-export interface ServiceKeyInfo {
-  key: string | null;
-  source: 'environment' | '.env' | 'config/api_keys.json' | null;
-  tail: string | null;
-  service: ImageService;
-  label: string;
-  detail: string;
-}
-
-/** Read one optional image-service key. Never throws: a missing key is normal. */
-export function resolveImageServiceKey(service: ImageService): ServiceKeyInfo {
-  const names = IMAGE_SERVICES[service];
-  const env = (process.env[names.env] || '').trim();
-  if (env) {
-    return {
-      key: env,
-      source: 'environment',
-      tail: env.slice(-4),
-      service,
-      label: names.label,
-      detail: `read from the environment (${names.env})`,
-    };
-  }
-  const file = readApiConfigFile();
-  const value = typeof file[names.field] === 'string' ? (file[names.field] as string).trim() : '';
-  if (value) {
-    return {
-      key: value,
-      source: 'config/api_keys.json',
-      tail: value.slice(-4),
-      service,
-      label: names.label,
-      detail: `read from config/api_keys.json (${names.field}) — saved by Settings → "Pictures"`,
-    };
-  }
-  return {
-    key: null,
-    source: null,
-    tail: null,
-    service,
-    label: names.label,
-    detail: `no ${names.label} key: I checked the environment (${names.env}) and ${API_CONFIG_PATH} (${names.field}). ` +
-      `A free key comes from ${names.signup}. It is optional — Wikimedia Commons and Openverse need no key at all.`,
-  };
-}
-
-/** Both image-service keys, for Settings and for the search engine's order. */
-export function resolveImageServiceKeys(): Record<ImageService, ServiceKeyInfo> {
-  return {
-    pexels: resolveImageServiceKey('pexels'),
-    pixabay: resolveImageServiceKey('pixabay'),
-    jamendo: resolveImageServiceKey('jamendo'),
-    geoapify: resolveImageServiceKey('geoapify'),
-    locationiq: resolveImageServiceKey('locationiq'),
-    thingiverse: resolveImageServiceKey('thingiverse'),
-  };
-}
 /** The optional second key, the fallback. */
 export function resolveGeminiKey2(): KeyInfo { return resolveKeySlot(2); }
 
@@ -450,9 +233,8 @@ export function publicKeyInfo(info: KeyInfo = resolveGeminiKey()): {
 /**
  * Which key answers NOW, and why. The first key, always — unless Google has
  * stopped it today (a 429, or it rejected the key), in which case the second
- * key takes over until midnight Pacific (Google's quota reset). When every key
- * we have is stopped, the report says so: that is Google stopping us, and the
- * only thing that may.
+ * key takes over until local midnight. When every key we have is stopped, the
+ * report says so: that is Google stopping us, and the only thing that may.
  */
 export interface ActiveKey {
   slot: KeySlot | null;
@@ -475,7 +257,7 @@ export function resolveActiveKey(): ActiveKey {
   }
   if (second.key && !counter.stopped[2]) {
     const why = first.key && counter.stopped[1]
-      ? `the second key — Google stopped the first one at ${clockTime(counter.stopped[1].at)} (${stopReasonText(counter.stopped[1])}); the first key is tried again at ${googleResetPromise()}`
+      ? `the second key — Google stopped the first one at ${clockTime(counter.stopped[1].at)} (${stopReasonText(counter.stopped[1])}); the first key is tried again after local midnight`
       : 'the second key — no first key is set';
     return { slot: 2, info: second, reason: why, stoppedByGoogle: false };
   }
@@ -663,14 +445,14 @@ export async function discoverModels(caller: BrainCaller, kind: 'text' | 'image'
     .map((model) => ({ model, source: 'discovered from your key (ai.models.list() — last resort)' }));
 }
 
-// ── COUNT (the app warns; provider availability never gates chat) ──────────
+// ── COUNT (the app counts and warns — only Google may stop a call) ──────────
 /** Why Google stopped a key today. */
 export interface StopRecord {
   /** ISO time it happened. */
   at: string;
   /** 'quota' = a real 429 from Google; 'key-rejected' = Google refused the key itself. */
   reason: 'quota' | 'key-rejected';
-  /** The short text Google sent, for the terminal and diagnostic API. */
+  /** The short text Google sent, for the terminal and Settings. */
   detail: string;
 }
 
@@ -694,13 +476,13 @@ export interface QuotaSnapshot {
   activeReason: string;
   /** Per key: Google's stop for today, or null. */
   googleStopped: { 1: StopRecord | null; 2: StopRecord | null };
-  /** True only when Google has stopped EVERY key we have: no calls until midnight Pacific (Google's quota reset). */
+  /** True only when Google has stopped EVERY key we have: no calls until local midnight. */
   stoppedByGoogle: boolean;
   /** When the second key took over today, if it did. */
   switchedAt: string | null;
   /** True when a second key is set. */
   hasSecondKey: boolean;
-  /** A plain sentence for terminal output and diagnostic API consumers. */
+  /** A plain sentence the terminal and Settings can print. */
   summary: string;
   source: string;
   note: string;
@@ -757,56 +539,6 @@ function stopReasonText(stop: StopRecord): string {
   return stop.reason === 'quota' ? "Google's quota, a real 429" : 'Google rejected the key itself';
 }
 
-// ── GOOGLE'S DAY IS THE PACIFIC DAY ─────────────────────────────────────────
-// The app's own count resets at local midnight, but Google's daily quota
-// resets at midnight in Pacific time (America/Los_Angeles) — that is the
-// boundary Google itself uses. A Google stop (a real 429) therefore ends at
-// midnight Pacific, not at our local midnight: for a clock in UTC+2 the two
-// are nine hours apart, and the app used to resume nine hours early — the
-// first call after local midnight 429'd again, straight after a message that
-// had just said calls resumed. The count still resets locally; the STOP
-// follows Google's day, and every message that promises a resume time says
-// midnight Pacific.
-const PACIFIC_TZ = 'America/Los_Angeles';
-const PACIFIC_DAY_FMT = new Intl.DateTimeFormat('en-CA', { timeZone: PACIFIC_TZ, year: 'numeric', month: '2-digit', day: '2-digit' });
-const PACIFIC_HOUR_FMT = new Intl.DateTimeFormat('en-GB', { timeZone: PACIFIC_TZ, hour: '2-digit', hour12: false });
-
-/** The calendar date in Pacific time (YYYY-MM-DD). */
-function pacificDay(at: Date = new Date()): string {
-  return PACIFIC_DAY_FMT.format(at);
-}
-
-/** A Google stop lives for the Pacific day it was recorded on: at midnight Pacific Google's quota is back. */
-function liveStop(stop: StopRecord | null, now: Date = new Date()): StopRecord | null {
-  if (!stop) return null;
-  const at = Date.parse(stop.at);
-  if (Number.isNaN(at)) return null;
-  return pacificDay(new Date(at)) === pacificDay(now) ? stop : null;
-}
-
-/** The next midnight Pacific — the moment Google's quota really resets — as a timestamp. */
-function nextGoogleResetAt(now: Date = new Date()): number {
-  // Midnight Pacific is 07:00 or 08:00 UTC depending on the season (PDT/PST),
-  // so both candidates are checked and the one that is 00:00 Pacific wins.
-  const today = pacificDay(now);
-  for (let add = 1; add <= 3; add++) {
-    const d = new Date(`${today}T00:00:00Z`);
-    d.setUTCDate(d.getUTCDate() + add);
-    const day = d.toISOString().slice(0, 10);
-    for (const hour of [7, 8]) {
-      const t = Date.parse(`${day}T${String(hour).padStart(2, '0')}:00:00Z`);
-      const reset = new Date(t);
-      if (t > now.getTime() && pacificDay(reset) === day && PACIFIC_HOUR_FMT.format(reset) === '00') return t;
-    }
-  }
-  return now.getTime() + 24 * 3600_000;   // unreachable in practice
-}
-
-/** The honest promise every message can share: midnight Pacific, on this computer's clock. */
-export function googleResetPromise(): string {
-  return `midnight Pacific — ${clockTime(new Date(nextGoogleResetAt()).toISOString())} on this computer's clock`;
-}
-
 // ── The brain's counter: total, per key, and Google's stops ─────────────────
 interface BrainCounter {
   day: string;
@@ -839,16 +571,7 @@ function readStop(value: unknown): StopRecord | null {
 function readBrainCounter(): BrainCounter {
   const day = localDay();
   if (unreadableDay[QUOTA_FILE] === day) {
-    if (!memoryBrainCounter || memoryBrainCounter.day !== day) {
-      // The count starts a new local day, but Google's stop is carried across
-      // when it is still the same Pacific day — it ends at midnight Pacific.
-      const fresh = freshBrainCounter(day, true);
-      if (memoryBrainCounter) {
-        fresh.stopped = { 1: liveStop(memoryBrainCounter.stopped[1]), 2: liveStop(memoryBrainCounter.stopped[2]) };
-        fresh.switchedAt = fresh.stopped[1] ? memoryBrainCounter.switchedAt : null;
-      }
-      memoryBrainCounter = fresh;
-    }
+    if (!memoryBrainCounter || memoryBrainCounter.day !== day) memoryBrainCounter = freshBrainCounter(day, true);
     return memoryBrainCounter;
   }
   memoryBrainCounter = null;
@@ -859,17 +582,7 @@ function readBrainCounter(): BrainCounter {
     };
     const used = Number(data?.used);
     if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
-    // Google's stops are filtered against ITS day: a stop recorded today is
-    // live until midnight Pacific, however many local midnights pass.
-    const stopped = { 1: liveStop(readStop(data.google_stopped?.['1'])), 2: liveStop(readStop(data.google_stopped?.['2'])) };
-    if (data?.day !== day) {
-      // Yesterday's count: a new local day starts at zero — but Google's stop
-      // is not over yet (until midnight Pacific), so it carries across.
-      const fresh = freshBrainCounter(day);
-      fresh.stopped = stopped;
-      fresh.switchedAt = stopped[1] && typeof data.switched_at === 'string' ? data.switched_at : null;
-      return fresh;
-    }
+    if (data?.day !== day) return freshBrainCounter(day);       // yesterday's count: a new day starts at zero
     const perKey = (slot: KeySlot): number => {
       const n = Number(data.keys?.[String(slot)]);
       return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
@@ -880,8 +593,8 @@ function readBrainCounter(): BrainCounter {
       day,
       used: Math.floor(used),
       keys,
-      stopped,
-      switchedAt: stopped[1] && typeof data.switched_at === 'string' ? data.switched_at : null,
+      stopped: { 1: readStop(data.google_stopped?.['1']), 2: readStop(data.google_stopped?.['2']) },
+      switchedAt: typeof data.switched_at === 'string' ? data.switched_at : null,
       unreadable: false,
     };
   } catch (err) {
@@ -915,14 +628,14 @@ function writeBrainCounter(counter: BrainCounter): void {
   }
 }
 
-/** The one-line account of today, for diagnostics and explicit status requests. */
+/** The one-line account of today, for the terminal, Settings and the chat. */
 function summarise(counter: BrainCounter, warn: WarnInfo, active: ActiveKey, hasSecondKey: boolean): string {
   const parts: string[] = [];
   parts.push(`${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today (key 1: ${counter.keys[1]}, key 2: ${counter.keys[2]})`);
   if (warn.warnAt > 0 && counter.used >= warn.warnAt) parts.push(`⚠ at or past your warning level of ${warn.warnAt} — the count never blocks, this is only a warning`);
   else if (warn.warnAt > 0) parts.push(`warning level ${warn.warnAt}`);
   if (counter.unreadable) parts.push('⚠ runtime/quota.json could not be read, so this is the count since the server started');
-  if (active.stoppedByGoogle) parts.push(`GOOGLE HAS STOPPED US for today (not this app) — calls resume at ${googleResetPromise()}`);
+  if (active.stoppedByGoogle) parts.push('GOOGLE HAS STOPPED US for today (not this app) — calls resume at local midnight');
   else if (active.slot === 2 && counter.stopped[1]) parts.push(`answering on the SECOND key since ${clockTime(counter.stopped[1].at)} — Google stopped the first one`);
   else if (active.slot) parts.push(`answering on key ${active.slot}`);
   if (!hasSecondKey && !active.stoppedByGoogle) parts.push('no second key set');
@@ -952,17 +665,34 @@ export function quotaSnapshot(): QuotaSnapshot {
     hasSecondKey,
     summary: summarise(counter, warn, active, hasSecondKey),
     source: warn.source,
-    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks a call. Provider calls may be unavailable without a key, when the owner disables Gemini, or when Google refuses every usable key; a real 429 stops a key until Google's Pacific-midnight reset. Google's limit differs by model and project; check AI Studio.",
+    note: "This app's own count in runtime/quota.json, shared with the engine room. It warns and never blocks; only a real 429 from Google stops calls, and only until local midnight. Google's real limit differs by model and project; check AI Studio.",
   };
 }
 
+// ── What happened: the server prints these in the terminal and the dashboard ─
+export type QuotaEvent =
+  | { kind: 'warn'; used: number; warnAt: number; message: string }
+  | { kind: 'unreadable'; message: string }
+  | { kind: 'key-stopped'; slot: KeySlot; reason: StopRecord['reason']; switchedTo: KeySlot | null; message: string };
+
+let quotaListener: ((event: QuotaEvent) => void) | null = null;
+/** server.ts registers one listener so every event is shown in the terminal AND the dashboard. */
+export function onQuotaEvent(listener: ((event: QuotaEvent) => void) | null): void {
+  quotaListener = listener;
+}
+function emit(event: QuotaEvent): void {
+  try { if (quotaListener) quotaListener(event); } catch { /* a listener must never break a call */ }
+}
+let warnAnnounced = '';
+let unreadableAnnounced = '';
+
 export interface SpendResult {
-  /** False ONLY when no configured key may be called; chat continues locally. */
+  /** False ONLY when Google has stopped every key we have (or there is no key). The count never says no. */
   allowed: boolean;
   slot: KeySlot | null;
   snapshot: QuotaSnapshot;
-  /** Why the provider call is unavailable, when it is. */
-  offline: OfflineSnapshot;
+  /** A warning to show — the call still goes through. */
+  warning: string | null;
 }
 
 /**
@@ -971,29 +701,33 @@ export interface SpendResult {
  * (another model, another thinking setting) do NOT count again, because they
  * fetched no new answer. The one exception is the switch to the second key,
  * see countRetryOnKey(). Local answers never come here at all. This counts
- * and warns; it skips only the Gemini provider call when no configured key may
- * be used. That does not gate chat or separate local/open-web paths. Nothing is
- * counted for a provider call that is never made.
+ * and warns; it only refuses when Google has stopped every key we have for
+ * today.
  */
 export function spendGeminiCall(): SpendResult {
   const active = resolveActiveKey();
-  const offline = offlineSnapshot();
-  if (!active.slot || offline.offline) {
-    // No Gemini call is made, so nothing is counted. The caller decides which
-    // local or open-web path is available; this gate does not stop chat.
-    return { allowed: false, slot: active.slot, snapshot: quotaSnapshot(), offline };
+  if (!active.slot || active.stoppedByGoogle) {
+    return { allowed: false, slot: active.slot, snapshot: quotaSnapshot(), warning: null };
   }
   const counter = readBrainCounter();
   counter.used += 1;
   counter.keys[active.slot] += 1;
   writeBrainCounter(counter);
 
+  const warnings: string[] = [];
   const warn = resolveDailyWarn();
   if (warn.warnAt > 0 && counter.used >= warn.warnAt) {
-    const message = `⚠ ${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today — ${counter.used === warn.warnAt ? 'that reaches' : 'past'} your warning level of ${warn.warnAt} (${warn.source}). The call is being sent; this count never blocks it.`;
+    const message = `⚠ ${counter.used} Gemini call${counter.used === 1 ? '' : 's'} today — ${counter.used === warn.warnAt ? 'that reaches' : 'past'} your warning level of ${warn.warnAt} (${warn.source}). The call still goes through: this count never blocks, only Google can.`;
     console.warn(`[JARVIS] ${message}`);
+    warnings.push(message);
+    if (warnAnnounced !== counter.day) { warnAnnounced = counter.day; emit({ kind: 'warn', used: counter.used, warnAt: warn.warnAt, message }); }
   }
-  return { allowed: true, slot: active.slot, snapshot: quotaSnapshot(), offline };
+  if (counter.unreadable) {
+    const message = '⚠ runtime/quota.json could not be read, so the day\'s count is being kept in memory only (nothing is blocked). Fix or delete that file and restart JARVIS to count in it again.';
+    warnings.push(message);
+    if (unreadableAnnounced !== counter.day) { unreadableAnnounced = counter.day; emit({ kind: 'unreadable', message }); }
+  }
+  return { allowed: true, slot: active.slot, snapshot: quotaSnapshot(), warning: warnings.length ? warnings.join(' ') : null };
 }
 
 /**
@@ -1011,9 +745,8 @@ export function countRetryOnKey(slot: KeySlot): void {
 
 /**
  * Google refused this key — a real 429 (its quota) or the key itself — so the
- * key is stopped until midnight Pacific, when Google's own quota resets. If
- * the OTHER key is set and not stopped, it takes over now; the caller retries
- * the same question on it.
+ * key is stopped until local midnight. If the OTHER key is set and not stopped,
+ * it takes over now; the caller retries the same question on it.
  */
 export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason'], detail: string): { switchedTo: KeySlot | null; allStopped: boolean } {
   const counter = readBrainCounter();
@@ -1026,169 +759,96 @@ export function markKeyStoppedByGoogle(slot: KeySlot, reason: StopRecord['reason
 
   const why = reason === 'quota' ? 'Google answered 429 — its own quota is used up for this key' : 'Google rejected the key itself';
   const message = switchedTo
-    ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again at ${googleResetPromise()}.`
-    : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at ${googleResetPromise()}.`;
+    ? `Google stopped key ${slot} (${why}). Switching to key ${switchedTo} for the rest of the day; key ${slot} is tried again after local midnight.`
+    : `Google stopped key ${slot} (${why})${resolveKeySlot(other).key ? ` — and key ${other} is stopped too` : ' — and no second key is set'}. GOOGLE HAS STOPPED US for today, not this app; calls resume at local midnight.`;
   console.warn(`[JARVIS] ${message}`);
+  emit({ kind: 'key-stopped', slot, reason, switchedTo, message });
   return { switchedTo, allStopped: !switchedTo };
 }
 
-// ── GEMINI PROVIDER STATUS: unavailability is not an app-wide offline gate ─
-/**
- * The owner's rule: JARVIS works independently of Gemini wherever local
- * capabilities allow. A real Google 429 can stop Gemini requests for a key, but
- * it does not stop the dashboard or unrelated web/local tools. There is no
- * status-change announcement in chat; explicit status requests may report the
- * provider state. The separate manual switch only controls Gemini calls.
- *
- * The Gemini-provider status has three causes, all reported honestly:
- *   'google-stopped'  every key was refused by Google today (a real 429, or the
- *                     key itself) — automatic, and over at midnight Pacific;
- *   'no-key'          no Gemini key is configured at all;
- *   'manual'          the owner disabled Gemini calls with the manual switch.
- *
- * The Gemini-only switch is remembered in runtime/offline.json (git-ignored)
- * so disabled provider calls survive a restart; SUPPER_OFFLINE (1/0) is the
- * environment override. Setting it back to automatic lets provider state decide.
- */
-export const OFFLINE_FILE = path.join(RUNTIME_DIR, 'offline.json');
+// ── The voice's own counter (the voice is local now: it never touches Gemini) ─
+interface Counter { day: string; used: number; unreadable: boolean; }
 
-export type OfflineReason = 'google-stopped' | 'no-key' | 'manual';
-
-export interface OfflineSnapshot {
-  /** True when no Gemini provider call may be made; separate web/local paths continue. */
-  offline: boolean;
-  reason: OfflineReason | null;
-  /** One plain sentence for diagnostics and explicit user requests. */
-  why: string;
-  /** True while the owner's own switch disables Gemini provider calls. */
-  forced: boolean;
-  /** Gemini switch: true = disabled, false = allowed, null = automatic. */
-  override: boolean | null;
-  /** ISO time provider access became unavailable, when it is known. */
-  since: string | null;
-  /** Local and separate open-web paths that remain available. */
-  works: string[];
-  /** Gemini-dependent tasks with their available alternatives. */
-  refused: string[];
-  summary: string;
-  note: string;
-}
-
-/** Paths that remain available while the Gemini provider is unavailable. */
-export const OFFLINE_WORKS: string[] = [
-  'the open web — search, facts, pictures, video and sound, with no key and no quota',
-  'chat and small talk (answered from this computer)',
-  'the local knowledge base — every stored and taught answer, free',
-  'memory, notes, topics, tasks and reminders',
-  'the drafting desk (an email or a letter, written here)',
-  'time, date and arithmetic',
-  'system status and diagnostics',
-  'the rooms, the file browser, the camera and My Hands',
-  'local Kokoro speech with a local-only browser speech fallback, and local faster-whisper listening',
-];
-
-/**
- * What needs Gemini specifically, not what needs the internet. These entries
- * describe the online provider path only; separate open-web and local alternatives
- * remain available when Gemini is unavailable.
- */
-export const OFFLINE_REFUSED: string[] = [
-  'an answer written by a Gemini model (the open web answers instead)',
-  'a written, grounded research report (the sources are still found)',
-  'a picture DRAWN by a model (a real photograph is found instead)',
-];
-
-function readOfflineOverride(): { override: boolean | null; at: string | null } {
-  const env = (process.env.SUPPER_OFFLINE || '').trim().toLowerCase();
-  if (env === '1' || env === 'true' || env === 'yes' || env === 'on') return { override: true, at: null };
-  if (env === '0' || env === 'false' || env === 'no' || env === 'off') return { override: false, at: null };
+function readCounter(file: string): Counter {
+  const day = localDay();
+  if (unreadableDay[file] === day) return { day, used: 0, unreadable: true };
+  if (!fs.existsSync(file)) return { day, used: 0, unreadable: false };
   try {
-    if (!fs.existsSync(OFFLINE_FILE)) return { override: null, at: null };
-    const data = JSON.parse(fs.readFileSync(OFFLINE_FILE, 'utf-8')) as { forced?: unknown; at?: unknown };
-    if (typeof data?.forced !== 'boolean') return { override: null, at: null };
-    return { override: data.forced, at: typeof data.at === 'string' ? data.at : null };
+    const data = JSON.parse(fs.readFileSync(file, 'utf-8')) as { day?: unknown; used?: unknown };
+    const used = Number(data?.used);
+    if (!Number.isFinite(used) || used < 0) throw new Error('the counter is not a number');
+    return { day, used: data?.day === day ? Math.floor(used) : 0, unreadable: false };
   } catch {
-    return { override: null, at: null };        // an unreadable switch means "automatic", never "broken"
+    unreadableDay[file] = day;
+    return { day, used: 0, unreadable: true };
   }
 }
 
-/** The explicit Gemini switch response for the command that changed it. */
-export type OfflineSwitchResult = OfflineSnapshot & { message: string };
-
-/** Disable or re-enable Gemini calls by hand. `null` returns to automatic. */
-export function setOfflineMode(on: boolean | null): OfflineSwitchResult {
+function writeCounter(day: string, used: number, file: string): void {
+  const tmp = `${file}.tmp`;
   try {
-    fs.mkdirSync(RUNTIME_DIR, { recursive: true });
-    if (on === null) {
-      if (fs.existsSync(OFFLINE_FILE)) fs.rmSync(OFFLINE_FILE);
-    } else {
-      writeFileAtomic(OFFLINE_FILE, JSON.stringify({ forced: on, at: new Date().toISOString() }));
-    }
-  } catch (err) {
-    console.warn('[config] the offline switch could not be saved:', err instanceof Error ? err.message : err);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, JSON.stringify({ day, used }), { mode: 0o600 });
+    fs.renameSync(tmp, file);
+    saveFailed[file] = false;
+  } catch {
+    saveFailed[file] = true;
   }
-  const snapshot = offlineSnapshot();
-  // The switch changes only Gemini access; it cannot conjure a key or lift a
-  // Google 429. Make the response describe the measured provider state, not
-  // claim that the internet or app is offline.
-  const said = on === true
-    ? 'Gemini calls are disabled by your switch. Local chat and separate open-web tools remain available; say "come back online" to re-enable Gemini calls.'
-    : on === false && snapshot.offline
-      ? `Gemini is still unavailable — ${snapshot.why}. The switch is automatic; local chat and tools remain available.`
-      : on === false
-        ? 'Gemini calls are enabled again and will be used only when a task needs them.'
-        : 'Gemini availability is back under automatic control.';
-  console.warn(`[JARVIS] ${said}`);
-  return { ...snapshot, message: said };
 }
 
-/** Gemini-provider availability for explicit diagnostic API consumers. */
-export function offlineSnapshot(): OfflineSnapshot {
-  const { override, at } = readOfflineOverride();
-  const quota = quotaSnapshot();
-  const hasKey = Boolean(resolveKeySlot(1).key) || Boolean(resolveKeySlot(2).key);
-  let reason: OfflineReason | null = null;
-  let why = '';
-  let since: string | null = at;
-  if (override === true) {
-    reason = 'manual';
-    why = 'you disabled Gemini calls with the manual switch';
-  } else if (quota.stoppedByGoogle) {
-    reason = 'google-stopped';
-    const stops = [quota.googleStopped[1], quota.googleStopped[2]].filter(Boolean) as StopRecord[];
-    since = stops.map((s) => s.at).sort().pop() || null;
-    const which = [1, 2].filter((slot) => quota.googleStopped[slot as KeySlot]);
-    why = `Google answered 429 for ${which.length === 2 ? 'both keys' : `key ${which[0]}`} — its own quota, not this app's count`;
-  } else if (!hasKey) {
-    reason = 'no-key';
-    why = 'no Gemini key is set on this computer';
-    since = null;                                  // not a moment — a key that is missing
+export interface BudgetInfo { limit: number; source: string; }
+
+export interface VoiceQuotaSnapshot {
+  day: string; used: number; limit: number; remaining: number; enabled: boolean;
+  unreadable: boolean; saved: boolean; resets: string; source: string; note: string;
+}
+
+export function resolveVoiceBudget(): BudgetInfo {
+  const raw = (process.env.SUPPER_GEMINI_VOICE_BUDGET || '').trim();
+  if (!raw) return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET} spoken sentences a day)` };
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isFinite(value) || value < 0) {
+    return { limit: DEFAULT_VOICE_BUDGET, source: `the app's default (${DEFAULT_VOICE_BUDGET}) — SUPPER_GEMINI_VOICE_BUDGET could not be read` };
   }
-  const offline = reason !== null;
-  const summary = offline
-    ? `Gemini is unavailable (${why}). Local features and separate open-web tools remain available${reason === 'google-stopped' ? `. The Gemini keys can be tried again at ${googleResetPromise()}` : ''}.`
-    : 'Gemini provider available — local answers are still tried first, so most work never spends a call.';
+  return { limit: value, source: 'SUPPER_GEMINI_VOICE_BUDGET' };
+}
+
+export function voiceQuotaSnapshot(): VoiceQuotaSnapshot {
+  const budget = resolveVoiceBudget();
+  const counter = readCounter(VOICE_QUOTA_FILE);
   return {
-    offline,
-    reason,
-    why,
-    forced: override === true,
-    override,
-    since,
-    works: OFFLINE_WORKS,
-    refused: OFFLINE_REFUSED,
-    summary,
-    note: "Gemini availability affects only provider calls. Local features and separate open-web tools continue working either way.",
+    day: counter.day,
+    used: counter.used,
+    limit: budget.limit,
+    remaining: counter.unreadable ? 0 : Math.max(0, budget.limit - counter.used),
+    enabled: budget.limit > 0,
+    unreadable: counter.unreadable,
+    saved: !saveFailed[VOICE_QUOTA_FILE],
+    resets: 'local midnight',
+    source: budget.source,
+    note: "The voice's own count in runtime/voice_quota.json. The voice runs on this computer (Kokoro / faster-whisper) and never uses a Gemini call, so this stays at zero unless a server voice is used.",
   };
 }
 
-/** True when the Gemini provider call path is unavailable. */
-export function isOffline(): boolean {
-  return offlineSnapshot().offline;
+/** One unit for one spoken sentence generated by a SERVER voice (the local voice never calls this). */
+export function trySpendVoiceBudget(): { allowed: boolean; snapshot: VoiceQuotaSnapshot } {
+  const budget = resolveVoiceBudget();
+  const counter = readCounter(VOICE_QUOTA_FILE);
+  if (counter.unreadable || budget.limit === 0 || counter.used >= budget.limit) {
+    return { allowed: false, snapshot: voiceQuotaSnapshot() };
+  }
+  writeCounter(counter.day, counter.used + 1, VOICE_QUOTA_FILE);
+  return { allowed: true, snapshot: voiceQuotaSnapshot() };
 }
 
-// There is no app-wide offline refusal. Gemini-dependent requests may use
-// separate open-web alternatives; a provider quota never disables those paths.
+/** A refused SPOKEN sentence may only close the voice's own counter — never the brain's. */
+export function markVoiceBudgetExhausted(): void {
+  const budget = resolveVoiceBudget();
+  if (budget.limit <= 0) return;
+  const counter = readCounter(VOICE_QUOTA_FILE);
+  if (counter.unreadable) return;
+  writeCounter(counter.day, budget.limit, VOICE_QUOTA_FILE);
+}
 
 // ── The brain: one call path, honest failures ───────────────────────────────
 export interface GeminiRaw {
@@ -1217,13 +877,14 @@ export interface BrainCaller {
 }
 
 /**
- * ── SPEED: remove avoidable thinking delay without trimming the answer ───────
+ * ── SPEED: the settings that make a reply arrive in a second, not ten ────────
  *
  * Gemini *thinks* before it answers unless it is told not to. That thinking is
  * invisible in the reply and costs several seconds of waiting on every single
- * command. Keep the fast thinking settings, but do not set an output-token cap:
- * chat and speech must preserve every word the model returns. Tasks that need a
- * deliberately bounded output set their own limit in their own request config.
+ * command — the owner hears silence, then a paragraph. For a voice assistant the
+ * answer is worth more than the deliberation, so thinking is turned down and
+ * the answer length is capped, because a capped answer is written sooner and
+ * spoken sooner.
  *
  * ── WHICH PARAMETER? THIS IS WHERE THE GENERATION MATTERS ────────────────────
  * The two generations do NOT take the same setting, and sending the wrong one
@@ -1244,6 +905,8 @@ export interface BrainCaller {
  * thinking setting at all — see isConfigRejection() — and remembers which one
  * worked, so the mistake is never paid for twice.
  */
+export const SPEED_MAX_OUTPUT_TOKENS = 900;
+
 /** How to ask a model to keep its thinking short. */
 export type ThinkingMode = 'level' | 'budget' | 'none';
 
@@ -1260,7 +923,10 @@ export function preferredThinkingMode(model: string): ThinkingMode {
 }
 
 export function speedConfig(model: string, mode: ThinkingMode = preferredThinkingMode(model)): Record<string, unknown> {
-  const cfg: Record<string, unknown> = { temperature: 0.7 };
+  const cfg: Record<string, unknown> = {
+    maxOutputTokens: SPEED_MAX_OUTPUT_TOKENS,
+    temperature: 0.7,
+  };
   if (mode === 'level') cfg.thinkingConfig = { thinkingLevel: 'LOW' };
   else if (mode === 'budget') cfg.thinkingConfig = { thinkingBudget: 0 };
   return cfg;
@@ -1321,7 +987,7 @@ export function isConfigRejection(raw: string): boolean {
 }
 
 export type BrainFailureCode =
-  | 'no-key' | 'google-stopped' | 'offline' | 'model-unavailable' | 'key-rejected'
+  | 'no-key' | 'google-stopped' | 'model-unavailable' | 'key-rejected'
   | 'rate-limited' | 'connection' | 'empty' | 'failed';
 
 export interface AttemptReport { model: string; source: string; ok: boolean; status?: number; error?: string; }
@@ -1389,6 +1055,21 @@ function trimRaw(raw: string): string {
   return raw.replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
+/** What Google did to each key today, in one plain sentence. */
+function googleStopStory(): string {
+  const snap = quotaSnapshot();
+  const line = (slot: KeySlot): string => {
+    const stop = snap.googleStopped[slot];
+    if (stop) return `key ${slot} was stopped at ${clockTime(stop.at)} (${stopReasonText(stop)})`;
+    return '';
+  };
+  const parts = [line(1), line(2)].filter(Boolean);
+  const second = snap.hasSecondKey
+    ? ''
+    : ' No second key is set — add one in Settings → "The Brain" (from a different Google account/project) and I carry on with it when the first runs out.';
+  return `${parts.length ? parts.join('; ') + '.' : ''}${second} This app counted ${snap.used} call${snap.used === 1 ? '' : 's'} today and did not block any of them.`;
+}
+
 export interface FailureContext {
   code: BrainFailureCode;
   model: string;
@@ -1398,41 +1079,34 @@ export interface FailureContext {
   attempts: AttemptReport[];
 }
 
-/** Keep provider failures short; they affect a requested Gemini task, not chat availability. */
 export function explainBrainFailure(ctx: FailureContext): string {
+  const { key } = ctx;
   switch (ctx.code) {
     case 'no-key':
-      return 'Gemini is optional and no key is configured. Local chat and tools remain available.';
+      return `I have no Gemini key, sir. ${key.detail}. Add "gemini_api_key" to config/api_keys.json (Settings → "The Brain" writes it there), or set GEMINI_API_KEY — either is read at once, no restart.`;
     case 'google-stopped':
-    case 'rate-limited':
-      return 'Google is not accepting Gemini requests right now. Local chat and tools remain available; try again later.';
-    case 'offline':
-      return 'Gemini is turned off. Local chat, tools, and separate open-web paths remain available.';
-    case 'model-unavailable':
-      return 'The configured Gemini model is unavailable. Check SUPPER_TEXT_MODEL or use the app default.';
+      return `Google has stopped our calls for today, sir — Google, not this app. ${googleStopStory()} Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Until then I answer with what I know locally.`;
+    case 'model-unavailable': {
+      const tried = ctx.attempts.filter((a) => a.error).map((a) => a.model).join(', ') || ctx.model;
+      return `The model name was withdrawn, sir — my key is fine, so do not change it. Google answered 404 NOT_FOUND for ${tried}.` +
+        ` Set SUPPER_TEXT_MODEL (or GEMINI_MODEL) to a current model, or clear both and I fall back to the app's moving alias ${DEFAULT_TEXT_MODEL}.` +
+        (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
+    }
     case 'key-rejected':
-      return 'Google rejected the configured Gemini key. Check Settings → Optional Gemini access.';
+      return `Google refused key ${key.slot} itself (${key.source || 'no source'}; ending in …${key.tail ?? '????'}), which comes from ${key.detail} — the key is the problem here, not the model (${ctx.model}).` +
+        ` Paste a working key in Settings → "The Brain".` + (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
+    case 'rate-limited':
+      return `Google answered 429 — its own quota is used up for key ${key.slot} (ending in …${key.tail ?? '????'}) on ${ctx.model}. That is Google stopping us, sir, not this app: this app's count only warns. ${googleStopStory()}` +
+        ` Calls resume at local midnight (Google's own daily quota resets at midnight Pacific). Neither the key nor the model name is at fault.` +
+        (ctx.raw ? ` Google said: ${trimRaw(ctx.raw)}` : '');
     case 'connection':
-      return 'Gemini could not be reached. Check the connection or proxy; local features remain available.';
+      return `The call never reached Google, sir — a connection problem, so neither the key (${key.source || 'none'}) nor the model (${ctx.model}) is at fault.` +
+        ` The key is fine; check the internet connection or a proxy, then try again.` + (ctx.raw ? ` The error was: ${trimRaw(ctx.raw)}` : '');
     case 'empty':
-      return 'Gemini returned no usable text. Try again.';
+      return `I reached ${ctx.model}, sir, but it sent back nothing I can use. The model name is accepted and the key works; try again, and if it repeats check that this model can answer text.`;
     default:
-      return 'The Gemini request failed. Local features remain available; check the server console for details.';
+      return `The call to Gemini failed for a reason I cannot classify (model ${ctx.model}, key from ${key.source || 'none'}): ${trimRaw(ctx.raw || 'no detail')}.`;
   }
-}
-
-/**
- * The Gemini provider call was skipped, so no call was counted. Preserve the
- * provider-specific code for explicit diagnostics; normal chat can use its own
- * local/open-web fallback without announcing status changes.
- */
-function offlineGateError(gate: SpendResult, key: KeyInfo, attempts: AttemptReport[], model: string, modelSource: string): BrainError {
-  const code: BrainFailureCode = gate.offline?.reason === 'no-key' ? 'no-key'
-    : gate.offline?.reason === 'manual' ? 'offline' : 'google-stopped';
-  return new BrainError(
-    explainBrainFailure({ code, model, modelSource, key, attempts }),
-    code, attempts, model, modelSource,
-  );
 }
 
 /**
@@ -1478,12 +1152,12 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
   // candidate model, so a single question whose first model was unavailable
   // burned three, five, sometimes twenty units on retries that never fetched
   // an answer. Retries of the same question are free; a new question counts
-  // again. The gate below can skip this Gemini request when no key may be used,
-  // but that does not gate chat or separate local/open-web paths.
+  // again. The count never refuses: the gate below is closed only when Google
+  // has stopped every key we have for today.
   const spend = opts.spend || spendGeminiCall;
   const gate = spend();
   if (!gate.allowed) {
-    throw offlineGateError(gate, key, attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+    throw new BrainError(explainBrainFailure({ code: 'google-stopped', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'google-stopped', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
   }
   let slot: KeySlot = gate.slot ?? active.slot ?? 1;
   let switchedKey = false;
@@ -1516,7 +1190,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
     lastSource = next.source;
 
     // The speed settings ride along with every text call: thinking off where the
-    // model takes that setting, without capping the answer. See speedConfig().
+    // model takes that setting, and a capped answer. See speedConfig().
     const usedSpeed = opts.speed !== false && opts.kind === 'text';
     type Outcome = { raw?: GeminiRaw; error?: ClassifiedError };
     const attempt = async (cfg: Record<string, unknown> | undefined): Promise<Outcome> => {
@@ -1568,8 +1242,7 @@ export async function runBrain<T>(caller: BrainCaller | null, opts: BrainRunOpti
 
       if (classified.code === 'rate-limited' || classified.code === 'key-rejected') {
         // Google refused THIS key: a real 429 (its quota) or the key itself. The
-        // key is stopped until midnight Pacific, when Google's quota resets. If
-        // the other key is set, it takes
+        // key is stopped until local midnight. If the other key is set, it takes
         // over now and the same question is retried on it — for free, it is a
         // retry — so the owner gets an answer instead of an apology.
         const stop = markKeyStoppedByGoogle(slot, classified.code === 'rate-limited' ? 'quota' : 'key-rejected', classified.raw);
@@ -1653,11 +1326,10 @@ export async function runBrainStream(caller: BrainCaller | null, opts: BrainStre
   const attempts: AttemptReport[] = [];
   const spend = opts.spend || spendGeminiCall;
   // ONE unit per QUESTION, as in runBrain() and the standalone app. The count
-  // never refuses a call; provider unavailability can skip this Gemini request
-  // without gating chat or separate local/open-web routes.
+  // never refuses; only Google stopping every key we have closes this gate.
   const gate = spend();
   if (!gate.allowed) {
-    throw offlineGateError(gate, key, attempts, candidates[0]?.model || '', candidates[0]?.source || '');
+    throw new BrainError(explainBrainFailure({ code: 'google-stopped', model: candidates[0]?.model || '', modelSource: candidates[0]?.source || '', key, attempts }), 'google-stopped', attempts, candidates[0]?.model || '', candidates[0]?.source || '');
   }
   let slot: KeySlot = gate.slot ?? active.slot ?? 1;
   let switchedKey = false;
@@ -1908,32 +1580,6 @@ function rewriteEnvLine(name: string, value: string | null): boolean {
  * Save a key where the app reads it. Slot 1 is the normal key (gemini_api_key),
  * slot 2 the fallback (gemini_api_key_2). Both follow the same rules.
  */
-/** Save one optional image-service key, exactly like the Gemini keys are saved. */
-export function saveImageServiceKey(service: ImageService, key: string): { savedTo: string[]; info: ServiceKeyInfo } {
-  const names = IMAGE_SERVICES[service];
-  const cleaned = key.trim();
-  if (cleaned.length < 8) throw new Error(`That does not look like a ${names.label} key — it needs at least 8 characters.`);
-  const file = readApiConfigForWriting();
-  file[names.field] = cleaned;
-  writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
-  // Live at once, so the owner does not have to restart to see it work.
-  process.env[names.env] = cleaned;
-  return { savedTo: ['config/api_keys.json'], info: resolveImageServiceKey(service) };
-}
-
-/** Remove one image-service key. Pictures still work — Commons needs no key. */
-export function clearImageServiceKey(service: ImageService): { removed: boolean; info: ServiceKeyInfo } {
-  const names = IMAGE_SERVICES[service];
-  const file = readApiConfigForWriting();
-  const had = typeof file[names.field] === 'string' && Boolean(String(file[names.field]).trim());
-  if (had) {
-    delete file[names.field];
-    writeFileAtomic(API_CONFIG_PATH, JSON.stringify(file, null, 2) + '\n');
-  }
-  delete process.env[names.env];
-  return { removed: had, info: resolveImageServiceKey(service) };
-}
-
 export function saveGeminiKey(key: string, slot: KeySlot = 1): SaveKeyResult {
   const cleaned = key.trim();
   if (cleaned.length < 10) throw new Error('That does not look like a Gemini API key — it needs at least 10 characters.');

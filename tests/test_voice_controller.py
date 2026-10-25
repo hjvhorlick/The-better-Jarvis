@@ -130,12 +130,11 @@ def test_start_without_a_key_is_503_and_opens_nothing(tmp_path):
     assert rig.holders()["microphone"] == []
 
 
-def test_start_while_offline_is_503_and_spends_nothing_more(tmp_path):
-    rig = Rig(tmp_path)
-    rig.budget.mark_exhausted()                    # Google's 429, not this app's count
+def test_start_with_the_budget_used_up_is_429_and_spends_nothing_more(tmp_path):
+    rig = Rig(tmp_path, budget_limit=0)
     with pytest.raises(VoiceError) as info:
         rig.ctrl.start_live()
-    assert info.value.status == 503 and "offline" in str(info.value)
+    assert info.value.status == 429 and "budget" in str(info.value)
     assert FakeRelay.instances == [] and rig.mic.status()["state"] == "stopped"
 
 

@@ -235,9 +235,7 @@ def test_reconnect_is_charged_to_the_budget_and_stops_when_refused():
     assert not t.is_alive()
     assert budget_calls == [1]
     assert fx.calls["connect"] == 1                  # the first connect was paid by the controller
-    # The relay stops because the app is OFFLINE (try_spend() returns False only
-    # then) — never because this app's own count ran out.
-    assert any(e["reason"] == "offline" for e in voice_events(fx.bus) if e["type"] == "voice_error")
+    assert any(e["reason"] == "budget" for e in voice_events(fx.bus) if e["type"] == "voice_error")
 
 
 def test_no_key_stops_before_any_connection():

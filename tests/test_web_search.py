@@ -89,14 +89,11 @@ def test_an_empty_search_asks_what_to_search_for_and_spends_nothing(tmp_path, is
     assert budget.snapshot()["used"] == 0
 
 
-def test_offline_means_no_search(tmp_path, isolated, monkeypatch):
-    # A zero WARNING level is not a block; being offline is.
+def test_no_budget_means_no_search(tmp_path, isolated, monkeypatch):
     models = Recording(reply="x")
-    agent, budget = _agent(tmp_path, models, monkeypatch)
-    budget.mark_exhausted()
+    agent, budget = _agent(tmp_path, models, monkeypatch, limit=0)
     out = agent.handle("search the web for tea prices")
-    assert "offline" in out["reply"] and "needs the internet" in out["reply"]
-    assert models.calls == []
+    assert "budget is used up" in out["reply"] and models.calls == []
 
 
 def test_no_key_means_no_search(tmp_path, isolated, monkeypatch):
@@ -106,15 +103,12 @@ def test_no_key_means_no_search(tmp_path, isolated, monkeypatch):
     assert "No Gemini API key" in out["reply"] and models.calls == []
 
 
-def test_a_quota_error_goes_offline_and_stops_further_searches_today(tmp_path, isolated, monkeypatch):
+def test_a_quota_error_stops_further_searches_today(tmp_path, isolated, monkeypatch):
     models = Recording(error=QuotaError("limit"))
     agent, budget = _agent(tmp_path, models, monkeypatch)
     out = agent.handle("search the web for tea prices")
     assert "limit is reached" in out["reply"]
-    # Google's own 429: offline for the day — and the count is NOT faked as spent.
-    assert budget.offline is True and budget.snapshot()["used"] == 1
-    again = agent.handle("search the web for coffee prices")
-    assert "offline" in again["reply"] and len(models.calls) == 1
+    assert budget.snapshot()["used"] == budget.snapshot()["limit"]
 
 
 def test_other_errors_are_reported_without_their_message(tmp_path, isolated, monkeypatch):

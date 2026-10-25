@@ -25,7 +25,6 @@ def _client(isolated, monkeypatch, limit=20, models=None, key=True):
     client.session = session
     client.models = models
     client.bus = bus
-    client.budget = budget
     return client
 
 
@@ -63,26 +62,13 @@ def test_denying_a_confirmation_over_http(isolated, monkeypatch):
     assert out["status"] == "denied" and c.session.started == []
 
 
-def test_the_count_warns_but_never_blocks_and_local_still_works(isolated, monkeypatch):
+def test_budget_limit_is_a_429_and_local_still_works(isolated, monkeypatch):
     c = _client(isolated, monkeypatch, limit=1)
     assert c.post("/api/chat", json={"text": "hello"}).status_code == 200
-    second = c.post("/api/chat", json={"text": "hello again"})
-    assert second.status_code == 200                      # the count only warns
-    assert second.json()["source"] == "gemini"
+    r = c.post("/api/chat", json={"text": "hello again"})
+    assert r.status_code == 429 and "budget" in r.json()["detail"]
     assert c.post("/api/chat", json={"text": "status"}).status_code == 200
-    assert len(c.models.calls) == 2
-
-
-def test_a_real_429_goes_offline_and_the_chat_keeps_answering(isolated, monkeypatch):
-    c = _client(isolated, monkeypatch)
-    c.budget.mark_exhausted()                # Google's own 429 — not this app's count
-    body = c.post("/api/chat", json={"text": "hello"}).json()
-    assert body["source"] == "local" and body["intent"] == "offline.quota"
-    assert "offline" in body["reply"] and "midnight" in body["reply"]
-    assert c.budget.snapshot()["used"] == 0   # offline answers are never counted
-    # The status endpoint says so without any secret.
-    snap = c.get("/api/status").json()["gemini_budget"]
-    assert snap["offline"] is True and snap["used"] == 0
+    assert len(c.models.calls) == 1
 
 
 def test_status_and_diagnostics_show_the_budget_without_secrets(isolated, monkeypatch):

@@ -619,14 +619,6 @@ export default {
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.error || `HTTP ${resp.status}`);
-        // With no Gemini model available the server finds a real photograph on
-        // the open web instead, and hands back its address rather than pixels.
-        // The browser loads it straight into the layer, so the hand tools still
-        // work on it exactly as they would on a drawn picture.
-        if (data.found && data.url) {
-          say(data.author ? `Found one — ${data.title}, by ${data.author} (${data.source}).` : `Found one — ${data.title} (${data.source}).`);
-          return data.url;
-        }
         return `data:${data.mime || "image/png"};base64,${data.image}`;
       }
 

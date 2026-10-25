@@ -20,18 +20,12 @@ def store(tmp_path):
 
 
 class FakeBudget:
-    """The real budget warns and never blocks; only `offline` refuses a call."""
-
-    def __init__(self, allowed=True, offline=False):
+    def __init__(self, allowed=True):
         self.allowed = allowed
-        self.offline = offline
         self.spent = 0
 
-    def offline_reason(self):
-        return "Google answered 429 — its own quota, not this app's count" if self.offline else ""
-
     def try_spend(self):
-        if self.offline or not self.allowed:
+        if not self.allowed:
             return False
         self.spent += 1
         return True
@@ -251,12 +245,12 @@ def test_nothing_is_uploaded_by_laying_a_script_out():
 
 # ---------- budget ----------
 
-def test_a_script_is_refused_while_offline_and_says_why():
+def test_a_script_is_refused_once_the_day_is_spent():
     chat = FakeChat(GOOD_SCRIPT)
-    budget = FakeBudget(offline=True)
+    budget = FakeBudget(allowed=False)
     with pytest.raises(MediaError) as e:
         media.script_from_brief(chat, budget, "the ocean", 30, "16:9")
-    assert "offline" in str(e.value) and "needs the internet" in str(e.value)
+    assert "allowance" in str(e.value)
     assert chat.calls == []            # nothing was asked
 
 
